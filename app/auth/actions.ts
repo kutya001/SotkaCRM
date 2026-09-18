@@ -30,36 +30,48 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
     return { error: 'Пожалуйста, заполните логин и пароль.' };
   }
 
-  const cleanLogin = loginInput.trim();
+  const cleanLogin = loginInput.trim().toLowerCase().replace(/^@/, '').replace(/@internal\.sotka\.kg$/, '');
   const supabase = await createClient();
 
-  // 1. Поиск сотрудника в таблице users по логину (case-insensitive)
-  const { data: userProfile, error: profileError } = await supabase
-    .from('users')
-    .select('user_id, auth_id, login, role, is_active')
-    .ilike('login', cleanLogin)
-    .single();
+  // 1. Формирование синтетического email для Supabase Auth
+  const syntheticEmail = `${cleanLogin}@internal.sotka.kg`;
 
-  if (profileError || !userProfile) {
-    return { error: 'Пользователь с таким логином не найден в системе.' };
-  }
-
-  // 2. Проверка флага активности
-  if (!userProfile.is_active) {
-    return { error: 'Учетная запись отключена или заблокирована администратором.' };
-  }
-
-  // 3. Формирование синтетического email для Supabase Auth
-  const syntheticEmail = `${userProfile.login.toLowerCase()}@internal.sotka.kg`;
-
-  // 4. Аутентификация через Supabase Auth
+  // 2. Аутентификация через Supabase Auth
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email: syntheticEmail,
     password,
   });
 
   if (authError || !authData.user) {
+    // Проверяем, существует ли логин в системе для информативного сообщения
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('user_id')
+      .ilike('login', cleanLogin)
+      .maybeSingle();
+
+    if (!existingUser) {
+      return { error: 'Пользователь с таким логином не найден в системе.' };
+    }
     return { error: 'Неверный логин или пароль.' };
+  }
+
+  // 3. Извлечение профиля сотрудника
+  const { data: userProfile, error: profileError } = await supabase
+    .from('users')
+    .select('user_id, auth_id, login, role, is_active')
+    .eq('auth_id', authData.user.id)
+    .single();
+
+  if (profileError || !userProfile) {
+    await supabase.auth.signOut();
+    return { error: 'Профиль сотрудника не найден в системе CRM.' };
+  }
+
+  // 4. Проверка флага активности
+  if (!userProfile.is_active) {
+    await supabase.auth.signOut();
+    return { error: 'Учетная запись отключена или заблокирована администратором.' };
   }
 
   revalidatePath('/', 'layout');

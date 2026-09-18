@@ -1,9 +1,155 @@
 -- ==============================================================================
 -- seed.sql — Первичные тестовые данные для SotkaCRM
 -- В соответствии с DB.md, GEMINI.md и ТЗ.md
+-- Пароль по умолчанию для всех учетных записей: admin123456
 -- ==============================================================================
 
--- 1. Первичные тарифные планы платформы (таблица plans)
+-- 1. Учетные записи аутентификации Supabase Auth (auth.users)
+-- Примечание: GoTrue требует строковых токенов (не NULL), иначе возникает ошибка сканирования схемы
+INSERT INTO auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    confirmation_token,
+    recovery_token,
+    email_change_token_new,
+    email_change,
+    email_change_token_current,
+    phone_change,
+    phone_change_token,
+    reauthentication_token,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    is_super_admin,
+    created_at,
+    updated_at
+) VALUES 
+    (
+        '00000000-0000-0000-0000-000000000000',
+        '11111111-1111-1111-1111-111111111111',
+        'authenticated',
+        'authenticated',
+        'admin@internal.sotka.kg',
+        '$2a$06$y4vcdP6qT4k6NOd/RNQj7e6npksDaKFZQtsymVc4Gm1R9fR3VksLW',
+        NOW(),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        '{"role":"admin","login":"admin","full_name":"Айбек Исмаилов"}'::jsonb,
+        false,
+        NOW(),
+        NOW()
+    ),
+    (
+        '00000000-0000-0000-0000-000000000000',
+        '22222222-2222-2222-2222-222222222222',
+        'authenticated',
+        'authenticated',
+        'consultant1@internal.sotka.kg',
+        '$2a$06$XSedRKZLj6HXJyJcUAh./OnnJskz4TaKeSzDBB/GBQE7GZrdW387q',
+        NOW(),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        '{"role":"consultant","login":"consultant1","full_name":"Бакыт Токтосунов"}'::jsonb,
+        false,
+        NOW(),
+        NOW()
+    ),
+    (
+        '00000000-0000-0000-0000-000000000000',
+        '33333333-3333-3333-3333-333333333333',
+        'authenticated',
+        'authenticated',
+        'smm_operator@internal.sotka.kg',
+        '$2a$06$tBofuDCN7wI5Q5lCthGAc.R80CCYpRheTLV2oJwfWtYwI00O/PYlu',
+        NOW(),
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        '{"role":"smm","login":"smm_operator","full_name":"Айпери Касымова"}'::jsonb,
+        false,
+        NOW(),
+        NOW()
+    )
+ON CONFLICT (id) DO UPDATE SET
+    encrypted_password = EXCLUDED.encrypted_password,
+    confirmation_token = '',
+    recovery_token = '',
+    email_change_token_new = '',
+    email_change = '',
+    email_change_token_current = '',
+    phone_change = '',
+    phone_change_token = '',
+    reauthentication_token = '',
+    updated_at = NOW();
+
+-- 2. Идентичности пользователей (auth.identities)
+INSERT INTO auth.identities (
+    id,
+    user_id,
+    identity_data,
+    provider,
+    provider_id,
+    last_sign_in_at,
+    created_at,
+    updated_at
+) VALUES
+    (
+        '11111111-1111-1111-1111-111111111111',
+        '11111111-1111-1111-1111-111111111111',
+        '{"sub":"11111111-1111-1111-1111-111111111111","email":"admin@internal.sotka.kg"}'::jsonb,
+        'email',
+        'admin@internal.sotka.kg',
+        NOW(),
+        NOW(),
+        NOW()
+    ),
+    (
+        '22222222-2222-2222-2222-222222222222',
+        '22222222-2222-2222-2222-222222222222',
+        '{"sub":"22222222-2222-2222-2222-222222222222","email":"consultant1@internal.sotka.kg"}'::jsonb,
+        'email',
+        'consultant1@internal.sotka.kg',
+        NOW(),
+        NOW(),
+        NOW()
+    ),
+    (
+        '33333333-3333-3333-3333-333333333333',
+        '33333333-3333-3333-3333-333333333333',
+        '{"sub":"33333333-3333-3333-3333-333333333333","email":"smm_operator@internal.sotka.kg"}'::jsonb,
+        'email',
+        'smm_operator@internal.sotka.kg',
+        NOW(),
+        NOW(),
+        NOW()
+    )
+ON CONFLICT (provider, provider_id) DO NOTHING;
+
+-- 3. Первичные тарифные планы платформы (таблица plans)
 INSERT INTO plans (plan_id, plan_name, price, billing_period, description, is_active)
 VALUES 
     (
@@ -36,8 +182,8 @@ ON CONFLICT (plan_id) DO UPDATE SET
     description = EXCLUDED.description,
     is_active = EXCLUDED.is_active;
 
--- 2. Пользователи системы под каждую роль (таблица users)
--- Роли: admin, consultant, smm (валидные hex-символы для UUID)
+-- 4. Пользователи системы под каждую роль (таблица users)
+-- Роли: admin, consultant, smm
 INSERT INTO users (user_id, auth_id, login, full_name, phone, role, is_active)
 VALUES 
     (
@@ -75,7 +221,7 @@ ON CONFLICT (user_id) DO UPDATE SET
     role = EXCLUDED.role,
     is_active = EXCLUDED.is_active;
 
--- 3. Индивидуальные мотивационные ставки сотрудников (таблица employee_rates)
+-- 5. Индивидуальные мотивационные ставки сотрудников (таблица employee_rates)
 INSERT INTO employee_rates (rate_id, user_id, connection_percent, maintenance_percent, effective_from, created_by)
 VALUES 
     (

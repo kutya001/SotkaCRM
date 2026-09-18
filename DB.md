@@ -696,13 +696,16 @@ BEGIN
 
     INSERT INTO auth.users (
         id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
-        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_sso_user, is_anonymous
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_sso_user, is_anonymous,
+        confirmation_token, recovery_token, email_change_token_new, email_change,
+        email_change_token_current, phone_change, phone_change_token, reauthentication_token
     ) VALUES (
         v_auth_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
         v_synthetic_email, crypt(p_password, gen_salt('bf')), now(),
         '{"provider":"email","providers":["email"]}'::jsonb,
         jsonb_build_object('full_name', p_full_name, 'role', p_role::text, 'login', v_cleaned_login),
-        now(), now(), false, false
+        now(), now(), false, false,
+        '', '', '', '', '', '', '', ''
     );
 
     INSERT INTO auth.identities (
@@ -814,4 +817,26 @@ FOR ALL TO authenticated
 USING (get_current_user_role() = 'admin')
 WITH CHECK (get_current_user_role() = 'admin');
 
+```
+
+**6.4. Политики для таблицы учетных записей `users`**
+
+```sql
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+-- Просмотр для авторизованных пользователей
+CREATE POLICY "users_select_policy" ON users
+FOR SELECT TO authenticated
+USING (true);
+
+-- Просмотр для неавторизованных сессий (проверка логина на экране входа)
+CREATE POLICY "users_anon_select_policy" ON users
+FOR SELECT TO anon
+USING (true);
+
+-- Управление профилями (строго администратор)
+CREATE POLICY "users_admin_write_policy" ON users
+FOR ALL TO authenticated
+USING (get_current_user_role() = 'admin')
+WITH CHECK (get_current_user_role() = 'admin');
 ```

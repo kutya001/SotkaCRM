@@ -294,6 +294,11 @@ CREATE POLICY "users_select_policy" ON users
 FOR SELECT TO authenticated
 USING (true);
 
+DROP POLICY IF EXISTS "users_anon_select_policy" ON users;
+CREATE POLICY "users_anon_select_policy" ON users
+FOR SELECT TO anon
+USING (true);
+
 DROP POLICY IF EXISTS "users_admin_write_policy" ON users;
 CREATE POLICY "users_admin_write_policy" ON users
 FOR ALL TO authenticated

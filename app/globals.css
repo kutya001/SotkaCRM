@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #f4f4f5; /* zinc-100 */
+    --foreground: #18181b; /* zinc-900 */
+    --island-bg: rgba(255, 255, 255, 0.75);
+    --island-border: rgba(255, 255, 255, 0.4);
+    --island-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  }
+
+  .dark {
+    --background: #09090b; /* zinc-950 */
+    --foreground: #f4f4f5; /* zinc-100 */
+    --island-bg: rgba(24, 24, 27, 0.75); /* zinc-900/75 */
+    --island-border: rgba(39, 39, 42, 0.6); /* zinc-800/60 */
+    --island-shadow: 0 20px 35px -10px rgba(0, 0, 0, 0.7);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  /* Apple Island Glassmorphism Surfaces */
+  .island-glass {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    background-color: var(--island-bg);
+    border: 1px solid var(--island-border);
+    box-shadow: var(--island-shadow);
+  }
+
+  .island-card {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    background-color: var(--island-bg);
+    border: 1px solid var(--island-border);
+    border-radius: 1.25rem; /* 20px */
+    transition: all 0.2s ease-in-out;
+  }
+
+  .island-interactive {
+    transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.15s ease;
+  }
+
+  .island-interactive:active {
+    transform: scale(0.97);
+  }
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(161, 161, 170, 0.3);
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(82, 82, 91, 0.4);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(161, 161, 170, 0.5);
+}

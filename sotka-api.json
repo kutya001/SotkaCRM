@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SotkaAPI_Contract",
+  "description": "Спецификация и контракты интеграции внешнего API Sotka для агента разработки SotkaCRM",
+  "base_url": "https://api.sotka.kg",
+  "endpoints": {
+    "auth_pair": {
+      "method": "POST",
+      "path": "/api/public/v1/auth/pair",
+      "description": "Авторизация администратора CRM и получение Bearer токена доступа",
+      "headers": {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      "request_body": {
+        "type": "object",
+        "required": ["iso_code_id", "phone", "password"],
+        "properties": {
+          "iso_code_id": {
+            "type": "integer",
+            "example": 1,
+            "description": "ID телефонного кода Кыргызстана (+996)"
+          },
+          "phone": {
+            "type": "string",
+            "pattern": "^[0-9]{9}$",
+            "example": "700888268",
+            "description": "Номер телефона без кода страны и лидирующего нуля (строго 9 цифр)"
+          },
+          "password": {
+            "type": "string",
+            "example": "admin_password"
+          }
+        }
+      },
+      "response_example": {
+        "status": "ok",
+        "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example_access_token",
+        "detail": {
+          "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example_access_token"
+        }
+      },
+      "token_extraction_path": "response.access || response.access_token || response.detail.access"
+    },
+
+    "auth_logout": {
+      "method": "POST",
+      "path": "/api/public/v1/auth/logout",
+      "description": "Инвалидация временного Bearer токена после окончания сессии синхронизации",
+      "headers": {
+        "Authorization": "Bearer <ACCESS_TOKEN>",
+        "Content-Type": "application/json"
+      },
+      "response_example": {
+        "status": "ok",
+        "detail": "Logged out successfully"
+      }
+    },
+
+    "sellers_overview": {
+      "method": "GET",
+      "path": "/api/private/v1/admin/sellers-overview/",
+      "description": "Постраничная выгрузка реестра зарегистрированных продавцов платформы Sotka",
+      "headers": {
+        "Authorization": "Bearer <ACCESS_TOKEN>",
+        "Accept": "application/json"
+      },
+      "query_parameters": {
+        "limit": {
+          "type": "integer",
+          "default": 50,
+          "maximum": 200,
+          "example": 100
+        },
+        "offset": {
+          "type": "integer",
+          "default": 0,
+          "example": 0
+        },
+        "moderation_status": {
+          "type": "string",
+          "enum": ["approved", "pending", "rejected", "blocked"],
+          "required": false
+        }
+      },
+      "response_example": {
+        "status": "ok",
+        "detail": {
+          "total": 142,
+          "total_balance": 584000.0,
+          "items": [
+            {
+              "seller_name": "Айбек Исмаилов",
+              "seller_phone": "700888268",
+              "iso_code": "996",
+              "stores": ["Device - ЦУМ", "Device - Аламедин"],
+              "outlets_count": 2,
+              "employees_count": 5,
+              "plans": ["Премиум", "Базовый"],
+              "brands": ["Apple", "Xiaomi", "Samsung"],
+              "balance": 14500.5,
+              "moderation": "approved",
+              "is_active": true,
+              "registered_at": "2026-01-15T09:30:00Z",
+              "last_activity": "2026-09-18T18:45:00Z",
+              "organization_id": 3
+            }
+          ]
+        }
+      },
+      "crm_db_mapping": {
+        "seller_phone": "CONCAT(item.iso_code, item.seller_phone)",
+        "seller_name": "item.seller_name",
+        "store": "item.stores[0] || 'Без названия'",
+        "plan_id": "item.plans[0] ? CONCAT('PLN-', item.plans[0]) : null",
+        "plan_name": "item.plans[0] || 'Без тарифа'",
+        "balance": "item.balance",
+        "moderation": "item.moderation || 'pending'",
+        "is_active": "item.is_active",
+        "registered_at": "item.registered_at",
+        "last_activity": "item.last_activity",
+        "employees_count": "item.employees_count",
+        "outlets_count": "item.outlets_count",
+        "brands": "item.brands.join(', ')",
+        "organization_id": "String(item.organization_id)"
+      }
+    },
+
+    "admin_transactions": {
+      "method": "GET",
+      "path": "/api/private/v1/admin/transactions/",
+      "fallback_path": "/api/private/v1/subscriptions/billing/transactions/",
+      "description": "Выгрузка платежных транзакций продавцов платформы для расчета бонусов консультантов",
+      "headers": {
+        "Authorization": "Bearer <ACCESS_TOKEN>",
+        "Accept": "application/json"
+      },
+      "query_parameters": {
+        "limit": {
+          "type": "integer",
+          "default": 50,
+          "maximum": 200,
+          "example": 100
+        },
+        "offset": {
+          "type": "integer",
+          "default": 0,
+          "example": 0
+        }
+      },
+      "response_example": {
+        "status": "ok",
+        "detail": {
+          "total": 310,
+          "items": [
+            {
+              "payment_id": "PAY-849204",
+              "user_phone": "700888268",
+              "iso_code": "996",
+              "user_id": 15,
+              "user_name": "Айбек Исмаилов",
+              "amount": 3500.0,
+              "date_time": "2026-09-15T14:22:10Z",
+              "tran_type": "topup",
+              "description": "Оплата тарифа Премиум",
+              "status": "succeeded"
+            }
+          ]
+        }
+      },
+      "crm_db_mapping": {
+        "payment_id": "String(item.payment_id)",
+        "user_phone": "item.user_phone.startsWith('996') ? item.user_phone : CONCAT('996', item.user_phone)",
+        "user_name": "item.user_name",
+        "user_id": "String(item.user_id)",
+        "amount": "item.amount",
+        "date_time": "item.date_time",
+        "tran_type": "item.tran_type",
+        "description": "item.description",
+        "status": "item.status"
+      }
+    }
+  },
+
+  "normalization_rules": {
+    "phone_to_storage_format": "Номер в CRM (sellers, payments) хранится в формате: 996XXXXXXXXX (12 цифр без плюса). Если от API приходит 9 цифр, добавлять префикс '996'.",
+    "upsert_conflict_targets": {
+      "sellers": "seller_phone",
+      "payments": "payment_id"
+    },
+    "manager_assignment_preservation": "При обновлении таблицы sellers через upsert необходимо сохранять существующие поля manager_id и leads.seller_phone, не затирая их значениями по умолчанию."
+  }
+}

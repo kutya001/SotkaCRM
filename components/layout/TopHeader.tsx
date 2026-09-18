@@ -12,6 +12,7 @@ interface TopHeaderProps {
   userName?: string;
   onSyncApi?: () => void;
   isSyncing?: boolean;
+  lastSyncedAt?: string | null;
 }
 
 const MODULE_TITLES: Record<string, string> = {
@@ -31,6 +32,7 @@ export function TopHeader({
   userName = 'Сотрудник',
   onSyncApi,
   isSyncing = false,
+  lastSyncedAt,
 }: TopHeaderProps) {
   const pathname = usePathname();
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -89,13 +91,18 @@ export function TopHeader({
                 ? 'bg-blue-500/10 text-blue-600 border-blue-500/30 cursor-wait'
                 : 'bg-zinc-200/50 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50'
             }`}
-            title="Запустить синхронизацию с платформой Sotka"
+            title={lastSyncedAt ? `Последняя синхронизация: ${lastSyncedAt}` : 'Запустить синхронизацию с платформой Sotka'}
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
               strokeWidth={1.75}
             />
             <span>{isSyncing ? 'Синхронизация...' : 'Синхронизация API'}</span>
+            {lastSyncedAt && !isSyncing && (
+              <span className="text-[10px] text-zinc-400 font-mono hidden xl:inline">
+                ({lastSyncedAt})
+              </span>
+            )}
           </button>
         )}
 

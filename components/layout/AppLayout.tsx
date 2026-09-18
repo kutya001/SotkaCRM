@@ -7,6 +7,7 @@ import { TopHeader } from '@/components/layout/TopHeader';
 import { MobileHeader } from '@/components/layout/MobileHeader';
 import { MobileBottomBar } from '@/components/layout/MobileBottomBar';
 import { FAB } from '@/components/layout/FAB';
+import { useToast } from '@/components/ui/Toast';
 import type { UserRole } from '@/types/database.types';
 
 interface AppLayoutProps {
@@ -29,7 +30,46 @@ export function AppLayout({
   isSyncing = false,
 }: AppLayoutProps) {
   const pathname = usePathname();
+  const { showToast } = useToast();
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [internalSyncing, setInternalSyncing] = React.useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem('crm_last_sotka_sync');
+      if (saved) setLastSyncedAt(saved);
+    } catch {}
+  }, []);
+
+  const handleSync = async () => {
+    if (onSyncApi) {
+      onSyncApi();
+      return;
+    }
+    if (isSyncing || internalSyncing) return;
+    setInternalSyncing(true);
+    try {
+      const res = await fetch('/api/sync/sotka', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Ошибка синхронизации');
+      }
+      const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      setLastSyncedAt(timeStr);
+      try {
+        localStorage.setItem('crm_last_sotka_sync', timeStr);
+      } catch {}
+      showToast(
+        `Синхронизация завершена: ${data.syncedSellers} продавцов, ${data.syncedPayments} платежей`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Сбой при обращении к API Sotka', 'error');
+    } finally {
+      setInternalSyncing(false);
+    }
+  };
 
   // На странице логина отображаем чистый контейнер без интерфейсных островков
   if (pathname === '/login') {
@@ -57,8 +97,9 @@ export function AppLayout({
         collapsed={sidebarCollapsed}
         userRole={userRole}
         userName={userName}
-        onSyncApi={onSyncApi}
-        isSyncing={isSyncing}
+        onSyncApi={handleSync}
+        isSyncing={isSyncing || internalSyncing}
+        lastSyncedAt={lastSyncedAt}
       />
 
       {/* МОБИЛЬНЫЙ СЛОЙ (экран < 1024px) */}

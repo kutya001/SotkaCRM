@@ -1,0 +1,628 @@
+'use client';
+
+import * as React from 'react';
+import { useRouter } from 'next/navigation';
+import { AppLayout } from '@/components/layout/AppLayout';
+import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
+import { useToast } from '@/components/ui/Toast';
+import {
+  getConnections,
+  getConnectionsStats,
+  updateConnectionClientStatus,
+  getAccrualMonthsList,
+  type ConnectionItem,
+  type ConnectionsStats,
+} from './actions';
+import {
+  Link2,
+  Phone,
+  MessageCircle,
+  Calendar,
+  ShieldAlert,
+  RotateCcw,
+  Store,
+  Layers,
+  X,
+} from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
+import type { ClientLifecycleStatus, UserRole } from '@/types/database.types';
+
+const CLIENT_STATUS_OPTIONS: StatusOption[] = [
+  {
+    value: 'новый',
+    label: 'Новый',
+    colorClass: 'bg-blue-500/10 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20',
+  },
+  {
+    value: 'подключен',
+    label: 'Подключен',
+    colorClass: 'bg-cyan-500/10 dark:bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/20',
+  },
+  {
+    value: 'сопровождение',
+    label: 'Сопровождение',
+    colorClass: 'bg-purple-500/10 dark:bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20',
+  },
+  {
+    value: 'готов',
+    label: 'Готов (Выплачен)',
+    colorClass: 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+  },
+  {
+    value: 'отменен',
+    label: 'Отменен',
+    colorClass: 'bg-rose-500/10 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/20',
+  },
+];
+
+export default function ConnectionsPage() {
+  const router = useRouter();
+  const { showToast } = useToast();
+
+  const [connections, setConnections] = React.useState<ConnectionItem[]>([]);
+  const [totalCount, setTotalCount] = React.useState(0);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
+  const [userName, setUserName] = React.useState('Сотрудник CRM');
+  const [userLogin, setUserLogin] = React.useState('user');
+
+  // Статистика
+  const [stats, setStats] = React.useState<ConnectionsStats>({
+    total: 0,
+    newThisMonth: 0,
+    inMaintenance: 0,
+    totalBonusAmount: 0,
+  });
+
+  // Фильтры
+  const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
+  const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = React.useState<string>('all');
+
+  // Модальное окно просмотра / смены статуса
+  const [selectedConnection, setSelectedConnection] = React.useState<ConnectionItem | null>(null);
+  const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
+  const [statusToUpdate, setStatusToUpdate] = React.useState<ClientLifecycleStatus>('новый');
+
+  // Загрузка данных
+  const fetchData = React.useCallback(async (month?: string, status?: string) => {
+    setIsLoading(true);
+    try {
+      const monthFilter = month !== undefined ? month : selectedMonth;
+      const statusFilter = status !== undefined ? status : selectedStatus;
+
+      const [res, statsRes, monthsRes] = await Promise.all([
+        getConnections({
+          page: 1,
+          pageSize: 100,
+          accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
+          clientStatus: statusFilter !== 'all' ? statusFilter : undefined,
+        }),
+        getConnectionsStats(),
+        getAccrualMonthsList(),
+      ]);
+
+      if (res.currentUserRole === 'smm') {
+        setCurrentUserRole('smm');
+        setIsLoading(false);
+        return;
+      }
+
+      setConnections(res.connections);
+      setTotalCount(res.totalCount);
+      setStats(statsRes);
+      setAccrualMonths(monthsRes);
+
+      if (res.currentUserRole) {
+        setCurrentUserRole(res.currentUserRole);
+      }
+    } catch (err) {
+      console.error('Failed to load connections:', err);
+      showToast('Ошибка при загрузке реестра подключений', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedMonth, selectedStatus, showToast]);
+
+  // Проверка сессии при старте
+  React.useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (user) {
+        const { data: profile } = await supabase
+          .from('users')
+          .select('full_name, role, login')
+          .eq('auth_id', user.id)
+          .single();
+
+        if (profile) {
+          setUserName(profile.full_name);
+          setUserLogin(profile.login || 'user');
+          setCurrentUserRole(profile.role as UserRole);
+        }
+      }
+    });
+
+    fetchData();
+  }, [fetchData]);
+
+  // Обработчик изменения месяца
+  const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setSelectedMonth(val);
+    fetchData(val, selectedStatus);
+  };
+
+  // Обработчик изменения статуса
+  const handleStatusFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setSelectedStatus(val);
+    fetchData(selectedMonth, val);
+  };
+
+  // Открытие модального окна для просмотра
+  const handleRowClick = (connection: ConnectionItem) => {
+    setSelectedConnection(connection);
+    setStatusToUpdate(connection.client_status);
+  };
+
+  // Сохранение нового статуса сопровождения (строго admin)
+  const handleSaveStatus = async () => {
+    if (!selectedConnection) return;
+    setIsUpdatingStatus(true);
+    try {
+      const res = await updateConnectionClientStatus(
+        selectedConnection.connection_id,
+        statusToUpdate
+      );
+
+      if (res.success) {
+        showToast('Статус клиента успешно обновлен', 'success');
+        setSelectedConnection((prev) =>
+          prev ? { ...prev, client_status: statusToUpdate } : null
+        );
+        fetchData();
+      } else {
+        showToast(res.error || 'Ошибка при обновлении статуса', 'error');
+      }
+    } catch {
+      showToast('Не удалось обновить статус', 'error');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  // Если пользователь SMM — доступ закрыт
+  if (currentUserRole === 'smm') {
+    return (
+      <AppLayout userRole="smm" userName={userName} userLogin={userLogin}>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
+          <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500 mb-4">
+            <ShieldAlert className="w-8 h-8" strokeWidth={1.75} />
+          </div>
+          <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
+            Доступ к разделу ограничен
+          </h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2 max-w-md">
+            Реестр подключений и начислений комиссий доступен исключительно продавцам-консультантам и администраторам системы.
+          </p>
+          <button
+            onClick={() => router.push('/leads')}
+            className="mt-6 h-10 px-5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold shadow-md transition-all active:scale-95"
+          >
+            Вернуться к лидам
+          </button>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  // Конфигурация колонок DataJournal
+  const columns: ColumnDef<ConnectionItem>[] = [
+    {
+      key: 'seller_name',
+      label: 'Продавец / Магазин',
+      width: 220,
+      minWidth: 180,
+      sortable: true,
+      filterable: true,
+      renderCell: (row) => (
+        <div className="flex flex-col">
+          <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs truncate">
+            {row.seller_name}
+          </span>
+          <div className="flex items-center gap-1 text-[11px] text-zinc-400 mt-0.5">
+            <Store className="w-3 h-3 flex-shrink-0" strokeWidth={1.5} />
+            <span className="truncate">{row.store || 'Без магазина'}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'seller_phone',
+      label: 'Телефон',
+      width: 170,
+      minWidth: 150,
+      sortable: true,
+      filterable: true,
+      type: 'phone',
+      phoneAccessor: (row) => row.seller_phone,
+      renderCell: (row) => {
+        const cleanPhone = row.seller_phone.replace(/\D/g, '');
+        return (
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
+              +{row.seller_phone}
+            </span>
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <a
+                href={`https://wa.me/${cleanPhone}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Написать в WhatsApp"
+                className="w-6 h-6 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-colors"
+              >
+                <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </a>
+              <a
+                href={`tel:+${cleanPhone}`}
+                title="Позвонить"
+                className="w-6 h-6 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 flex items-center justify-center transition-colors"
+              >
+                <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </a>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'manager_user',
+      label: 'Консультант',
+      width: 180,
+      minWidth: 150,
+      sortable: true,
+      filterable: true,
+      renderCell: (row) => {
+        if (!row.manager_user) {
+          return (
+            <span className="text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
+              Не назначен
+            </span>
+          );
+        }
+        return (
+          <div className="flex items-center gap-1.5">
+            <div className="w-5 h-5 rounded-full bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-[10px] font-bold flex items-center justify-center">
+              {row.manager_user.full_name.charAt(0)}
+            </div>
+            <span className="text-xs font-medium truncate">
+              {row.manager_user.full_name}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'assigned_at',
+      label: 'Дата привязки',
+      width: 140,
+      minWidth: 120,
+      sortable: true,
+      filterable: true,
+      renderCell: (row) => {
+        const d = new Date(row.assigned_at);
+        return (
+          <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
+            {d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'plan_price',
+      label: 'Тариф',
+      width: 110,
+      minWidth: 90,
+      sortable: true,
+      filterable: true,
+      renderCell: (row) => (
+        <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+          {Number(row.plan_price).toLocaleString('ru-RU')} сом
+        </span>
+      ),
+    },
+    {
+      key: 'connection_fee_percent',
+      label: 'Ставка',
+      width: 90,
+      minWidth: 80,
+      sortable: true,
+      filterable: false,
+      renderCell: (row) => (
+        <span className="font-mono text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+          {row.connection_fee_percent}%
+        </span>
+      ),
+    },
+    {
+      key: 'connection_fee_amount',
+      label: 'Бонус подключения',
+      width: 160,
+      minWidth: 140,
+      sortable: true,
+      filterable: true,
+      renderCell: (row) => (
+        <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+          +{Number(row.connection_fee_amount).toLocaleString('ru-RU')} сом
+        </span>
+      ),
+    },
+    {
+      key: 'accrual_month',
+      label: 'Период',
+      width: 110,
+      minWidth: 95,
+      sortable: true,
+      filterable: true,
+      renderCell: (row) => (
+        <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
+          {row.accrual_month}
+        </span>
+      ),
+    },
+    {
+      key: 'client_status',
+      label: 'Статус клиента',
+      width: 150,
+      minWidth: 130,
+      sortable: true,
+      filterable: true,
+      type: 'status',
+      statusOptions: CLIENT_STATUS_OPTIONS,
+    },
+  ];
+
+  return (
+    <AppLayout
+      userRole={currentUserRole}
+      userName={userName}
+      userLogin={userLogin}
+    >
+      <div className="space-y-6">
+        {/* 1. Верхний информационный блок */}
+        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-500/20">
+                <Link2 className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                Реестр подключений (Клиенты)
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/30">
+                {totalCount} записей
+              </span>
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              Закрепление продавцов за консультантами, контроль сопровождения и начисления комиссий
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
+            {/* Селектор расчетного месяца */}
+            <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60">
+              <Calendar className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
+              <select
+                value={selectedMonth}
+                onChange={handleMonthChange}
+                className="bg-transparent text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
+              >
+                <option value="all">Все месяцы</option>
+                {accrualMonths.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Селектор статуса клиента */}
+            <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60">
+              <Layers className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
+              <select
+                value={selectedStatus}
+                onChange={handleStatusFilterChange}
+                className="bg-transparent text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
+              >
+                <option value="all">Все статусы</option>
+                <option value="новый">Новый</option>
+                <option value="подключен">Подключен</option>
+                <option value="сопровождение">Сопровождение</option>
+                <option value="готов">Готов (Выплачен)</option>
+                <option value="отменен">Отменен</option>
+              </select>
+            </div>
+
+            {/* Кнопка обновления */}
+            <button
+              onClick={() => fetchData()}
+              title="Обновить реестр"
+              className="w-9 h-9 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center justify-center transition-all active:scale-95 border border-zinc-200/60 dark:border-zinc-700/60"
+            >
+              <RotateCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+            </button>
+          </div>
+        </div>
+
+        {/* 2. KPI карточки */}
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+            <span className="text-[11px] text-zinc-400 font-medium">Всего подключений</span>
+            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.total}</p>
+          </div>
+          <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Новые за месяц</span>
+            <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
+          </div>
+          <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+            <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">В сопровождении</span>
+            <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
+          </div>
+          <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Бонусы к начислению</span>
+            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+              +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
+            </p>
+          </div>
+        </div>
+
+        {/* 3. Универсальный реестр DataJournal */}
+        <DataJournal<ConnectionItem>
+          data={connections}
+          columns={columns}
+          keyField="connection_id"
+          storageKey="connections_journal"
+          title="Журнал привязок"
+          subtitle="Активные клиенты и закрепленные за ними консультанты"
+          searchPlaceholder="Поиск по продавцу, магазину или телефону..."
+          onRowClick={handleRowClick}
+          totalCount={totalCount}
+        />
+
+        {/* 4. Модальное окно деталей закрепления и смены статуса (Glassmorphism) */}
+        {selectedConnection && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Шапка модалки */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <Link2 className="w-5 h-5" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      {selectedConnection.seller_name}
+                    </h3>
+                    <p className="text-xs text-zinc-400">
+                      {selectedConnection.store || 'Без магазина'} • +{selectedConnection.seller_phone}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedConnection(null)}
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
+                >
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
+              </div>
+
+              {/* Сетка параметров */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-1">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
+                    Консультант
+                  </span>
+                  <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                    {selectedConnection.manager_user?.full_name || 'Не назначен'}
+                  </p>
+                  <span className="text-[10px] text-zinc-400 block">
+                    Привязал: {selectedConnection.assigned_user?.full_name || 'Система'}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-1">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
+                    Дата привязки
+                  </span>
+                  <p className="font-semibold text-zinc-900 dark:text-zinc-100 font-mono">
+                    {new Date(selectedConnection.assigned_at).toLocaleDateString('ru-RU')}
+                  </p>
+                  <span className="text-[10px] text-zinc-400 block font-mono">
+                    Период: {selectedConnection.accrual_month}
+                  </span>
+                </div>
+              </div>
+
+              {/* Финансовые начисления */}
+              <div className="p-4 rounded-2xl bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-600 dark:text-zinc-400">Тариф продавца:</span>
+                  <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+                    {Number(selectedConnection.plan_price).toLocaleString('ru-RU')} сом
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-600 dark:text-zinc-400">Ставка бонуса за подключение:</span>
+                  <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+                    {selectedConnection.connection_fee_percent}%
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm pt-1 border-t border-emerald-500/20 font-bold">
+                  <span className="text-emerald-700 dark:text-emerald-300">Начисленный бонус:</span>
+                  <span className="font-mono text-emerald-600 dark:text-emerald-400 text-base">
+                    +{Number(selectedConnection.connection_fee_amount).toLocaleString('ru-RU')} сом
+                  </span>
+                </div>
+              </div>
+
+              {/* Сопровождение и статус жизненного цикла */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
+                    Статус жизненного цикла:
+                  </label>
+                  <span className="text-[11px] text-zinc-400">
+                    Сопровождение: {selectedConnection.maintenance_months_accrued} из {selectedConnection.maintenance_months_limit} мес.
+                  </span>
+                </div>
+
+                {currentUserRole === 'admin' ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={statusToUpdate}
+                      onChange={(e) => setStatusToUpdate(e.target.value as ClientLifecycleStatus)}
+                      className="flex-1 px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    >
+                      <option value="новый">Новый</option>
+                      <option value="подключен">Подключен</option>
+                      <option value="сопровождение">Сопровождение</option>
+                      <option value="готов">Готов (Выплачен)</option>
+                      <option value="отменен">Отменен</option>
+                    </select>
+                    <button
+                      onClick={handleSaveStatus}
+                      disabled={isUpdatingStatus || statusToUpdate === selectedConnection.client_status}
+                      className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isUpdatingStatus ? 'Сохранение...' : 'Обновить'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-xs font-medium text-zinc-600 dark:text-zinc-300 flex items-center justify-between">
+                    <span>Текущий статус:</span>
+                    <span className="font-semibold capitalize">{selectedConnection.client_status}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Кнопка закрытия */}
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedConnection(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  Закрыть
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </AppLayout>
+  );
+}

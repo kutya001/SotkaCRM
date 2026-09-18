@@ -5,6 +5,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, PIPELINE_STATUS_OPTIONS } from '@/components/ui/DataJournal';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { SalesScriptsSheet } from '@/components/leads/SalesScriptsSheet';
+import { LeadSellerMappingModal } from '@/components/leads/LeadSellerMappingModal';
 import { useToast } from '@/components/ui/Toast';
 import {
   getLeads,
@@ -83,6 +84,16 @@ export default function LeadsPage() {
     reason: '',
   });
 
+  // Состояние модального окна связывания «Лид -> Продавец»
+  const [currentUserId, setCurrentUserId] = React.useState<string>('');
+  const [mappingModal, setMappingModal] = React.useState<{
+    isOpen: boolean;
+    lead: LeadItem | null;
+  }>({
+    isOpen: false,
+    lead: null,
+  });
+
   // Загрузка начальных данных и профиля
   const fetchInitialData = React.useCallback(async () => {
     setIsLoading(true);
@@ -115,10 +126,11 @@ export default function LeadsPage() {
       if (user) {
         const { data: profile } = await supabase
           .from('users')
-          .select('role, full_name, login')
+          .select('user_id, role, full_name, login')
           .eq('auth_id', user.id)
           .single();
         if (profile) {
+          setCurrentUserId(profile.user_id);
           setCurrentUserRole(profile.role);
           setUserName(profile.full_name);
           setUserLogin(profile.login);
@@ -417,10 +429,18 @@ export default function LeadsPage() {
   };
 
   const handleLinkSeller = (lead: LeadItem) => {
-    showToast(
-      `Связывание лида «${lead.client_name}» с продавцом будет активировано в Этапе 5`,
-      'info'
-    );
+    if (lead.seller_phone) {
+      showToast(`Лид уже привязан к продавцу +${lead.seller_phone}`, 'info');
+      return;
+    }
+    if (currentUserRole === 'smm') {
+      showToast('Привязка продавцов доступна только администраторам и консультантам', 'error');
+      return;
+    }
+    setMappingModal({
+      isOpen: true,
+      lead,
+    });
   };
 
   return (
@@ -592,6 +612,19 @@ export default function LeadsPage() {
             </div>
           </div>
         )}
+
+        {/* 7. Модальное окно ручного связывания Лид -> Продавец */}
+        <LeadSellerMappingModal
+          isOpen={mappingModal.isOpen}
+          onClose={() => setMappingModal({ isOpen: false, lead: null })}
+          lead={mappingModal.lead}
+          currentUserId={currentUserId}
+          currentUserRole={currentUserRole}
+          onSuccess={async () => {
+            setModalState((prev) => ({ ...prev, isOpen: false }));
+            await fetchInitialData();
+          }}
+        />
       </div>
     </AppLayout>
   );

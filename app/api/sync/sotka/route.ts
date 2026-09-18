@@ -174,10 +174,15 @@ export async function POST() {
     }
 
     const durationMs = Date.now() - startTime;
+    console.info(
+      `[Sotka Sync] Успешно завершено за ${durationMs}ms: продавцов=${syncedSellersCount}, платежей=${syncedPaymentsCount}`
+    );
 
     return NextResponse.json({
       success: true,
+      syncedSellers: syncedSellersCount,
       sellersCount: syncedSellersCount,
+      syncedPayments: syncedPaymentsCount,
       paymentsCount: syncedPaymentsCount,
       durationMs,
       timestamp: new Date().toISOString(),

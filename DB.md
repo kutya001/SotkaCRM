@@ -111,9 +111,7 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 
  |
 | `auth_id` | `UUID` | `UNIQUE, REFERENCES auth.users(id)` | Ссылка на UID пользователя в сервисе Supabase Auth. |
-| `login` | `VARCHAR(100)` | `NOT NULL, UNIQUE` | Рабочий логин для идентификации.
-
- |
+| `login` | `VARCHAR(100)` | `NOT NULL, UNIQUE` | Рабочий логин для идентификации (регистронезависимая уникальность `users_login_lower_idx`). Для провайдера Supabase Auth инкапсулируется в синтетический адрес `${login.toLowerCase()}@internal.sotka.kg`, скрытый от пользователя. |
 | `full_name` | `VARCHAR(255)` | `NOT NULL` | Полное ФИО сотрудника.
 
  |
@@ -567,6 +565,9 @@ CREATE INDEX idx_conn_manager_month ON connections(manager_id, accrual_month);
 CREATE INDEX idx_maint_manager_month ON client_maintenance(manager_id, accrual_month);
 CREATE INDEX idx_payouts_user_month ON employee_payouts(user_id, accrual_month);
 
+-- Регистронезависимая уникальность логина сотрудников
+CREATE UNIQUE INDEX users_login_lower_idx ON users (LOWER(TRIM(login)));
+
 ```
 
 ---
@@ -646,6 +647,77 @@ BEFORE INSERT OR UPDATE OF seller_phone ON leads
 FOR EACH ROW
 EXECUTE FUNCTION trg_validate_lead_seller_link();
 
+```
+
+**5.4. Создание учетной записи сотрудника и синтетический email (`create_crm_user`)**
+
+Инкапсуляция логина в Supabase Auth без раскрытия синтетического адреса пользователю:
+
+```sql
+CREATE OR REPLACE FUNCTION get_synthetic_email(p_login TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
+    SELECT LOWER(TRIM(p_login)) || '@internal.sotka.kg';
+$$;
+
+CREATE OR REPLACE FUNCTION create_crm_user(
+    p_login VARCHAR(100),
+    p_password TEXT,
+    p_full_name VARCHAR(255),
+    p_phone VARCHAR(30) DEFAULT NULL,
+    p_role user_role DEFAULT 'consultant'
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    v_auth_id UUID;
+    v_user_id UUID;
+    v_synthetic_email TEXT;
+    v_cleaned_login TEXT;
+BEGIN
+    IF get_current_user_role() != 'admin' THEN
+        RAISE EXCEPTION 'Только администратор имеет право создавать учетные записи сотрудников';
+    END IF;
+
+    v_cleaned_login := TRIM(p_login);
+    IF LENGTH(v_cleaned_login) < 3 THEN
+        RAISE EXCEPTION 'Длина логина должна составлять не менее 3 символов';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM users WHERE LOWER(login) = LOWER(v_cleaned_login)) THEN
+        RAISE EXCEPTION 'Пользователь с логином «%» уже существует в системе', v_cleaned_login;
+    END IF;
+
+    v_synthetic_email := get_synthetic_email(v_cleaned_login);
+    v_auth_id := gen_random_uuid();
+    v_user_id := gen_random_uuid();
+
+    INSERT INTO auth.users (
+        id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, is_sso_user, is_anonymous
+    ) VALUES (
+        v_auth_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+        v_synthetic_email, crypt(p_password, gen_salt('bf')), now(),
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        jsonb_build_object('full_name', p_full_name, 'role', p_role::text, 'login', v_cleaned_login),
+        now(), now(), false, false
+    );
+
+    INSERT INTO auth.identities (
+        id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at
+    ) VALUES (
+        v_auth_id, v_auth_id, format('{"sub":"%s","email":"%s"}', v_auth_id, v_synthetic_email)::jsonb,
+        'email', v_synthetic_email, now(), now(), now()
+    );
+
+    INSERT INTO users (user_id, auth_id, login, full_name, phone, role, is_active)
+    VALUES (v_user_id, v_auth_id, v_cleaned_login, TRIM(p_full_name), p_phone, p_role, true);
+
+    RETURN v_user_id;
+END;
+$$;
 ```
 
 ---

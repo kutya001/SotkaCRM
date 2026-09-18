@@ -3,70 +3,132 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import type { UserRole } from '@/types/database.types';
 
 export interface AuthState {
   error?: string;
   success?: boolean;
 }
 
+export interface CreateUserInput {
+  login: string;
+  password: string;
+  full_name: string;
+  phone?: string;
+  role: UserRole;
+}
+
+/**
+ * Аутентификация сотрудника по логину и паролю.
+ * Внутренний email инкапсулирован через синтетический домен @internal.sotka.kg.
+ */
 export async function login(prevState: AuthState, formData: FormData): Promise<AuthState> {
-  const identifier = (formData.get('identifier') || formData.get('email')) as string;
+  const loginInput = (formData.get('login') || formData.get('identifier') || formData.get('email')) as string;
   const password = formData.get('password') as string;
 
-  if (!identifier || !password) {
+  if (!loginInput || !password) {
     return { error: 'Пожалуйста, заполните логин и пароль.' };
   }
 
-  const cleanIdentifier = identifier.trim();
-
-  // Резолв логина: если введен чистый логин без @, приводим к email домена @sotka.kg
-  const email = cleanIdentifier.includes('@')
-    ? cleanIdentifier
-    : cleanIdentifier === 'consultant1'
-    ? 'consultant@sotka.kg'
-    : cleanIdentifier === 'smm_operator'
-    ? 'smm@sotka.kg'
-    : `${cleanIdentifier}@sotka.kg`;
-
+  const cleanLogin = loginInput.trim();
   const supabase = await createClient();
 
-  // 1. Аутентификация через Supabase Auth
+  // 1. Поиск сотрудника в таблице users по логину (case-insensitive)
+  const { data: userProfile, error: profileError } = await supabase
+    .from('users')
+    .select('user_id, auth_id, login, role, is_active')
+    .ilike('login', cleanLogin)
+    .single();
+
+  if (profileError || !userProfile) {
+    return { error: 'Пользователь с таким логином не найден в системе.' };
+  }
+
+  // 2. Проверка флага активности
+  if (!userProfile.is_active) {
+    return { error: 'Учетная запись отключена или заблокирована администратором.' };
+  }
+
+  // 3. Формирование синтетического email для Supabase Auth
+  const syntheticEmail = `${userProfile.login.toLowerCase()}@internal.sotka.kg`;
+
+  // 4. Аутентификация через Supabase Auth
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-    email,
+    email: syntheticEmail,
     password,
   });
 
   if (authError || !authData.user) {
-    return { error: 'Неверный логин (email) или пароль.' };
-  }
-
-  // 2. Извлечение профиля и роли из таблицы users
-  const profileRes = await supabase
-    .from('users')
-    .select('*')
-    .eq('auth_id', authData.user.id)
-    .single();
-
-  if (profileRes.error || !profileRes.data) {
-    await supabase.auth.signOut();
-    return { error: 'Профиль сотрудника в CRM не найден. Обратитесь к администратору.' };
-  }
-
-  const userProfile = profileRes.data;
-
-  // 3. Проверка флага активности (is_active = true)
-  if (!userProfile.is_active) {
-    await supabase.auth.signOut();
-    return { error: 'Учетная запись отключена или заблокирована администратором.' };
+    return { error: 'Неверный логин или пароль.' };
   }
 
   revalidatePath('/', 'layout');
   redirect('/');
 }
 
+/**
+ * Выход из системы
+ */
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
   revalidatePath('/', 'layout');
   redirect('/login');
+}
+
+/**
+ * Создание учетной записи нового сотрудника (строго для роли admin).
+ * Выполняется без запроса email у пользователя, связывая логин с auth.users.
+ */
+export async function createCrmUser(
+  input: CreateUserInput
+): Promise<{ success: boolean; userId?: string; error?: string }> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: 'Пользователь не аутентифицирован' };
+  }
+
+  // Проверка роли текущего пользователя
+  const { data: currentProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('auth_id', user.id)
+    .single();
+
+  if (!currentProfile || currentProfile.role !== 'admin') {
+    return { success: false, error: 'Создание пользователей доступно только администратору' };
+  }
+
+  if (!input.login || input.login.trim().length < 3) {
+    return { success: false, error: 'Логин должен содержать не менее 3 символов' };
+  }
+
+  if (!input.password || input.password.length < 6) {
+    return { success: false, error: 'Пароль должен содержать не менее 6 символов' };
+  }
+
+  if (!input.full_name || input.full_name.trim().length < 2) {
+    return { success: false, error: 'Укажите полное ФИО сотрудника' };
+  }
+
+  // Вызов функции базы данных create_crm_user со статусом SECURITY DEFINER
+  const { data: createdUserId, error: rpcError } = await supabase.rpc('create_crm_user', {
+    p_login: input.login.trim(),
+    p_password: input.password,
+    p_full_name: input.full_name.trim(),
+    p_phone: input.phone?.trim() || null,
+    p_role: input.role,
+  });
+
+  if (rpcError) {
+    return { success: false, error: rpcError.message };
+  }
+
+  revalidatePath('/', 'layout');
+  return { success: true, userId: createdUserId };
 }

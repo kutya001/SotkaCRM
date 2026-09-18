@@ -607,10 +607,24 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_crm_user: {
+        Args: {
+          p_login: string
+          p_password: string
+          p_full_name: string
+          p_phone?: string | null
+          p_role?: Database["public"]["Enums"]["user_role"]
+        }
+        Returns: string
+      }
       get_current_crm_user_id: { Args: never; Returns: string }
       get_current_user_role: {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]
+      }
+      get_synthetic_email: {
+        Args: { p_login: string }
+        Returns: string
       }
     }
     Enums: {

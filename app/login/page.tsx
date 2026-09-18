@@ -48,10 +48,10 @@ export default function LoginPage() {
         <form action={formAction} className="space-y-4">
           <div>
             <label
-              htmlFor="identifier"
+              htmlFor="login"
               className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1.5"
             >
-              Логин или Email
+              Логин
             </label>
             <div className="relative flex items-center">
               <User
@@ -59,12 +59,12 @@ export default function LoginPage() {
                 strokeWidth={1.75}
               />
               <input
-                id="identifier"
-                name="identifier"
+                id="login"
+                name="login"
                 type="text"
                 required
                 autoComplete="username"
-                placeholder="admin или operator@sotka.kg"
+                placeholder="admin, consultant1, smm_operator"
                 className="w-full h-11 pl-10 pr-4 text-sm bg-white/60 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700/60 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
               />
             </div>

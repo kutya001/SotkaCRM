@@ -38,10 +38,11 @@ ON CONFLICT (plan_id) DO UPDATE SET
 
 -- 2. Пользователи системы под каждую роль (таблица users)
 -- Роли: admin, consultant, smm (валидные hex-символы для UUID)
-INSERT INTO users (user_id, login, full_name, phone, role, is_active)
+INSERT INTO users (user_id, auth_id, login, full_name, phone, role, is_active)
 VALUES 
     (
         'a0000000-0000-0000-0000-000000000001',
+        '11111111-1111-1111-1111-111111111111',
         'admin',
         'Айбек Исмаилов',
         '996700888268',
@@ -50,6 +51,7 @@ VALUES
     ),
     (
         'c0000000-0000-0000-0000-000000000001',
+        '22222222-2222-2222-2222-222222222222',
         'consultant1',
         'Бакыт Токтосунов',
         '996500112233',
@@ -58,6 +60,7 @@ VALUES
     ),
     (
         'b0000000-0000-0000-0000-000000000001',
+        '33333333-3333-3333-3333-333333333333',
         'smm_operator',
         'Айпери Касымова',
         '996770445566',
@@ -65,6 +68,7 @@ VALUES
         true
     )
 ON CONFLICT (user_id) DO UPDATE SET
+    auth_id = EXCLUDED.auth_id,
     login = EXCLUDED.login,
     full_name = EXCLUDED.full_name,
     phone = EXCLUDED.phone,

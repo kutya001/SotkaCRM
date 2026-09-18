@@ -18,10 +18,30 @@ import {
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
+import { signOut } from '@/app/auth/actions';
+import { createClient } from '@/lib/supabase/client';
+
 export default function DashboardPage() {
   const [userRole, setUserRole] = React.useState<UserRole>('admin');
   const [userName, setUserName] = React.useState('Айбек Исмаилов');
   const [isSyncing, setIsSyncing] = React.useState(false);
+
+  React.useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (user) {
+        const { data: profile } = await supabase
+          .from('users')
+          .select('role, full_name, login')
+          .eq('auth_id', user.id)
+          .single();
+        if (profile) {
+          setUserRole(profile.role);
+          setUserName(profile.full_name);
+        }
+      }
+    });
+  }, []);
 
   const handleSyncApi = async () => {
     setIsSyncing(true);
@@ -31,15 +51,17 @@ export default function DashboardPage() {
     }, 1500);
   };
 
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
   return (
     <AppLayout
       userRole={userRole}
       userName={userName}
       onSyncApi={handleSyncApi}
       isSyncing={isSyncing}
-      onSignOut={() => {
-        window.location.href = '/login';
-      }}
+      onSignOut={handleSignOut}
     >
       <div className="space-y-6">
         {/* Приветственный блок */}

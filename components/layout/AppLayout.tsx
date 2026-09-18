@@ -67,8 +67,8 @@ export function AppLayout({
       {/* ЦЕНТРАЛЬНАЯ СКРОЛЛИРУЕМАЯ ОБЛАСТЬ */}
       <main
         className={`transition-all duration-300 min-h-screen ${
-          // Отступы для десктопа: слева сайдбар (288px / 112px), сверху header (96px)
-          sidebarCollapsed ? 'lg:pl-28' : 'lg:pl-72'
+          // Отступы для десктопа: слева сайдбар (288px / 96px), сверху header (96px)
+          sidebarCollapsed ? 'lg:pl-24' : 'lg:pl-72'
         } lg:pt-24 lg:pr-6 lg:pb-8 pt-20 px-3 pb-44`}
       >
         <div className="max-w-7xl mx-auto">{children}</div>

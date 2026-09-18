@@ -4,464 +4,785 @@ export type Json =
   | boolean
   | null
   | { [key: string]: Json | undefined }
-  | Json[];
+  | Json[]
 
-export type UserRole = 'admin' | 'consultant' | 'smm';
-export type LeadStatus = 'Открыт' | 'Обработан' | 'Назначен' | 'Подписан' | 'Отмена';
-export type ClientLifecycleStatus = 'новый' | 'подключен' | 'сопровождение' | 'готов' | 'отменен';
-export type MaintenanceStatus = 'начислено' | 'выплачено' | 'отменено';
-export type PayoutCategoryType = 'аванс' | 'выплата зп' | 'бонус' | 'прочие начисления' | 'удержание';
-export type SellerModerationStatus = 'approved' | 'pending' | 'rejected' | 'blocked';
-
-export interface Database {
+export type Database = {
   public: {
     Tables: {
-      users: {
-        Row: {
-          user_id: string;
-          auth_id: string | null;
-          login: string;
-          full_name: string;
-          phone: string | null;
-          role: UserRole;
-          is_active: boolean;
-          created_at: string;
-        };
-        Insert: {
-          user_id?: string;
-          auth_id?: string | null;
-          login: string;
-          full_name: string;
-          phone?: string | null;
-          role?: UserRole;
-          is_active?: boolean;
-          created_at?: string;
-        };
-        Update: {
-          user_id?: string;
-          auth_id?: string | null;
-          login?: string;
-          full_name?: string;
-          phone?: string | null;
-          role?: UserRole;
-          is_active?: boolean;
-          created_at?: string;
-        };
-      };
-      plans: {
-        Row: {
-          plan_id: string;
-          plan_name: string;
-          price: number;
-          billing_period: string;
-          description: string | null;
-          is_active: boolean;
-          updated_at: string;
-        };
-        Insert: {
-          plan_id: string;
-          plan_name: string;
-          price: number;
-          billing_period?: string;
-          description?: string | null;
-          is_active?: boolean;
-          updated_at?: string;
-        };
-        Update: {
-          plan_id?: string;
-          plan_name?: string;
-          price?: number;
-          billing_period?: string;
-          description?: string | null;
-          is_active?: boolean;
-          updated_at?: string;
-        };
-      };
-      plans_history: {
-        Row: {
-          history_id: string;
-          plan_id: string;
-          plan_name: string;
-          old_price: number;
-          new_price: number;
-          changed_by: string | null;
-          changed_at: string;
-        };
-        Insert: {
-          history_id?: string;
-          plan_id: string;
-          plan_name: string;
-          old_price: number;
-          new_price: number;
-          changed_by?: string | null;
-          changed_at?: string;
-        };
-        Update: {
-          history_id?: string;
-          plan_id?: string;
-          plan_name?: string;
-          old_price?: number;
-          new_price?: number;
-          changed_by?: string | null;
-          changed_at?: string;
-        };
-      };
-      sellers: {
-        Row: {
-          seller_phone: string;
-          seller_name: string;
-          store: string;
-          plan_id: string | null;
-          plan_name: string;
-          balance: number;
-          moderation: SellerModerationStatus;
-          is_active: boolean;
-          registered_at: string | null;
-          last_activity: string | null;
-          employees_count: number;
-          outlets_count: number;
-          brands: string | null;
-          organization_id: string | null;
-          manager_id: string | null;
-          synced_at: string;
-        };
-        Insert: {
-          seller_phone: string;
-          seller_name: string;
-          store?: string;
-          plan_id?: string | null;
-          plan_name?: string;
-          balance?: number;
-          moderation?: SellerModerationStatus;
-          is_active?: boolean;
-          registered_at?: string | null;
-          last_activity?: string | null;
-          employees_count?: number;
-          outlets_count?: number;
-          brands?: string | null;
-          organization_id?: string | null;
-          manager_id?: string | null;
-          synced_at?: string;
-        };
-        Update: {
-          seller_phone?: string;
-          seller_name?: string;
-          store?: string;
-          plan_id?: string | null;
-          plan_name?: string;
-          balance?: number;
-          moderation?: SellerModerationStatus;
-          is_active?: boolean;
-          registered_at?: string | null;
-          last_activity?: string | null;
-          employees_count?: number;
-          outlets_count?: number;
-          brands?: string | null;
-          organization_id?: string | null;
-          manager_id?: string | null;
-          synced_at?: string;
-        };
-      };
-      leads: {
-        Row: {
-          lead_id: string;
-          created_at: string;
-          client_name: string;
-          phone: string;
-          country_code: string;
-          status: LeadStatus;
-          instagram: string | null;
-          comment: string | null;
-          created_by: string;
-          assigned_to: string | null;
-          seller_phone: string | null;
-          linked_at: string | null;
-          updated_at: string;
-        };
-        Insert: {
-          lead_id?: string;
-          created_at?: string;
-          client_name: string;
-          phone: string;
-          country_code?: string;
-          status?: LeadStatus;
-          instagram?: string | null;
-          comment?: string | null;
-          created_by: string;
-          assigned_to?: string | null;
-          seller_phone?: string | null;
-          linked_at?: string | null;
-          updated_at?: string;
-        };
-        Update: {
-          lead_id?: string;
-          created_at?: string;
-          client_name?: string;
-          phone?: string;
-          country_code?: string;
-          status?: LeadStatus;
-          instagram?: string | null;
-          comment?: string | null;
-          created_by?: string;
-          assigned_to?: string | null;
-          seller_phone?: string | null;
-          linked_at?: string | null;
-          updated_at?: string;
-        };
-      };
-      payments: {
-        Row: {
-          payment_id: string;
-          user_phone: string;
-          user_id: string | null;
-          user_name: string | null;
-          amount: number;
-          date_time: string;
-          tran_type: string;
-          description: string | null;
-          status: string;
-          synced_at: string;
-        };
-        Insert: {
-          payment_id: string;
-          user_phone: string;
-          user_id?: string | null;
-          user_name?: string | null;
-          amount: number;
-          date_time: string;
-          tran_type: string;
-          description?: string | null;
-          status: string;
-          synced_at?: string;
-        };
-        Update: {
-          payment_id?: string;
-          user_phone?: string;
-          user_id?: string | null;
-          user_name?: string | null;
-          amount?: number;
-          date_time?: string;
-          tran_type?: string;
-          description?: string | null;
-          status?: string;
-          synced_at?: string;
-        };
-      };
-      connections: {
-        Row: {
-          connection_id: string;
-          seller_phone: string;
-          seller_name: string;
-          store: string;
-          manager_id: string;
-          assigned_by: string;
-          assigned_at: string;
-          status: string;
-          plan_id: string | null;
-          plan_price: number;
-          connection_fee_percent: number;
-          connection_fee_amount: number;
-          accrual_month: string;
-          maintenance_months_limit: number;
-          maintenance_months_accrued: number;
-          client_status: ClientLifecycleStatus;
-        };
-        Insert: {
-          connection_id?: string;
-          seller_phone: string;
-          seller_name: string;
-          store: string;
-          manager_id: string;
-          assigned_by: string;
-          assigned_at?: string;
-          status?: string;
-          plan_id?: string | null;
-          plan_price?: number;
-          connection_fee_percent?: number;
-          connection_fee_amount?: number;
-          accrual_month: string;
-          maintenance_months_limit?: number;
-          maintenance_months_accrued?: number;
-          client_status?: ClientLifecycleStatus;
-        };
-        Update: {
-          connection_id?: string;
-          seller_phone?: string;
-          seller_name?: string;
-          store?: string;
-          manager_id?: string;
-          assigned_by?: string;
-          assigned_at?: string;
-          status?: string;
-          plan_id?: string | null;
-          plan_price?: number;
-          connection_fee_percent?: number;
-          connection_fee_amount?: number;
-          accrual_month?: string;
-          maintenance_months_limit?: number;
-          maintenance_months_accrued?: number;
-          client_status?: ClientLifecycleStatus;
-        };
-      };
-      employee_rates: {
-        Row: {
-          rate_id: string;
-          user_id: string;
-          connection_percent: number;
-          maintenance_percent: number;
-          effective_from: string;
-          created_at: string;
-          created_by: string;
-        };
-        Insert: {
-          rate_id?: string;
-          user_id: string;
-          connection_percent?: number;
-          maintenance_percent?: number;
-          effective_from: string;
-          created_at?: string;
-          created_by: string;
-        };
-        Update: {
-          rate_id?: string;
-          user_id?: string;
-          connection_percent?: number;
-          maintenance_percent?: number;
-          effective_from?: string;
-          created_at?: string;
-          created_by?: string;
-        };
-      };
       client_maintenance: {
         Row: {
-          maintenance_id: string;
-          connection_id: string;
-          accrual_month: string;
-          seller_phone: string;
-          manager_id: string;
-          plan_id: string | null;
-          plan_price: number;
-          maintenance_percent: number;
-          maintenance_amount: number;
-          status: MaintenanceStatus;
-          accrued_at: string;
-          accrued_by: string | null;
-        };
+          accrual_month: string
+          accrued_at: string
+          accrued_by: string | null
+          connection_id: string
+          maintenance_amount: number
+          maintenance_id: string
+          maintenance_percent: number
+          manager_id: string
+          plan_id: string | null
+          plan_price: number
+          seller_phone: string
+          status: Database["public"]["Enums"]["maintenance_status"]
+        }
         Insert: {
-          maintenance_id?: string;
-          connection_id: string;
-          accrual_month: string;
-          seller_phone: string;
-          manager_id: string;
-          plan_id?: string | null;
-          plan_price: number;
-          maintenance_percent?: number;
-          maintenance_amount: number;
-          status?: MaintenanceStatus;
-          accrued_at?: string;
-          accrued_by?: string | null;
-        };
+          accrual_month: string
+          accrued_at?: string
+          accrued_by?: string | null
+          connection_id: string
+          maintenance_amount: number
+          maintenance_id?: string
+          maintenance_percent?: number
+          manager_id: string
+          plan_id?: string | null
+          plan_price: number
+          seller_phone: string
+          status?: Database["public"]["Enums"]["maintenance_status"]
+        }
         Update: {
-          maintenance_id?: string;
-          connection_id?: string;
-          accrual_month?: string;
-          seller_phone?: string;
-          manager_id?: string;
-          plan_id?: string | null;
-          plan_price?: number;
-          maintenance_percent?: number;
-          maintenance_amount?: number;
-          status?: MaintenanceStatus;
-          accrued_at?: string;
-          accrued_by?: string | null;
-        };
-      };
+          accrual_month?: string
+          accrued_at?: string
+          accrued_by?: string | null
+          connection_id?: string
+          maintenance_amount?: number
+          maintenance_id?: string
+          maintenance_percent?: number
+          manager_id?: string
+          plan_id?: string | null
+          plan_price?: number
+          seller_phone?: string
+          status?: Database["public"]["Enums"]["maintenance_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_maintenance_accrued_by_fkey"
+            columns: ["accrued_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "client_maintenance_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "connections"
+            referencedColumns: ["connection_id"]
+          },
+          {
+            foreignKeyName: "client_maintenance_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "client_maintenance_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["plan_id"]
+          },
+          {
+            foreignKeyName: "client_maintenance_seller_phone_fkey"
+            columns: ["seller_phone"]
+            isOneToOne: false
+            referencedRelation: "sellers"
+            referencedColumns: ["seller_phone"]
+          },
+        ]
+      }
+      connections: {
+        Row: {
+          accrual_month: string
+          assigned_at: string
+          assigned_by: string
+          client_status: Database["public"]["Enums"]["client_lifecycle_status"]
+          connection_fee_amount: number
+          connection_fee_percent: number
+          connection_id: string
+          maintenance_months_accrued: number
+          maintenance_months_limit: number
+          manager_id: string
+          plan_id: string | null
+          plan_price: number
+          seller_name: string
+          seller_phone: string
+          status: string
+          store: string
+        }
+        Insert: {
+          accrual_month: string
+          assigned_at?: string
+          assigned_by: string
+          client_status?: Database["public"]["Enums"]["client_lifecycle_status"]
+          connection_fee_amount?: number
+          connection_fee_percent?: number
+          connection_id?: string
+          maintenance_months_accrued?: number
+          maintenance_months_limit?: number
+          manager_id: string
+          plan_id?: string | null
+          plan_price?: number
+          seller_name: string
+          seller_phone: string
+          status?: string
+          store: string
+        }
+        Update: {
+          accrual_month?: string
+          assigned_at?: string
+          assigned_by?: string
+          client_status?: Database["public"]["Enums"]["client_lifecycle_status"]
+          connection_fee_amount?: number
+          connection_fee_percent?: number
+          connection_id?: string
+          maintenance_months_accrued?: number
+          maintenance_months_limit?: number
+          manager_id?: string
+          plan_id?: string | null
+          plan_price?: number
+          seller_name?: string
+          seller_phone?: string
+          status?: string
+          store?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connections_assigned_by_fkey"
+            columns: ["assigned_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "connections_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "connections_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["plan_id"]
+          },
+          {
+            foreignKeyName: "connections_seller_phone_fkey"
+            columns: ["seller_phone"]
+            isOneToOne: false
+            referencedRelation: "sellers"
+            referencedColumns: ["seller_phone"]
+          },
+        ]
+      }
       employee_payouts: {
         Row: {
-          payout_id: string;
-          user_id: string;
-          accrual_month: string;
-          payout_date: string;
-          amount: number;
-          payout_category: PayoutCategoryType;
-          payment_method: string;
-          comment: string | null;
-          created_by: string;
-          created_at: string;
-        };
+          accrual_month: string
+          amount: number
+          comment: string | null
+          created_at: string
+          created_by: string
+          payment_method: string
+          payout_category: Database["public"]["Enums"]["payout_category_type"]
+          payout_date: string
+          payout_id: string
+          user_id: string
+        }
         Insert: {
-          payout_id?: string;
-          user_id: string;
-          accrual_month: string;
-          payout_date?: string;
-          amount: number;
-          payout_category: PayoutCategoryType;
-          payment_method: string;
-          comment?: string | null;
-          created_by: string;
-          created_at?: string;
-        };
+          accrual_month: string
+          amount: number
+          comment?: string | null
+          created_at?: string
+          created_by: string
+          payment_method: string
+          payout_category: Database["public"]["Enums"]["payout_category_type"]
+          payout_date?: string
+          payout_id?: string
+          user_id: string
+        }
         Update: {
-          payout_id?: string;
-          user_id?: string;
-          accrual_month?: string;
-          payout_date?: string;
-          amount?: number;
-          payout_category?: PayoutCategoryType;
-          payment_method?: string;
-          comment?: string | null;
-          created_by?: string;
-          created_at?: string;
-        };
-      };
+          accrual_month?: string
+          amount?: number
+          comment?: string | null
+          created_at?: string
+          created_by?: string
+          payment_method?: string
+          payout_category?: Database["public"]["Enums"]["payout_category_type"]
+          payout_date?: string
+          payout_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_payouts_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "employee_payouts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      employee_rates: {
+        Row: {
+          connection_percent: number
+          created_at: string
+          created_by: string
+          effective_from: string
+          maintenance_percent: number
+          rate_id: string
+          user_id: string
+        }
+        Insert: {
+          connection_percent?: number
+          created_at?: string
+          created_by: string
+          effective_from: string
+          maintenance_percent?: number
+          rate_id?: string
+          user_id: string
+        }
+        Update: {
+          connection_percent?: number
+          created_at?: string
+          created_by?: string
+          effective_from?: string
+          maintenance_percent?: number
+          rate_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_rates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "employee_rates_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      leads: {
+        Row: {
+          assigned_to: string | null
+          client_name: string
+          comment: string | null
+          country_code: string
+          created_at: string
+          created_by: string
+          instagram: string | null
+          lead_id: string
+          linked_at: string | null
+          phone: string
+          seller_phone: string | null
+          status: Database["public"]["Enums"]["lead_status"]
+          updated_at: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          client_name: string
+          comment?: string | null
+          country_code?: string
+          created_at?: string
+          created_by: string
+          instagram?: string | null
+          lead_id?: string
+          linked_at?: string | null
+          phone: string
+          seller_phone?: string | null
+          status?: Database["public"]["Enums"]["lead_status"]
+          updated_at?: string
+        }
+        Update: {
+          assigned_to?: string | null
+          client_name?: string
+          comment?: string | null
+          country_code?: string
+          created_at?: string
+          created_by?: string
+          instagram?: string | null
+          lead_id?: string
+          linked_at?: string | null
+          phone?: string
+          seller_phone?: string | null
+          status?: Database["public"]["Enums"]["lead_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "leads_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "leads_seller_phone_fkey"
+            columns: ["seller_phone"]
+            isOneToOne: true
+            referencedRelation: "sellers"
+            referencedColumns: ["seller_phone"]
+          },
+        ]
+      }
       outlets: {
         Row: {
-          outlet_id: string;
-          seller_phone: string;
-          store_name: string;
-          latitude: number;
-          longitude: number;
-          manager_id: string | null;
-          created_at: string;
-        };
+          created_at: string
+          latitude: number
+          longitude: number
+          manager_id: string | null
+          outlet_id: string
+          seller_phone: string
+          store_name: string
+        }
         Insert: {
-          outlet_id?: string;
-          seller_phone: string;
-          store_name: string;
-          latitude: number;
-          longitude: number;
-          manager_id?: string | null;
-          created_at?: string;
-        };
+          created_at?: string
+          latitude: number
+          longitude: number
+          manager_id?: string | null
+          outlet_id?: string
+          seller_phone: string
+          store_name: string
+        }
         Update: {
-          outlet_id?: string;
-          seller_phone?: string;
-          store_name?: string;
-          latitude?: number;
-          longitude?: number;
-          manager_id?: string | null;
-          created_at?: string;
-        };
-      };
-    };
-    Views: Record<string, never>;
+          created_at?: string
+          latitude?: number
+          longitude?: number
+          manager_id?: string | null
+          outlet_id?: string
+          seller_phone?: string
+          store_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outlets_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "outlets_seller_phone_fkey"
+            columns: ["seller_phone"]
+            isOneToOne: false
+            referencedRelation: "sellers"
+            referencedColumns: ["seller_phone"]
+          },
+        ]
+      }
+      payments: {
+        Row: {
+          amount: number
+          date_time: string
+          description: string | null
+          payment_id: string
+          status: string
+          synced_at: string
+          tran_type: string
+          user_id: string | null
+          user_name: string | null
+          user_phone: string
+        }
+        Insert: {
+          amount: number
+          date_time: string
+          description?: string | null
+          payment_id: string
+          status: string
+          synced_at?: string
+          tran_type: string
+          user_id?: string | null
+          user_name?: string | null
+          user_phone: string
+        }
+        Update: {
+          amount?: number
+          date_time?: string
+          description?: string | null
+          payment_id?: string
+          status?: string
+          synced_at?: string
+          tran_type?: string
+          user_id?: string | null
+          user_name?: string | null
+          user_phone?: string
+        }
+        Relationships: []
+      }
+      plans: {
+        Row: {
+          billing_period: string
+          description: string | null
+          is_active: boolean
+          plan_id: string
+          plan_name: string
+          price: number
+          updated_at: string
+        }
+        Insert: {
+          billing_period?: string
+          description?: string | null
+          is_active?: boolean
+          plan_id: string
+          plan_name: string
+          price: number
+          updated_at?: string
+        }
+        Update: {
+          billing_period?: string
+          description?: string | null
+          is_active?: boolean
+          plan_id?: string
+          plan_name?: string
+          price?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      plans_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          history_id: string
+          new_price: number
+          old_price: number
+          plan_id: string
+          plan_name: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          history_id?: string
+          new_price: number
+          old_price: number
+          plan_id: string
+          plan_name: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          history_id?: string
+          new_price?: number
+          old_price?: number
+          plan_id?: string
+          plan_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plans_history_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["plan_id"]
+          },
+        ]
+      }
+      sellers: {
+        Row: {
+          balance: number
+          brands: string | null
+          employees_count: number
+          is_active: boolean
+          last_activity: string | null
+          manager_id: string | null
+          moderation: Database["public"]["Enums"]["seller_moderation_status"]
+          organization_id: string | null
+          outlets_count: number
+          plan_id: string | null
+          plan_name: string
+          registered_at: string | null
+          seller_name: string
+          seller_phone: string
+          store: string
+          synced_at: string
+        }
+        Insert: {
+          balance?: number
+          brands?: string | null
+          employees_count?: number
+          is_active?: boolean
+          last_activity?: string | null
+          manager_id?: string | null
+          moderation?: Database["public"]["Enums"]["seller_moderation_status"]
+          organization_id?: string | null
+          outlets_count?: number
+          plan_id?: string | null
+          plan_name?: string
+          registered_at?: string | null
+          seller_name: string
+          seller_phone: string
+          store?: string
+          synced_at?: string
+        }
+        Update: {
+          balance?: number
+          brands?: string | null
+          employees_count?: number
+          is_active?: boolean
+          last_activity?: string | null
+          manager_id?: string | null
+          moderation?: Database["public"]["Enums"]["seller_moderation_status"]
+          organization_id?: string | null
+          outlets_count?: number
+          plan_id?: string | null
+          plan_name?: string
+          registered_at?: string | null
+          seller_name?: string
+          seller_phone?: string
+          store?: string
+          synced_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sellers_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "sellers_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["plan_id"]
+          },
+        ]
+      }
+      users: {
+        Row: {
+          auth_id: string | null
+          created_at: string
+          full_name: string
+          is_active: boolean
+          login: string
+          phone: string | null
+          role: Database["public"]["Enums"]["user_role"]
+          user_id: string
+        }
+        Insert: {
+          auth_id?: string | null
+          created_at?: string
+          full_name: string
+          is_active?: boolean
+          login: string
+          phone?: string | null
+          role?: Database["public"]["Enums"]["user_role"]
+          user_id?: string
+        }
+        Update: {
+          auth_id?: string | null
+          created_at?: string
+          full_name?: string
+          is_active?: boolean
+          login?: string
+          phone?: string | null
+          role?: Database["public"]["Enums"]["user_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
     Functions: {
+      get_current_crm_user_id: { Args: never; Returns: string }
       get_current_user_role: {
-        Args: Record<PropertyKey, never>;
-        Returns: UserRole;
-      };
-      get_current_crm_user_id: {
-        Args: Record<PropertyKey, never>;
-        Returns: string;
-      };
-    };
+        Args: never
+        Returns: Database["public"]["Enums"]["user_role"]
+      }
+    }
     Enums: {
-      user_role: UserRole;
-      lead_status: LeadStatus;
-      client_lifecycle_status: ClientLifecycleStatus;
-      maintenance_status: MaintenanceStatus;
-      payout_category_type: PayoutCategoryType;
-      seller_moderation_status: SellerModerationStatus;
-    };
-  };
+      client_lifecycle_status:
+        | "новый"
+        | "подключен"
+        | "сопровождение"
+        | "готов"
+        | "отменен"
+      lead_status: "Открыт" | "Обработан" | "Назначен" | "Подписан" | "Отмена"
+      maintenance_status: "начислено" | "выплачено" | "отменено"
+      payout_category_type:
+        | "аванс"
+        | "выплата зп"
+        | "бонус"
+        | "прочие начисления"
+        | "удержание"
+      seller_moderation_status: "approved" | "pending" | "rejected" | "blocked"
+      user_role: "admin" | "consultant" | "smm"
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
 }
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never) = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never) = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never) = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never) = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never) = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {
+      client_lifecycle_status: [
+        "новый",
+        "подключен",
+        "сопровождение",
+        "готов",
+        "отменен",
+      ],
+      lead_status: ["Открыт", "Обработан", "Назначен", "Подписан", "Отмена"],
+      maintenance_status: ["начислено", "выплачено", "отменено"],
+      payout_category_type: [
+        "аванс",
+        "выплата зп",
+        "бонус",
+        "прочие начисления",
+        "удержание",
+      ],
+      seller_moderation_status: ["approved", "pending", "rejected", "blocked"],
+      user_role: ["admin", "consultant", "smm"],
+    },
+  },
+} as const;
+
+export type UserRole = Database['public']['Enums']['user_role'];
+export type LeadStatus = Database['public']['Enums']['lead_status'];
+export type ClientLifecycleStatus = Database['public']['Enums']['client_lifecycle_status'];
+export type MaintenanceStatus = Database['public']['Enums']['maintenance_status'];
+export type PayoutCategoryType = Database['public']['Enums']['payout_category_type'];
+export type SellerModerationStatus = Database['public']['Enums']['seller_moderation_status'];
+

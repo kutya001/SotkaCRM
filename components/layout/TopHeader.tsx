@@ -40,7 +40,7 @@ export function TopHeader({
   return (
     <header
       className={`hidden lg:flex items-center justify-between fixed top-4 right-4 z-30 h-16 rounded-2xl island-glass px-5 transition-all duration-300 ${
-        collapsed ? 'left-28' : 'left-72'
+        collapsed ? 'left-24' : 'left-72'
       }`}
     >
       {/* Название текущего модуля / Хлебные крошки */}

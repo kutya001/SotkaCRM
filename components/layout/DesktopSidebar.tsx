@@ -111,7 +111,7 @@ export function DesktopSidebar({
   return (
     <aside
       className={`hidden lg:flex flex-col fixed top-4 left-4 bottom-4 z-40 rounded-3xl island-glass transition-all duration-300 ${
-        collapsed ? 'w-20' : 'w-64'
+        collapsed ? 'w-[72px]' : 'w-64'
       }`}
     >
       {/* Логотип и переключатель сворачивания */}

@@ -80,6 +80,12 @@ const NAV_ITEMS: NavItem[] = [
     icon: BarChart3,
     roles: ['admin', 'consultant'],
   },
+  {
+    title: 'Демо реестра',
+    href: '/demo/journal',
+    icon: Layers,
+    roles: ['admin', 'consultant', 'smm'],
+  },
 ];
 
 export function DesktopSidebar({

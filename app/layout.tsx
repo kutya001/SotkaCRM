@@ -28,6 +28,8 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
+import { ToastProvider } from '@/components/ui/Toast';
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -42,7 +44,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <ToastProvider>{children}</ToastProvider>
         </ThemeProvider>
       </body>
     </html>

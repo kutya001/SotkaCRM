@@ -47,6 +47,12 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
     });
 
     if (authError || !authData.user) {
+      if (authError?.message?.toLowerCase().includes('api key')) {
+        return {
+          error: 'Ошибка конфигурации: недействительный API-ключ Supabase (NEXT_PUBLIC_SUPABASE_ANON_KEY). Проверьте Environment Variables на Vercel.',
+        };
+      }
+
       // Проверяем, существует ли логин в системе для информативного сообщения
       const { data: existingUser, error: existError } = await supabase
         .from('users')
@@ -54,12 +60,8 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
         .ilike('login', cleanLogin)
         .maybeSingle();
 
-      if (!existingUser) {
-        const keyVal = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-        const keyPreview = `${keyVal.slice(0, 10)}...${keyVal.slice(-10)} (len ${keyVal.length})`;
-        return { 
-          error: `Пользователь с таким логином не найден в системе. [auth: ${authError?.message || 'null'}; db: ${existError?.message || 'null'}; key: ${keyPreview}]` 
-        };
+      if (!existError && !existingUser) {
+        return { error: 'Пользователь с таким логином не найден в системе.' };
       }
       return { error: 'Неверный логин или пароль.' };
     }

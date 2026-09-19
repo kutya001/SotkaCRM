@@ -3,6 +3,14 @@ import { type SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse, type NextRequest } from 'next/server';
 import type { Database } from '@/types/database.types';
 
+function createRedirectWithCookies(url: URL, sourceResponse: NextResponse): NextResponse {
+  const redirectResponse = NextResponse.redirect(url);
+  sourceResponse.cookies.getAll().forEach((cookie) => {
+    redirectResponse.cookies.set(cookie);
+  });
+  return redirectResponse;
+}
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -47,14 +55,14 @@ export async function updateSession(request: NextRequest) {
   if (!user && !isAuthPage && !isApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
-    return NextResponse.redirect(url);
+    return createRedirectWithCookies(url, supabaseResponse);
   }
 
   // 3. Редирект авторизованных со страницы входа
   if (user && isAuthPage) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
-    return NextResponse.redirect(url);
+    return createRedirectWithCookies(url, supabaseResponse);
   }
 
   // 4. Защита маршрутов по ролевой модели (RBAC)
@@ -72,7 +80,7 @@ export async function updateSession(request: NextRequest) {
         const url = request.nextUrl.clone();
         url.pathname = '/login';
         url.searchParams.set('error', 'blocked');
-        return NextResponse.redirect(url);
+        return createRedirectWithCookies(url, supabaseResponse);
       }
 
       // Маршруты /admin/* и /plans/* разрешены строго для роли admin
@@ -82,7 +90,7 @@ export async function updateSession(request: NextRequest) {
       ) {
         const url = request.nextUrl.clone();
         url.pathname = '/';
-        return NextResponse.redirect(url);
+        return createRedirectWithCookies(url, supabaseResponse);
       }
 
       // Роли smm запрещен доступ к продавцам, платежам, связям и выплатам
@@ -93,7 +101,7 @@ export async function updateSession(request: NextRequest) {
       ) {
         const url = request.nextUrl.clone();
         url.pathname = '/leads';
-        return NextResponse.redirect(url);
+        return createRedirectWithCookies(url, supabaseResponse);
       }
     }
   }

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createClient } from '@/lib/supabase/server';
 import type { UserRole } from '@/types/database.types';
 
@@ -31,51 +32,67 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
   }
 
   const cleanLogin = loginInput.trim().toLowerCase().replace(/^@/, '').replace(/@internal\.sotka\.kg$/, '');
-  const supabase = await createClient();
+  let shouldRedirect = false;
 
-  // 1. Формирование синтетического email для Supabase Auth
-  const syntheticEmail = `${cleanLogin}@internal.sotka.kg`;
+  try {
+    const supabase = await createClient();
 
-  // 2. Аутентификация через Supabase Auth
-  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-    email: syntheticEmail,
-    password,
-  });
+    // 1. Формирование синтетического email для Supabase Auth
+    const syntheticEmail = `${cleanLogin}@internal.sotka.kg`;
 
-  if (authError || !authData.user) {
-    // Проверяем, существует ли логин в системе для информативного сообщения
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('user_id')
-      .ilike('login', cleanLogin)
-      .maybeSingle();
+    // 2. Аутентификация через Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: syntheticEmail,
+      password,
+    });
 
-    if (!existingUser) {
-      return { error: 'Пользователь с таким логином не найден в системе.' };
+    if (authError || !authData.user) {
+      // Проверяем, существует ли логин в системе для информативного сообщения
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('user_id')
+        .ilike('login', cleanLogin)
+        .maybeSingle();
+
+      if (!existingUser) {
+        return { error: 'Пользователь с таким логином не найден в системе.' };
+      }
+      return { error: 'Неверный логин или пароль.' };
     }
-    return { error: 'Неверный логин или пароль.' };
+
+    // 3. Извлечение профиля сотрудника
+    const { data: userProfile, error: profileError } = await supabase
+      .from('users')
+      .select('user_id, auth_id, login, role, is_active')
+      .eq('auth_id', authData.user.id)
+      .single();
+
+    if (profileError || !userProfile) {
+      await supabase.auth.signOut();
+      return { error: 'Профиль сотрудника не найден в системе CRM.' };
+    }
+
+    // 4. Проверка флага активности
+    if (!userProfile.is_active) {
+      await supabase.auth.signOut();
+      return { error: 'Учетная запись отключена или заблокирована администратором.' };
+    }
+
+    shouldRedirect = true;
+  } catch (err: unknown) {
+    if (isRedirectError(err)) {
+      throw err;
+    }
+    console.error('Ошибка аутентификации:', err);
+    return { error: 'Ошибка сервера при авторизации. Попробуйте еще раз.' };
   }
 
-  // 3. Извлечение профиля сотрудника
-  const { data: userProfile, error: profileError } = await supabase
-    .from('users')
-    .select('user_id, auth_id, login, role, is_active')
-    .eq('auth_id', authData.user.id)
-    .single();
-
-  if (profileError || !userProfile) {
-    await supabase.auth.signOut();
-    return { error: 'Профиль сотрудника не найден в системе CRM.' };
+  if (shouldRedirect) {
+    revalidatePath('/', 'layout');
+    redirect('/');
   }
 
-  // 4. Проверка флага активности
-  if (!userProfile.is_active) {
-    await supabase.auth.signOut();
-    return { error: 'Учетная запись отключена или заблокирована администратором.' };
-  }
-
-  revalidatePath('/', 'layout');
-  redirect('/');
+  return {};
 }
 
 /**

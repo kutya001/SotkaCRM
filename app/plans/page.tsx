@@ -28,17 +28,19 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 
 export default function PlansPage() {
   const { showToast } = useToast();
+  const user = useUser();
 
   const [plans, setPlans] = React.useState<PlanItem[]>([]);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Модалка редактирования / создания
   const [editModal, setEditModal] = React.useState<{
@@ -91,23 +93,14 @@ export default function PlansPage() {
   }, [showToast]);
 
   React.useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('full_name, role, login')
-          .eq('auth_id', user.id)
-          .single();
+    if (user.profile) {
+      setUserName(user.userName);
+      setUserLogin(user.userLogin);
+      setCurrentUserRole(user.role);
+    }
+  }, [user]);
 
-        if (profile) {
-          setUserName(profile.full_name);
-          setUserLogin(profile.login || 'user');
-          setCurrentUserRole(profile.role as UserRole);
-        }
-      }
-    });
-
+  React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 
@@ -300,17 +293,6 @@ export default function PlansPage() {
         <span className="hidden sm:inline">Обновить</span>
       </button>
 
-      {currentUserRole === 'admin' && (
-        <button
-          type="button"
-          onClick={handleOpenCreate}
-          className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive"
-          title="Добавить тариф"
-          aria-label="Добавить тариф"
-        >
-          <Plus className="w-5 h-5" strokeWidth={2.5} />
-        </button>
-      )}
     </div>
   );
 
@@ -322,6 +304,8 @@ export default function PlansPage() {
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
       searchPlaceholder="Поиск по названию или описанию тарифа..."
+      onCreateClick={currentUserRole === 'admin' ? handleOpenCreate : undefined}
+      createTooltip="Добавить тариф"
     >
       <div className="space-y-4">
         {/* Вкладки справочников */}

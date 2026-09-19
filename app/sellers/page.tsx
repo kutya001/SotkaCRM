@@ -31,6 +31,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 
 const SELLER_MODERATION_OPTIONS: StatusOption[] = [
@@ -59,13 +60,14 @@ const SELLER_MODERATION_OPTIONS: StatusOption[] = [
 export default function SellersPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const user = useUser();
 
   const [sellers, setSellers] = React.useState<SellerItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Статистика базы продавцов
   const [stats, setStats] = React.useState<SellersStats>({
@@ -144,29 +146,21 @@ export default function SellersPage() {
   );
 
   React.useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('role, full_name, login')
-          .eq('auth_id', user.id)
-          .single();
-        if (profile) {
-          if (profile.role === 'smm') {
-            showToast('Доступ к реестру продавцов запрещен вашей роли', 'error');
-            router.push('/leads');
-            return;
-          }
-          setCurrentUserRole(profile.role);
-          setUserName(profile.full_name);
-          setUserLogin(profile.login);
-        }
+    if (user.profile) {
+      if (user.role === 'smm') {
+        showToast('Доступ к реестру продавцов запрещен вашей роли', 'error');
+        router.push('/leads');
+        return;
       }
-    });
+      setCurrentUserRole(user.role);
+      setUserName(user.userName);
+      setUserLogin(user.userLogin);
+    }
+  }, [user, router, showToast]);
 
+  React.useEffect(() => {
     fetchSellersData();
-  }, [fetchSellersData, router, showToast]);
+  }, [fetchSellersData]);
 
   // Назначение куратора из модального окна (только админ)
   const handleAssignManager = async (seller: SellerItem, newManagerId: string | null) => {

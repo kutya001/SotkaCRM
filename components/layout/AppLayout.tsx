@@ -8,6 +8,8 @@ import { MobileHeader } from '@/components/layout/MobileHeader';
 import { MobileBottomBar } from '@/components/layout/MobileBottomBar';
 import { FAB } from '@/components/layout/FAB';
 import { useToast } from '@/components/ui/Toast';
+import { useUser } from '@/components/auth/AuthProvider';
+import { Plus } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
 interface AppLayoutProps {
@@ -23,13 +25,15 @@ interface AppLayoutProps {
   searchPlaceholder?: string;
   filterCount?: number;
   filterContent?: React.ReactNode;
+  onCreateClick?: () => void;
+  createTooltip?: string;
 }
 
 export function AppLayout({
   children,
-  userRole = 'admin',
-  userName = 'Администратор',
-  userLogin = 'admin',
+  userRole,
+  userName,
+  userLogin,
   onSignOut,
   onSyncApi,
   isSyncing = false,
@@ -38,9 +42,18 @@ export function AppLayout({
   searchPlaceholder,
   filterCount,
   filterContent,
+  onCreateClick,
+  createTooltip = 'Добавить',
 }: AppLayoutProps) {
   const pathname = usePathname();
   const { showToast } = useToast();
+  const user = useUser();
+
+  const effectiveRole = userRole || user.role;
+  const effectiveName = userName || user.userName;
+  const effectiveLogin = userLogin || user.userLogin;
+  const effectiveSignOut = onSignOut || user.signOut;
+
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [internalSyncing, setInternalSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
@@ -87,8 +100,11 @@ export function AppLayout({
   }
 
   const handleFabClick = () => {
-    // В этапе 2 здесь будет вызов шторки быстрого создания лида
-    window.location.href = '/leads?action=create';
+    if (onCreateClick) {
+      onCreateClick();
+    } else if (pathname === '/leads') {
+      window.location.href = '/leads?action=create';
+    }
   };
 
   return (
@@ -97,16 +113,16 @@ export function AppLayout({
       <DesktopSidebar
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-        userRole={userRole}
-        userName={userName}
-        userLogin={userLogin}
-        onSignOut={onSignOut}
+        userRole={effectiveRole}
+        userName={effectiveName}
+        userLogin={effectiveLogin}
+        onSignOut={effectiveSignOut}
       />
 
       <TopHeader
         collapsed={sidebarCollapsed}
-        userRole={userRole}
-        userName={userName}
+        userRole={effectiveRole}
+        userName={effectiveName}
         onSyncApi={handleSync}
         isSyncing={isSyncing || internalSyncing}
         lastSyncedAt={lastSyncedAt}
@@ -129,16 +145,33 @@ export function AppLayout({
       {/* ЦЕНТРАЛЬНАЯ СКРОЛЛИРУЕМАЯ ОБЛАСТЬ */}
       <main
         className={`transition-all duration-300 min-h-screen ${
-          // Отступы для десктопа: слева сайдбар (288px / 96px), сверху header (96px)
           sidebarCollapsed ? 'lg:pl-24' : 'lg:pl-72'
         } lg:pt-24 lg:pr-6 lg:pb-8 pt-20 px-3 pb-44`}
       >
         <div className="max-w-7xl mx-auto">{children}</div>
       </main>
 
-      {/* МОБИЛЬНЫЕ ЭЛЕМЕНТЫ УПРАВЛЕНИЯ */}
-      <FAB onClick={handleFabClick} label="Добавить новый лид" />
-      <MobileBottomBar userRole={userRole} />
+      {/* УНИВЕРСАЛЬНАЯ КНОПКА ДОБАВЛЕНИЯ: */}
+      {/* Мобильная кнопка FAB под большой палец правой руки */}
+      {(onCreateClick || pathname === '/leads') && (
+        <FAB onClick={handleFabClick} label={createTooltip} />
+      )}
+
+      {/* Десктопная кнопка добавления в правом нижнем углу как аккуратный квадратик-островок */}
+      {onCreateClick && (
+        <button
+          type="button"
+          onClick={onCreateClick}
+          className="hidden lg:flex fixed bottom-8 right-8 z-40 w-12 h-12 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 shadow-xl items-center justify-center hover:scale-105 active:scale-95 transition-all duration-150 border border-white/20 dark:border-zinc-800/40 cursor-pointer island-interactive group"
+          title={createTooltip}
+          aria-label={createTooltip}
+        >
+          <Plus className="w-5 h-5" strokeWidth={2.5} />
+          <span className="sr-only">{createTooltip}</span>
+        </button>
+      )}
+
+      <MobileBottomBar userRole={effectiveRole} />
     </div>
   );
 }

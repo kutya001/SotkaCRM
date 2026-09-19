@@ -33,6 +33,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import type { ClientLifecycleStatus, UserRole } from '@/types/database.types';
 
 const CLIENT_STATUS_OPTIONS: StatusOption[] = [
@@ -66,13 +67,14 @@ const CLIENT_STATUS_OPTIONS: StatusOption[] = [
 export default function ConnectionsPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const user = useUser();
 
   const [connections, setConnections] = React.useState<ConnectionItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Статистика
   const [stats, setStats] = React.useState<ConnectionsStats>({
@@ -139,25 +141,15 @@ export default function ConnectionsPage() {
     }
   }, [selectedMonth, selectedStatus, showToast]);
 
-  // Проверка сессии при старте
   React.useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('full_name, role, login')
-          .eq('auth_id', user.id)
-          .single();
+    if (user.profile) {
+      setUserName(user.userName);
+      setUserLogin(user.userLogin);
+      setCurrentUserRole(user.role);
+    }
+  }, [user]);
 
-        if (profile) {
-          setUserName(profile.full_name);
-          setUserLogin(profile.login || 'user');
-          setCurrentUserRole(profile.role as UserRole);
-        }
-      }
-    });
-
+  React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 

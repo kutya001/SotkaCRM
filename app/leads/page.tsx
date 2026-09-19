@@ -32,18 +32,20 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import type { LeadStatus, UserRole } from '@/types/database.types';
 
 function LeadsContent() {
   const { showToast } = useToast();
   const searchParams = useSearchParams();
+  const user = useUser();
 
   const [leads, setLeads] = React.useState<LeadItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Статистика воронки
   const [stats, setStats] = React.useState({
@@ -129,23 +131,15 @@ function LeadsContent() {
   }, [showToast]);
 
   React.useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('user_id, role, full_name, login')
-          .eq('auth_id', user.id)
-          .single();
-        if (profile) {
-          setCurrentUserId(profile.user_id);
-          setCurrentUserRole(profile.role);
-          setUserName(profile.full_name);
-          setUserLogin(profile.login);
-        }
-      }
-    });
+    if (user.profile) {
+      setCurrentUserId(user.profile.user_id);
+      setCurrentUserRole(user.role);
+      setUserName(user.userName);
+      setUserLogin(user.userLogin);
+    }
+  }, [user]);
 
+  React.useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
 
@@ -304,14 +298,8 @@ function LeadsContent() {
       label: 'Номер телефона',
       type: 'phone',
       required: true,
-      placeholder: '555123456 (без кода или полный)',
-      helperText: 'Номер абонента без пробелов и тире',
-    },
-    {
-      name: 'country_code',
-      label: 'Код страны',
-      placeholder: '996',
-      required: true,
+      placeholder: '700123456 (без кода страны)',
+      helperText: 'Номер абонента без пробелов и тире (код страны слева)',
     },
     {
       name: 'instagram',
@@ -561,17 +549,6 @@ function LeadsContent() {
         <BookOpen className="w-4 h-4 text-purple-500 flex-shrink-0" strokeWidth={1.75} />
         <span className="hidden sm:inline">Скрипты продаж</span>
       </button>
-
-      {/* Компактная кнопка создания лида [+] с touch target 44x44 */}
-      <button
-        type="button"
-        onClick={handleCreateClick}
-        className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive"
-        title="Добавить лид"
-        aria-label="Добавить лид"
-      >
-        <Plus className="w-5 h-5" strokeWidth={2.5} />
-      </button>
     </div>
   );
 
@@ -585,6 +562,8 @@ function LeadsContent() {
       searchPlaceholder="Быстрый поиск по телефону, имени или заметке..."
       filterCount={activeFilterCount}
       filterContent={filterContent}
+      onCreateClick={handleCreateClick}
+      createTooltip="Добавить лид"
     >
       <div className="space-y-4">
         {/* ЯРУС 2: KPI воронки продаж (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}

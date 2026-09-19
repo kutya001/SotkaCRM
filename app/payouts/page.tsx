@@ -30,6 +30,7 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import type { PayoutCategoryType, UserRole } from '@/types/database.types';
 
 const CATEGORY_STATUS_OPTIONS: StatusOption[] = [
@@ -62,13 +63,14 @@ const CATEGORY_STATUS_OPTIONS: StatusOption[] = [
 
 export default function PayoutsPage() {
   const { showToast } = useToast();
+  const user = useUser();
 
   const [payouts, setPayouts] = React.useState<PayoutItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Статистика
   const [stats, setStats] = React.useState<PayoutsStats>({
@@ -144,23 +146,14 @@ export default function PayoutsPage() {
   }, [selectedMonth, selectedCategory, showToast]);
 
   React.useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('full_name, role, login')
-          .eq('auth_id', user.id)
-          .single();
+    if (user.profile) {
+      setUserName(user.userName);
+      setUserLogin(user.userLogin);
+      setCurrentUserRole(user.role);
+    }
+  }, [user]);
 
-        if (profile) {
-          setUserName(profile.full_name);
-          setUserLogin(profile.login || 'user');
-          setCurrentUserRole(profile.role as UserRole);
-        }
-      }
-    });
-
+  React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 
@@ -400,18 +393,7 @@ export default function PayoutsPage() {
         <span className="hidden sm:inline">Обновить</span>
       </button>
 
-      {currentUserRole === 'admin' && (
-        <button
-          type="button"
-          onClick={() => setIsCreateOpen(true)}
-          className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive"
-          title="Оформить выплату"
-          aria-label="Оформить выплату"
-        >
-          <Plus className="w-5 h-5" strokeWidth={2.5} />
-        </button>
-      )}
-    </div>
+      </div>
   );
 
   return (
@@ -424,6 +406,8 @@ export default function PayoutsPage() {
       searchPlaceholder="Поиск по сотруднику, назначению или комментарию..."
       filterCount={activeFilterCount}
       filterContent={filterContent}
+      onCreateClick={currentUserRole === 'admin' ? () => setIsCreateOpen(true) : undefined}
+      createTooltip="Оформить выплату"
     >
       <div className="space-y-4">
         {/* ЯРУС 2: KPI сводка (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}

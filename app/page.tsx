@@ -23,6 +23,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import type { UserRole } from '@/types/database.types';
@@ -30,12 +31,13 @@ import type { UserRole } from '@/types/database.types';
 export default function DashboardPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const user = useUser();
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [profile, setProfile] = React.useState<UserProfileData | null>(null);
-  const [userRole, setUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [userRole, setUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Реальные оперативные метрики
   const [counts, setCounts] = React.useState({

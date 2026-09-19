@@ -17,6 +17,7 @@ async function handleSync(request: Request) {
   let token = '';
   let syncedSellersCount = 0;
   let syncedPaymentsCount = 0;
+  const warnings: string[] = [];
 
   try {
     // 0. Валидация серверной конфигурации окружения
@@ -117,7 +118,7 @@ async function handleSync(request: Request) {
       }
 
       const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] = items.map((item) => {
-        const rawDigits = item.seller_phone.replace(/\D/g, '');
+        const rawDigits = item.seller_phone ? String(item.seller_phone).replace(/\D/g, '') : '';
         const normalizedPhone = rawDigits.startsWith('996')
           ? rawDigits
           : `${item.iso_code || '996'}${rawDigits}`;
@@ -150,7 +151,7 @@ async function handleSync(request: Request) {
         .upsert(sellersToUpsert, { onConflict: 'seller_phone' });
 
       if (sellersUpsertError) {
-        console.error('Ошибка upsert продавцов:', sellersUpsertError);
+        console.error('[Sotka Sync] Ошибка upsert продавцов:', sellersUpsertError);
         throw new Error(`Ошибка сохранения продавцов: ${sellersUpsertError.message}`);
       }
 
@@ -162,54 +163,60 @@ async function handleSync(request: Request) {
       }
     }
 
-    // 4. Выгрузка транзакций
-    let txOffset = 0;
-    const txLimit = 100;
-    let hasMoreTx = true;
+    // 4. Выгрузка транзакций (изолирована в try/catch для предотвращения отката синхронизации продавцов)
+    try {
+      let txOffset = 0;
+      const txLimit = 100;
+      let hasMoreTx = true;
 
-    while (hasMoreTx) {
-      const { items, total } = await fetchTransactions(token, txOffset, txLimit);
+      while (hasMoreTx) {
+        const { items, total } = await fetchTransactions(token, txOffset, txLimit);
 
-      if (items.length === 0) {
-        hasMoreTx = false;
-        break;
+        if (items.length === 0) {
+          hasMoreTx = false;
+          break;
+        }
+
+        const paymentsToUpsert: Database['public']['Tables']['payments']['Insert'][] = items.map((item) => {
+          const rawDigits = item.user_phone ? String(item.user_phone).replace(/\D/g, '') : '';
+          const normalizedPhone = rawDigits.startsWith('996')
+            ? rawDigits
+            : `996${rawDigits}`;
+
+          return {
+            payment_id: String(item.payment_id),
+            user_phone: normalizedPhone,
+            user_name: item.user_name || null,
+            user_id: item.user_id ? String(item.user_id) : null,
+            amount: roundMoney(item.amount),
+            date_time: item.date_time || new Date().toISOString(),
+            tran_type: item.tran_type || 'topup',
+            description: item.description || null,
+            status: item.status || 'succeeded',
+            synced_at: new Date().toISOString(),
+          };
+        });
+
+        const { error: paymentsUpsertError } = await adminSupabase
+          .from('payments')
+          .upsert(paymentsToUpsert, { onConflict: 'payment_id' });
+
+        if (paymentsUpsertError) {
+          console.error('[Sotka Sync] Ошибка upsert платежей:', paymentsUpsertError);
+          warnings.push(`Ошибка сохранения порции платежей: ${paymentsUpsertError.message}`);
+          break;
+        }
+
+        syncedPaymentsCount += items.length;
+        txOffset += items.length;
+
+        if (txOffset >= total || items.length < txLimit) {
+          hasMoreTx = false;
+        }
       }
-
-      const paymentsToUpsert: Database['public']['Tables']['payments']['Insert'][] = items.map((item) => {
-        const rawDigits = item.user_phone.replace(/\D/g, '');
-        const normalizedPhone = rawDigits.startsWith('996')
-          ? rawDigits
-          : `996${rawDigits}`;
-
-        return {
-          payment_id: String(item.payment_id),
-          user_phone: normalizedPhone,
-          user_name: item.user_name || null,
-          user_id: item.user_id ? String(item.user_id) : null,
-          amount: roundMoney(item.amount),
-          date_time: item.date_time || new Date().toISOString(),
-          tran_type: item.tran_type || 'topup',
-          description: item.description || null,
-          status: item.status || 'succeeded',
-          synced_at: new Date().toISOString(),
-        };
-      });
-
-      const { error: paymentsUpsertError } = await adminSupabase
-        .from('payments')
-        .upsert(paymentsToUpsert, { onConflict: 'payment_id' });
-
-      if (paymentsUpsertError) {
-        console.error('Ошибка upsert платежей:', paymentsUpsertError);
-        throw new Error(`Ошибка сохранения платежей: ${paymentsUpsertError.message}`);
-      }
-
-      syncedPaymentsCount += items.length;
-      txOffset += items.length;
-
-      if (txOffset >= total || items.length < txLimit) {
-        hasMoreTx = false;
-      }
+    } catch (txErr: any) {
+      console.warn('[Sotka Sync] Выгрузка транзакций завершилась с предупреждением:', txErr?.message);
+      warnings.push(`Транзакции не синхронизированы: ${txErr?.message || 'Маршрут недоступен'}`);
     }
 
     const durationMs = Date.now() - startTime;
@@ -225,14 +232,17 @@ async function handleSync(request: Request) {
       paymentsCount: syncedPaymentsCount,
       durationMs,
       timestamp: new Date().toISOString(),
+      warnings: warnings.length > 0 ? warnings : undefined,
     });
   } catch (err: any) {
-    console.error('Ошибка в процессе синхронизации Sotka API:', err);
+    console.error('[Sotka Sync] Критическая ошибка синхронизации Sotka API:', err);
     return NextResponse.json(
       {
         success: false,
         error: err?.message || 'Неизвестная ошибка при синхронизации',
+        syncedSellers: syncedSellersCount,
         sellersCount: syncedSellersCount,
+        syncedPayments: syncedPaymentsCount,
         paymentsCount: syncedPaymentsCount,
       },
       { status: 500 }

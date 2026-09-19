@@ -20,6 +20,18 @@ import { PIPELINE_STATUS_OPTIONS, type StatusOption } from './DataJournal';
 
 export type EntityModalMode = 'view' | 'edit' | 'create';
 
+export const CIS_COUNTRIES = [
+  { code: '996', label: 'KG (+996)' },
+  { code: '7', label: 'KZ / RU (+7)' },
+  { code: '998', label: 'UZ (+998)' },
+  { code: '992', label: 'TJ (+992)' },
+  { code: '375', label: 'BY (+375)' },
+  { code: '994', label: 'AZ (+994)' },
+  { code: '374', label: 'AM (+374)' },
+  { code: '993', label: 'TM (+993)' },
+  { code: '373', label: 'MD (+373)' },
+];
+
 export interface EntityFieldConfig<T> {
   name: keyof T | string;
   label: string;
@@ -30,6 +42,7 @@ export interface EntityFieldConfig<T> {
   required?: boolean;
   options?: { value: string; label: string }[];
   helperText?: string;
+  countryCodeKey?: string;
   renderCustomView?: (val: any, data: T) => React.ReactNode;
 }
 
@@ -81,7 +94,15 @@ export function EntityModal<T extends Record<string, any>>({
         const initialForm: Record<string, any> = {};
         fields.forEach((f) => {
           if (!f.isSystem) {
-            initialForm[String(f.name)] = f.type === 'status' ? statusOptions[0]?.value || 'Открыт' : '';
+            if (f.type === 'status') {
+              initialForm[String(f.name)] = statusOptions[0]?.value || 'Открыт';
+            } else if (f.type === 'phone') {
+              initialForm[String(f.name)] = '';
+              const cKey = f.countryCodeKey || 'country_code';
+              initialForm[cKey] = '996';
+            } else {
+              initialForm[String(f.name)] = '';
+            }
           }
         });
         setFormData(initialForm);
@@ -343,6 +364,13 @@ export function EntityModal<T extends Record<string, any>>({
                       <div className="min-h-[38px] px-3 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200/40 dark:border-zinc-800/40 text-xs text-zinc-900 dark:text-zinc-100 flex items-center">
                         {field.renderCustomView ? (
                           field.renderCustomView(val, formData as T)
+                        ) : field.type === 'phone' ? (
+                          <div className="flex items-center gap-2 font-mono">
+                            <span className="px-2 py-0.5 rounded-md bg-zinc-200/70 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-xs font-semibold">
+                              +{String(formData[field.countryCodeKey || 'country_code'] || '996')}
+                            </span>
+                            <span className="font-semibold text-zinc-900 dark:text-zinc-100">{String(val || '—')}</span>
+                          </div>
                         ) : field.type === 'status' ? (
                           (() => {
                             const opt = statusOptions.find((o) => o.value === val);
@@ -367,7 +395,29 @@ export function EntityModal<T extends Record<string, any>>({
                     ) : (
                       /* СЦЕНАРИЙ 3: Режим Edit / Create (интерактивные инпуты) */
                       <div>
-                        {field.type === 'textarea' ? (
+                        {field.type === 'phone' ? (
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={String(formData[field.countryCodeKey || 'country_code'] || '996')}
+                              onChange={(e) => handleFieldChange(field.countryCodeKey || 'country_code', e.target.value)}
+                              className="w-36 h-9 px-2.5 text-xs font-mono bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all flex-shrink-0"
+                            >
+                              {CIS_COUNTRIES.map((c) => (
+                                <option key={c.code + c.label} value={c.code}>
+                                  {c.label}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="tel"
+                              value={val ?? ''}
+                              onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
+                              required={field.required}
+                              placeholder={field.placeholder || '700123456'}
+                              className="flex-1 h-9 px-3 text-xs font-mono bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
+                            />
+                          </div>
+                        ) : field.type === 'textarea' ? (
                           <textarea
                             value={val ?? ''}
                             onChange={(e) => handleFieldChange(fieldKey, e.target.value)}

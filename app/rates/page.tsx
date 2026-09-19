@@ -21,17 +21,19 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 
 export default function RatesPage() {
   const { showToast } = useToast();
+  const user = useUser();
 
   const [rates, setRates] = React.useState<EmployeeRateItem[]>([]);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState('user');
+  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const [userName, setUserName] = React.useState(user.userName);
+  const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Модалка настройки ставок
   const [selectedRate, setSelectedRate] = React.useState<EmployeeRateItem | null>(null);
@@ -58,23 +60,14 @@ export default function RatesPage() {
   }, [showToast]);
 
   React.useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('full_name, role, login')
-          .eq('auth_id', user.id)
-          .single();
+    if (user.profile) {
+      setUserName(user.userName);
+      setUserLogin(user.userLogin);
+      setCurrentUserRole(user.role);
+    }
+  }, [user]);
 
-        if (profile) {
-          setUserName(profile.full_name);
-          setUserLogin(profile.login || 'user');
-          setCurrentUserRole(profile.role as UserRole);
-        }
-      }
-    });
-
+  React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 

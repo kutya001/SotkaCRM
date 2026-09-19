@@ -33,6 +33,10 @@ export const LeadCreateSchema = z.object({
   country_code: z.string().default('996').optional(),
   instagram: z.string().optional().nullable(),
   comment: z.string().optional().nullable(),
-  assigned_to: z.string().uuid('Некорректный идентификатор ответственного').optional().nullable(),
+  assigned_to: z
+    .preprocess(
+      (val) => (typeof val === 'string' && val.trim() === '' ? null : val),
+      z.string().uuid('Некорректный идентификатор ответственного').nullable().optional()
+    ),
 });
 

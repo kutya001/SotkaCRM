@@ -93,8 +93,8 @@ export async function updateSession(request: NextRequest) {
         return createRedirectWithCookies(url, supabaseResponse);
       }
 
-      // Роли smm запрещен доступ к продавцам, платежам, связям и выплатам
-      const restrictedForSmm = ['/sellers', '/payments', '/connections', '/payouts'];
+      // Роли smm запрещен доступ к продавцам, платежам, связям, выплатам, аналитике и тарифам
+      const restrictedForSmm = ['/sellers', '/payments', '/connections', '/payouts', '/analytics', '/plans', '/rates'];
       if (
         profile.role === 'smm' &&
         restrictedForSmm.some((prefix) => pathname.startsWith(prefix))

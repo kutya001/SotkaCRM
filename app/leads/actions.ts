@@ -136,49 +136,88 @@ export async function createLead(input: {
   instagram?: string;
   comment?: string;
   assigned_to?: string | null;
-}) {
-  const { profile, supabase } = await requireAuth();
+}): Promise<{ success: boolean; error?: string; lead?: LeadItem }> {
+  try {
+    const { profile, supabase } = await requireAuth();
 
-  const parsed = LeadCreateSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new Error(parsed.error.issues[0].message);
+    // Санитизация пустых строк для опциональных полей перед валидацией
+    const sanitizedInput = {
+      ...input,
+      assigned_to:
+        input.assigned_to && input.assigned_to.trim() !== ''
+          ? input.assigned_to.trim()
+          : null,
+      country_code:
+        input.country_code && input.country_code.trim() !== ''
+          ? input.country_code.trim()
+          : '996',
+      instagram:
+        input.instagram && input.instagram.trim() !== ''
+          ? input.instagram.trim()
+          : null,
+      comment:
+        input.comment && input.comment.trim() !== ''
+          ? input.comment.trim()
+          : null,
+    };
+
+    const parsed = LeadCreateSchema.safeParse(sanitizedInput);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message || 'Ошибка валидации полей',
+      };
+    }
+
+    const valid = parsed.data;
+
+    // Очистка телефона от лишних символов (хранятся строго цифры)
+    const cleanPhone = valid.phone.replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 6) {
+      return {
+        success: false,
+        error: 'Укажите корректный номер телефона (минимум 6 цифр)',
+      };
+    }
+
+    // Если номер указан с кодом 996 (12 цифр), отсекаем его для унификации хранения
+    const phoneWithoutCode =
+      cleanPhone.startsWith('996') && cleanPhone.length > 9
+        ? cleanPhone.substring(3)
+        : cleanPhone;
+
+    const { data: newLead, error } = await supabase
+      .from('leads')
+      .insert({
+        client_name: valid.client_name.trim(),
+        phone: phoneWithoutCode,
+        country_code: valid.country_code || '996',
+        status: 'Открыт',
+        instagram: valid.instagram || null,
+        comment: valid.comment || null,
+        created_by: profile.user_id,
+        assigned_to: valid.assigned_to || null,
+      })
+      .select(
+        `
+          *,
+          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
+          created_user:users!leads_created_by_fkey(user_id, full_name, role)
+        `
+      )
+      .single();
+
+    if (error) {
+      console.error('Error creating lead:', error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/leads');
+    return { success: true, lead: newLead as unknown as LeadItem };
+  } catch (err: any) {
+    console.error('Unhandled error in createLead:', err);
+    return { success: false, error: err?.message || 'Не удалось создать лид' };
   }
-
-  const valid = parsed.data;
-
-  // Очистка телефона от лишних символов (хранятся строго цифры)
-  const cleanPhone = valid.phone.replace(/\D/g, '');
-  if (!cleanPhone) {
-    throw new Error('Укажите корректный номер телефона');
-  }
-
-  // Если номер указан с кодом 996 (12 цифр), отсекаем его
-  const phoneWithoutCode = cleanPhone.startsWith('996') && cleanPhone.length > 9
-    ? cleanPhone.substring(3)
-    : cleanPhone;
-
-  const { data: newLead, error } = await supabase
-    .from('leads')
-    .insert({
-      client_name: valid.client_name.trim(),
-      phone: phoneWithoutCode,
-      country_code: valid.country_code || '996',
-      status: 'Открыт',
-      instagram: valid.instagram?.trim() || null,
-      comment: valid.comment?.trim() || null,
-      created_by: profile.user_id,
-      assigned_to: valid.assigned_to || null,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error creating lead:', error);
-    throw new Error(error.message);
-  }
-
-  revalidatePath('/leads');
-  return newLead;
 }
 
 /**
@@ -195,106 +234,139 @@ export async function updateLead(
     assigned_to?: string | null;
     status?: LeadStatus;
   }
-) {
-  const { supabase } = await requireAuth();
+): Promise<{ success: boolean; error?: string; lead?: LeadItem }> {
+  try {
+    const { supabase } = await requireAuth();
 
-  const payload: Database['public']['Tables']['leads']['Update'] = {
-    updated_at: new Date().toISOString(),
-  };
+    const payload: Database['public']['Tables']['leads']['Update'] = {
+      updated_at: new Date().toISOString(),
+    };
 
-  if (updates.client_name !== undefined) payload.client_name = updates.client_name.trim();
-  if (updates.country_code !== undefined) payload.country_code = updates.country_code;
-  if (updates.instagram !== undefined) payload.instagram = updates.instagram?.trim() || null;
-  if (updates.comment !== undefined) payload.comment = updates.comment?.trim() || null;
-  if (updates.assigned_to !== undefined) payload.assigned_to = updates.assigned_to || null;
-  if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.client_name !== undefined) payload.client_name = updates.client_name.trim();
+    if (updates.country_code !== undefined) payload.country_code = updates.country_code;
+    if (updates.instagram !== undefined) {
+      payload.instagram = updates.instagram && updates.instagram.trim() !== '' ? updates.instagram.trim() : null;
+    }
+    if (updates.comment !== undefined) {
+      payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
+    }
+    if (updates.assigned_to !== undefined) {
+      payload.assigned_to =
+        updates.assigned_to && updates.assigned_to.trim() !== ''
+          ? updates.assigned_to.trim()
+          : null;
+    }
+    if (updates.status !== undefined) payload.status = updates.status;
 
-  if (updates.phone !== undefined) {
-    const cleanPhone = updates.phone.replace(/\D/g, '');
-    payload.phone = cleanPhone.startsWith('996') && cleanPhone.length > 9
-      ? cleanPhone.substring(3)
-      : cleanPhone;
+    if (updates.phone !== undefined) {
+      const cleanPhone = updates.phone.replace(/\D/g, '');
+      payload.phone =
+        cleanPhone.startsWith('996') && cleanPhone.length > 9
+          ? cleanPhone.substring(3)
+          : cleanPhone;
+    }
+
+    const { data, error } = await supabase
+      .from('leads')
+      .update(payload)
+      .eq('lead_id', leadId)
+      .select(
+        `
+          *,
+          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
+          created_user:users!leads_created_by_fkey(user_id, full_name, role)
+        `
+      )
+      .single();
+
+    if (error) {
+      console.error('Error updating lead:', error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/leads');
+    return { success: true, lead: data as unknown as LeadItem };
+  } catch (err: any) {
+    console.error('Unhandled error in updateLead:', err);
+    return { success: false, error: err?.message || 'Не удалось обновить лид' };
   }
-
-  const { data, error } = await supabase
-    .from('leads')
-    .update(payload)
-    .eq('lead_id', leadId)
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error updating lead:', error);
-    throw new Error(error.message);
-  }
-
-  revalidatePath('/leads');
-  return data;
 }
 
 /**
  * Экспресс-смена статуса лида
  */
-export async function updateLeadStatus(leadId: string, status: LeadStatus) {
-  const { supabase } = await requireAuth();
+export async function updateLeadStatus(
+  leadId: string,
+  status: LeadStatus
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAuth();
 
-  const { data, error } = await supabase
-    .from('leads')
-    .update({
-      status,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('lead_id', leadId)
-    .select()
-    .single();
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('lead_id', leadId);
 
-  if (error) {
-    console.error('Error updating lead status:', error);
-    throw new Error(error.message);
+    if (error) {
+      console.error('Error updating lead status:', error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/leads');
+    return { success: true };
+  } catch (err: any) {
+    console.error('Unhandled error in updateLeadStatus:', err);
+    return { success: false, error: err?.message || 'Не удалось обновить статус' };
   }
-
-  revalidatePath('/leads');
-  return data;
 }
 
 /**
  * Перевод лида в статус «Отмена» с сохранением причины
  * ВНИМАНИЕ: Физический вызов delete() строго запрещен триггером prevent_lead_delete!
  */
-export async function cancelLead(leadId: string, reason: string) {
-  const { supabase } = await requireAuth();
+export async function cancelLead(
+  leadId: string,
+  reason: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAuth();
 
-  // Получаем текущий комментарий лида
-  const { data: currentLead } = await supabase
-    .from('leads')
-    .select('comment')
-    .eq('lead_id', leadId)
-    .single();
+    // Получаем текущий комментарий лида
+    const { data: currentLead } = await supabase
+      .from('leads')
+      .select('comment')
+      .eq('lead_id', leadId)
+      .single();
 
-  const now = new Date().toLocaleDateString('ru-RU');
-  const cancellationNote = `[Отмена (${now})]: ${reason.trim()}`;
-  const updatedComment = currentLead?.comment
-    ? `${currentLead.comment}\n${cancellationNote}`
-    : cancellationNote;
+    const now = new Date().toLocaleDateString('ru-RU');
+    const cancellationNote = `[Отмена (${now})]: ${reason.trim()}`;
+    const updatedComment = currentLead?.comment
+      ? `${currentLead.comment}\n${cancellationNote}`
+      : cancellationNote;
 
-  const { data, error } = await supabase
-    .from('leads')
-    .update({
-      status: 'Отмена',
-      comment: updatedComment,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('lead_id', leadId)
-    .select()
-    .single();
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        status: 'Отмена',
+        comment: updatedComment,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('lead_id', leadId);
 
-  if (error) {
-    console.error('Error cancelling lead:', error);
-    throw new Error(error.message);
+    if (error) {
+      console.error('Error cancelling lead:', error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/leads');
+    return { success: true };
+  } catch (err: any) {
+    console.error('Unhandled error in cancelLead:', err);
+    return { success: false, error: err?.message || 'Не удалось отменить сделку' };
   }
-
-  revalidatePath('/leads');
-  return data;
 }
 
 /**

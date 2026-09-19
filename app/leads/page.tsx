@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, PIPELINE_STATUS_OPTIONS } from '@/components/ui/DataJournal';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
@@ -33,8 +34,9 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import type { LeadStatus, UserRole } from '@/types/database.types';
 
-export default function LeadsPage() {
+function LeadsContent() {
   const { showToast } = useToast();
+  const searchParams = useSearchParams();
 
   const [leads, setLeads] = React.useState<LeadItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
@@ -141,6 +143,17 @@ export default function LeadsPage() {
 
     fetchInitialData();
   }, [fetchInitialData]);
+
+  // Автоматическое открытие формы создания при переходе по ?action=create (кнопка FAB)
+  React.useEffect(() => {
+    if (searchParams.get('action') === 'create') {
+      setModalState({
+        isOpen: true,
+        mode: 'create',
+        selectedLead: null,
+      });
+    }
+  }, [searchParams]);
 
   // Конфигурация колонок DataJournal
   const columns: ColumnDef<LeadItem>[] = [
@@ -344,25 +357,24 @@ export default function LeadsPage() {
   };
 
   const handleStatusChangeInJournal = async (lead: LeadItem, newStatus: string) => {
-    try {
-      await updateLeadStatus(lead.lead_id, newStatus as LeadStatus);
-      setLeads((prev) =>
-        prev.map((item) =>
-          item.lead_id === lead.lead_id
-            ? { ...item, status: newStatus as LeadStatus }
-            : item
-        )
-      );
-      // Обновляем статистику
-      getLeadsStats().then(setStats);
-    } catch {
-      showToast('Ошибка при обновлении статуса лида', 'error');
+    const res = await updateLeadStatus(lead.lead_id, newStatus as LeadStatus);
+    if (!res.success) {
+      showToast(res.error || 'Ошибка при обновлении статуса лида', 'error');
+      return;
     }
+    setLeads((prev) =>
+      prev.map((item) =>
+        item.lead_id === lead.lead_id
+          ? { ...item, status: newStatus as LeadStatus }
+          : item
+      )
+    );
+    getLeadsStats().then(setStats);
   };
 
   // Обработчики формы EntityModal
   const handleSaveLead = async (updated: LeadItem) => {
-    await updateLead(updated.lead_id, {
+    const res = await updateLead(updated.lead_id, {
       client_name: updated.client_name,
       phone: updated.phone,
       country_code: updated.country_code,
@@ -372,30 +384,47 @@ export default function LeadsPage() {
       status: updated.status,
     });
 
+    if (!res.success) {
+      showToast(res.error || 'Ошибка при сохранении лида', 'error');
+      throw new Error(res.error);
+    }
+
     await fetchInitialData();
   };
 
   const handleCreateLead = async (newLeadData: Partial<LeadItem>) => {
     if (!newLeadData.client_name || !newLeadData.phone) {
-      showToast('Заполните имя клиента и телефон', 'error');
-      return;
+      showToast('Заполните имя клиента и номер телефона', 'error');
+      throw new Error('Заполните имя клиента и номер телефона');
     }
 
-    await createLead({
+    const res = await createLead({
       client_name: newLeadData.client_name,
       phone: newLeadData.phone,
       country_code: newLeadData.country_code || '996',
       instagram: newLeadData.instagram || undefined,
       comment: newLeadData.comment || undefined,
-      assigned_to: newLeadData.assigned_to || null,
+      assigned_to:
+        newLeadData.assigned_to && newLeadData.assigned_to.trim() !== ''
+          ? newLeadData.assigned_to
+          : null,
     });
+
+    if (!res.success) {
+      showToast(res.error || 'Ошибка создания лида', 'error');
+      throw new Error(res.error);
+    }
 
     await fetchInitialData();
   };
 
   const handleStatusChangeInModal = async (newStatus: string) => {
     if (!modalState.selectedLead) return;
-    await updateLeadStatus(modalState.selectedLead.lead_id, newStatus as LeadStatus);
+    const res = await updateLeadStatus(modalState.selectedLead.lead_id, newStatus as LeadStatus);
+    if (!res.success) {
+      showToast(res.error || 'Ошибка при смене статуса', 'error');
+      throw new Error(res.error);
+    }
     await fetchInitialData();
   };
 
@@ -414,15 +443,16 @@ export default function LeadsPage() {
       return;
     }
 
-    try {
-      await cancelLead(cancelDialog.leadId, cancelDialog.reason.trim());
-      showToast('Лид переведен в статус «Отмена»', 'info');
-      setCancelDialog({ isOpen: false, leadId: null, clientName: '', reason: '' });
-      setModalState((prev) => ({ ...prev, isOpen: false }));
-      await fetchInitialData();
-    } catch {
-      showToast('Ошибка при отмене сделки', 'error');
+    const res = await cancelLead(cancelDialog.leadId, cancelDialog.reason.trim());
+    if (!res.success) {
+      showToast(res.error || 'Ошибка при отмене сделки', 'error');
+      return;
     }
+
+    showToast('Лид переведен в статус «Отмена»', 'info');
+    setCancelDialog({ isOpen: false, leadId: null, clientName: '', reason: '' });
+    setModalState((prev) => ({ ...prev, isOpen: false }));
+    await fetchInitialData();
   };
 
   const handleLinkSeller = (lead: LeadItem) => {
@@ -626,3 +656,12 @@ export default function LeadsPage() {
     </AppLayout>
   );
 }
+
+export default function LeadsPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <LeadsContent />
+    </React.Suspense>
+  );
+}
+

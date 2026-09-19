@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 import {
   UserCheck,
   Store,
-  CreditCard,
   Link2,
   Banknote,
   BookOpen,
@@ -48,12 +47,6 @@ const NAV_ITEMS: NavItem[] = [
     title: 'Продавцы',
     href: '/sellers',
     icon: Store,
-    roles: ['admin', 'consultant'],
-  },
-  {
-    title: 'Платежи',
-    href: '/payments',
-    icon: CreditCard,
     roles: ['admin', 'consultant'],
   },
   {

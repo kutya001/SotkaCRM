@@ -14,48 +14,78 @@ export const dynamic = 'force-dynamic';
 
 async function handleSync(request: Request) {
   const startTime = Date.now();
-
-  // 1. Проверка прав: Bearer CRON_SECRET (для Vercel Cron) или активная сессия администратора
-  const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET;
-  const isCronAuthorized = Boolean(
-    cronSecret && authHeader && (authHeader === `Bearer ${cronSecret}` || authHeader === cronSecret)
-  );
-
-  if (!isCronAuthorized) {
-    const userSupabase = await createServerSupabase();
-    const {
-      data: { user },
-    } = await userSupabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Требуется авторизация.' },
-        { status: 401 }
-      );
-    }
-
-    const { data: profile } = await userSupabase
-      .from('users')
-      .select('role, is_active')
-      .eq('auth_id', user.id)
-      .single();
-
-    if (!profile || profile.role !== 'admin' || !profile.is_active) {
-      return NextResponse.json(
-        { error: 'Доступ запрещен. Запуск синхронизации разрешен исключительно роли «admin».' },
-        { status: 403 }
-      );
-    }
-  }
-
-  const adminSupabase = createAdminClient();
   let token = '';
-
   let syncedSellersCount = 0;
   let syncedPaymentsCount = 0;
 
   try {
+    // 0. Валидация серверной конфигурации окружения
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error('[Sotka Sync] Отсутствует SUPABASE_SERVICE_ROLE_KEY в переменных среды');
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Серверная конфигурация Supabase не завершена: переменная SUPABASE_SERVICE_ROLE_KEY отсутствует в Environment Variables.',
+        },
+        { status: 500 }
+      );
+    }
+
+    const sotkaPhone = process.env.SOTKA_API_PHONE;
+    const sotkaPassword = process.env.SOTKA_API_PASSWORD;
+    if (!sotkaPhone || !sotkaPassword) {
+      console.error('[Sotka Sync] Отсутствуют учетные данные SOTKA_API_PHONE или SOTKA_API_PASSWORD');
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Учетные данные Sotka API (SOTKA_API_PHONE / SOTKA_API_PASSWORD) не заданы в Environment Variables.',
+        },
+        { status: 500 }
+      );
+    }
+
+    // 1. Проверка прав: Bearer CRON_SECRET (для Vercel Cron) или активная сессия администратора
+    const authHeader = request.headers.get('authorization');
+    const cronSecret = process.env.CRON_SECRET;
+    const isCronAuthorized = Boolean(
+      cronSecret && authHeader && (authHeader === `Bearer ${cronSecret}` || authHeader === cronSecret)
+    );
+
+    if (!isCronAuthorized) {
+      const userSupabase = await createServerSupabase();
+      const {
+        data: { user },
+        error: userError,
+      } = await userSupabase.auth.getUser();
+
+      if (userError || !user) {
+        return NextResponse.json(
+          { error: 'Требуется авторизация.' },
+          { status: 401 }
+        );
+      }
+
+      const { data: profile } = await userSupabase
+        .from('users')
+        .select('role, is_active')
+        .eq('auth_id', user.id)
+        .single();
+
+      if (!profile || profile.role !== 'admin' || !profile.is_active) {
+        return NextResponse.json(
+          { error: 'Доступ запрещен. Запуск синхронизации разрешен исключительно роли «admin».' },
+          { status: 403 }
+        );
+      }
+    }
+
+    const adminSupabase = createAdminClient();
+
     // 2. Авторизация во внешнем API
     token = await authenticateSotkaAdmin();
 

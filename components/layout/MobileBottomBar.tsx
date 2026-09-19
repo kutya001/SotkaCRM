@@ -28,7 +28,7 @@ export function MobileBottomBar({ userRole = 'admin' }: MobileBottomBarProps) {
     },
     {
       title: 'Финансы',
-      href: userRole === 'admin' ? '/payouts' : '/payments',
+      href: '/payouts',
       icon: Banknote,
       show: userRole !== 'smm',
     },
@@ -36,7 +36,7 @@ export function MobileBottomBar({ userRole = 'admin' }: MobileBottomBarProps) {
       title: 'KPI',
       href: '/analytics',
       icon: BarChart3,
-      show: true,
+      show: userRole !== 'smm',
     },
     {
       title: 'Профиль',

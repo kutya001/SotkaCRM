@@ -141,8 +141,8 @@ export function EntityModal<T extends Record<string, any>>({
         await onStatusChange(newStatus);
         setFormData((prev) => ({ ...prev, [String(statusField)]: newStatus }));
         showToast(`Статус обновлен: ${newStatus}`, 'success');
-      } catch {
-        showToast('Ошибка при обновлении статуса', 'error');
+      } catch (err: any) {
+        showToast(err?.message || 'Ошибка при обновлении статуса', 'error');
       } finally {
         setIsSubmitting(false);
       }
@@ -163,8 +163,8 @@ export function EntityModal<T extends Record<string, any>>({
         showToast('Запись успешно создана', 'success');
         onClose();
       }
-    } catch {
-      showToast('Произошла ошибка при сохранении', 'error');
+    } catch (err: any) {
+      showToast(err?.message || 'Произошла ошибка при сохранении', 'error');
     } finally {
       setIsSubmitting(false);
     }

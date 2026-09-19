@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireAuth } from '@/lib/auth/check-role';
-import { LeadCreateSchema } from '@/lib/validations';
+import { LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
 import type { Database, LeadStatus } from '@/types/database.types';
 
 export interface LeadItem {
@@ -143,10 +143,7 @@ export async function createLead(input: {
     // Санитизация пустых строк для опциональных полей перед валидацией
     const sanitizedInput = {
       ...input,
-      assigned_to:
-        input.assigned_to && input.assigned_to.trim() !== ''
-          ? input.assigned_to.trim()
-          : null,
+      assigned_to: normalizeNullableUuid(input.assigned_to),
       country_code:
         input.country_code && input.country_code.trim() !== ''
           ? input.country_code.trim()
@@ -251,10 +248,7 @@ export async function updateLead(
       payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
     }
     if (updates.assigned_to !== undefined) {
-      payload.assigned_to =
-        updates.assigned_to && updates.assigned_to.trim() !== ''
-          ? updates.assigned_to.trim()
-          : null;
+      payload.assigned_to = normalizeNullableUuid(updates.assigned_to);
     }
     if (updates.status !== undefined) payload.status = updates.status;
 

@@ -27,6 +27,28 @@ export const PlanUpdateSchema = z.object({
   is_active: z.boolean(),
 });
 
+/**
+ * Приведение идентификаторов внешних ключей к строгому UUID или null.
+ * Пустые строки, пробелы, "none", "null", "undefined", "—" преобразуются в null.
+ */
+export function normalizeNullableUuid(val: unknown): string | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (
+      trimmed === '' ||
+      trimmed.toLowerCase() === 'none' ||
+      trimmed.toLowerCase() === 'null' ||
+      trimmed.toLowerCase() === 'undefined' ||
+      trimmed.startsWith('—')
+    ) {
+      return null;
+    }
+    return trimmed;
+  }
+  return null;
+}
+
 export const LeadCreateSchema = z.object({
   client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов'),
   phone: z.string().min(6, 'Укажите корректный номер телефона'),
@@ -35,8 +57,9 @@ export const LeadCreateSchema = z.object({
   comment: z.string().optional().nullable(),
   assigned_to: z
     .preprocess(
-      (val) => (typeof val === 'string' && val.trim() === '' ? null : val),
+      (val) => normalizeNullableUuid(val),
       z.string().uuid('Некорректный идентификатор ответственного').nullable().optional()
-    ),
+    )
+    .default(null),
 });
 

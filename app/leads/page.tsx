@@ -378,8 +378,7 @@ function LeadsContent() {
     });
 
     if (!res.success) {
-      showToast(res.error || 'Ошибка при сохранении лида', 'error');
-      throw new Error(res.error);
+      throw new Error(res.error || 'Ошибка при сохранении лида');
     }
 
     await fetchInitialData();
@@ -387,7 +386,6 @@ function LeadsContent() {
 
   const handleCreateLead = async (newLeadData: Partial<LeadItem>) => {
     if (!newLeadData.client_name || !newLeadData.phone) {
-      showToast('Заполните имя клиента и номер телефона', 'error');
       throw new Error('Заполните имя клиента и номер телефона');
     }
 
@@ -397,15 +395,11 @@ function LeadsContent() {
       country_code: newLeadData.country_code || '996',
       instagram: newLeadData.instagram || undefined,
       comment: newLeadData.comment || undefined,
-      assigned_to:
-        newLeadData.assigned_to && newLeadData.assigned_to.trim() !== ''
-          ? newLeadData.assigned_to
-          : null,
+      assigned_to: newLeadData.assigned_to,
     });
 
     if (!res.success) {
-      showToast(res.error || 'Ошибка создания лида', 'error');
-      throw new Error(res.error);
+      throw new Error(res.error || 'Ошибка создания лида');
     }
 
     await fetchInitialData();
@@ -415,8 +409,7 @@ function LeadsContent() {
     if (!modalState.selectedLead) return;
     const res = await updateLeadStatus(modalState.selectedLead.lead_id, newStatus as LeadStatus);
     if (!res.success) {
-      showToast(res.error || 'Ошибка при смене статуса', 'error');
-      throw new Error(res.error);
+      throw new Error(res.error || 'Ошибка при смене статуса');
     }
     await fetchInitialData();
   };

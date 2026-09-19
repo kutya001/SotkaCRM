@@ -2,6 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireAdmin } from '@/lib/auth/check-role';
+import { PlanUpdateSchema } from '@/lib/validations';
+import { roundMoney } from '@/lib/utils/money';
 import type { Database, UserRole } from '@/types/database.types';
 
 export interface PlanItem {
@@ -78,44 +81,37 @@ export async function updatePlan(
     is_active: boolean;
   }
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
+  try {
+    const { supabase } = await requireAdmin();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const parsed = PlanUpdateSchema.safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
 
-  if (!user) {
-    return { success: false, error: 'Пользователь не авторизован' };
+    const valid = parsed.data;
+
+    const { error } = await supabase
+      .from('plans')
+      .update({
+        plan_name: valid.plan_name,
+        price: roundMoney(valid.price),
+        billing_period: valid.billing_period,
+        description: valid.description ?? null,
+        is_active: valid.is_active,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('plan_id', planId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/plans');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка обновления тарифа' };
   }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role !== 'admin') {
-    return { success: false, error: 'Редактирование тарифов доступно исключительно администраторам' };
-  }
-
-  const { error } = await supabase
-    .from('plans')
-    .update({
-      plan_name: data.plan_name,
-      price: data.price,
-      billing_period: data.billing_period,
-      description: data.description ?? null,
-      is_active: data.is_active,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('plan_id', planId);
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  revalidatePath('/plans');
-  return { success: true };
 }
 
 /**
@@ -129,41 +125,38 @@ export async function createPlan(data: {
   description?: string | null;
   is_active: boolean;
 }): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
+  try {
+    const { supabase } = await requireAdmin();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    if (!data.plan_id || data.plan_id.trim().length < 2) {
+      return { success: false, error: 'Идентификатор тарифа должен содержать не менее 2 символов' };
+    }
 
-  if (!user) {
-    return { success: false, error: 'Пользователь не авторизован' };
+    const parsed = PlanUpdateSchema.safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
+
+    const valid = parsed.data;
+
+    const { error } = await supabase.from('plans').insert({
+      plan_id: data.plan_id.toUpperCase().trim(),
+      plan_name: valid.plan_name,
+      price: roundMoney(valid.price),
+      billing_period: valid.billing_period,
+      description: valid.description ?? null,
+      is_active: valid.is_active,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/plans');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка создания тарифа' };
   }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role !== 'admin') {
-    return { success: false, error: 'Создание тарифов доступно исключительно администраторам' };
-  }
-
-  const { error } = await supabase.from('plans').insert({
-    plan_id: data.plan_id.toUpperCase().trim(),
-    plan_name: data.plan_name,
-    price: data.price,
-    billing_period: data.billing_period,
-    description: data.description ?? null,
-    is_active: data.is_active,
-  });
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  revalidatePath('/plans');
-  return { success: true };
 }
 
 /**

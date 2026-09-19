@@ -2,6 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireAdmin } from '@/lib/auth/check-role';
+import { EmployeeRateSchema } from '@/lib/validations';
+import { roundMoney } from '@/lib/utils/money';
 import type { Database, UserRole } from '@/types/database.types';
 
 export interface EmployeeRateItem {
@@ -96,58 +99,53 @@ export async function upsertEmployeeRate(data: {
   maintenance_percent: number;
   effective_from: string;
 }): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
+  try {
+    const { profile, supabase } = await requireAdmin();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const parsed = EmployeeRateSchema.safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
 
-  if (!user) {
-    return { success: false, error: 'Пользователь не авторизован' };
-  }
+    const validData = parsed.data;
+    const connectionPercent = roundMoney(validData.connection_percent);
+    const maintenancePercent = roundMoney(validData.maintenance_percent);
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role !== 'admin') {
-    return { success: false, error: 'Настройка ставок доступна исключительно администратору' };
-  }
-
-  // Проверяем, есть ли уже ставка для пользователя
-  const { data: existing } = await supabase
-    .from('employee_rates')
-    .select('rate_id')
-    .eq('user_id', data.user_id)
-    .maybeSingle();
-
-  if (existing) {
-    const { error } = await supabase
+    // Проверяем, есть ли уже ставка для пользователя
+    const { data: existing } = await supabase
       .from('employee_rates')
-      .update({
-        connection_percent: data.connection_percent,
-        maintenance_percent: data.maintenance_percent,
-        effective_from: data.effective_from,
+      .select('rate_id')
+      .eq('user_id', validData.user_id)
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await supabase
+        .from('employee_rates')
+        .update({
+          connection_percent: connectionPercent,
+          maintenance_percent: maintenancePercent,
+          effective_from: validData.effective_from,
+          created_by: profile.user_id,
+        })
+        .eq('rate_id', existing.rate_id);
+
+      if (error) return { success: false, error: error.message };
+    } else {
+      const { error } = await supabase.from('employee_rates').insert({
+        user_id: validData.user_id,
+        connection_percent: connectionPercent,
+        maintenance_percent: maintenancePercent,
+        effective_from: validData.effective_from,
         created_by: profile.user_id,
-      })
-      .eq('rate_id', existing.rate_id);
+      });
 
-    if (error) return { success: false, error: error.message };
-  } else {
-    const { error } = await supabase.from('employee_rates').insert({
-      user_id: data.user_id,
-      connection_percent: data.connection_percent,
-      maintenance_percent: data.maintenance_percent,
-      effective_from: data.effective_from,
-      created_by: profile.user_id,
-    });
+      if (error) return { success: false, error: error.message };
+    }
 
-    if (error) return { success: false, error: error.message };
+    revalidatePath('/rates');
+    revalidatePath('/connections');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка обновления ставки' };
   }
-
-  revalidatePath('/rates');
-  revalidatePath('/connections');
-  return { success: true };
 }

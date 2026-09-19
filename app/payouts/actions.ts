@@ -2,6 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireAdmin } from '@/lib/auth/check-role';
+import { PayoutSchema } from '@/lib/validations';
+import { roundMoney } from '@/lib/utils/money';
 import type { Database, UserRole, PayoutCategoryType } from '@/types/database.types';
 
 export interface PayoutItem {
@@ -245,48 +248,37 @@ export interface CreatePayoutInput {
 export async function createPayout(
   input: CreatePayoutInput
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
+  try {
+    const { profile, supabase } = await requireAdmin();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const parsed = PayoutSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0].message };
+    }
 
-  if (!user) {
-    return { success: false, error: 'Пользователь не аутентифицирован' };
+    const valid = parsed.data;
+
+    const { error } = await supabase.from('employee_payouts').insert({
+      user_id: valid.user_id,
+      accrual_month: valid.accrual_month,
+      payout_date: valid.payout_date,
+      amount: roundMoney(valid.amount),
+      payout_category: valid.payout_category,
+      payment_method: valid.payment_method.trim(),
+      comment: valid.comment?.trim() || null,
+      created_by: profile.user_id,
+    });
+
+    if (error) {
+      console.error('Error creating payout:', error);
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/payouts');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка проведения выплаты' };
   }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role !== 'admin') {
-    return { success: false, error: 'Проведение выплат доступно исключительно администратору' };
-  }
-
-  if (!input.user_id || !input.amount || input.amount <= 0) {
-    return { success: false, error: 'Некорректная сумма или не выбран сотрудник' };
-  }
-
-  const { error } = await supabase.from('employee_payouts').insert({
-    user_id: input.user_id,
-    accrual_month: input.accrual_month,
-    payout_date: input.payout_date,
-    amount: input.amount,
-    payout_category: input.payout_category,
-    payment_method: input.payment_method,
-    comment: input.comment || null,
-    created_by: profile.user_id,
-  });
-
-  if (error) {
-    console.error('Error creating payout:', error);
-    return { success: false, error: error.message };
-  }
-
-  revalidatePath('/payouts');
-  return { success: true };
 }
 
 /**

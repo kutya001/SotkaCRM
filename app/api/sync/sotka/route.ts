@@ -7,37 +7,46 @@ import {
   fetchSellersOverview,
   fetchTransactions,
 } from '@/lib/services/sotka-api';
+import { roundMoney } from '@/lib/utils/money';
 import type { Database } from '@/types/database.types';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST() {
+async function handleSync(request: Request) {
   const startTime = Date.now();
 
-  // 1. Проверка сессии и строгой роли admin
-  const userSupabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await userSupabase.auth.getUser();
+  // 1. Проверка прав: Bearer CRON_SECRET (для Vercel Cron) или активная сессия администратора
+  const authHeader = request.headers.get('authorization');
+  const cronSecret = process.env.CRON_SECRET;
+  const isCronAuthorized = Boolean(
+    cronSecret && authHeader && (authHeader === `Bearer ${cronSecret}` || authHeader === cronSecret)
+  );
 
-  if (!user) {
-    return NextResponse.json(
-      { error: 'Требуется авторизация.' },
-      { status: 401 }
-    );
-  }
+  if (!isCronAuthorized) {
+    const userSupabase = await createServerSupabase();
+    const {
+      data: { user },
+    } = await userSupabase.auth.getUser();
 
-  const { data: profile } = await userSupabase
-    .from('users')
-    .select('role, is_active')
-    .eq('auth_id', user.id)
-    .single();
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Требуется авторизация.' },
+        { status: 401 }
+      );
+    }
 
-  if (!profile || profile.role !== 'admin' || !profile.is_active) {
-    return NextResponse.json(
-      { error: 'Доступ запрещен. Запуск синхронизации разрешен исключительно роли «admin».' },
-      { status: 403 }
-    );
+    const { data: profile } = await userSupabase
+      .from('users')
+      .select('role, is_active')
+      .eq('auth_id', user.id)
+      .single();
+
+    if (!profile || profile.role !== 'admin' || !profile.is_active) {
+      return NextResponse.json(
+        { error: 'Доступ запрещен. Запуск синхронизации разрешен исключительно роли «admin».' },
+        { status: 403 }
+      );
+    }
   }
 
   const adminSupabase = createAdminClient();
@@ -92,7 +101,7 @@ export async function POST() {
           store: item.stores?.[0] || 'Без названия',
           plan_id: item.plans?.[0] ? `PLN-${item.plans[0]}` : null,
           plan_name: item.plans?.[0] || 'Без тарифа',
-          balance: Number(item.balance) || 0,
+          balance: roundMoney(item.balance),
           moderation: (item.moderation as any) || 'pending',
           is_active: item.is_active ?? true,
           registered_at: item.registered_at || null,
@@ -147,7 +156,7 @@ export async function POST() {
           user_phone: normalizedPhone,
           user_name: item.user_name || null,
           user_id: item.user_id ? String(item.user_id) : null,
-          amount: Number(item.amount) || 0,
+          amount: roundMoney(item.amount),
           date_time: item.date_time || new Date().toISOString(),
           tran_type: item.tran_type || 'topup',
           description: item.description || null,
@@ -204,4 +213,12 @@ export async function POST() {
       await logoutSotkaSession(token);
     }
   }
+}
+
+export async function POST(request: Request) {
+  return handleSync(request);
+}
+
+export async function GET(request: Request) {
+  return handleSync(request);
 }

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireAdmin } from '@/lib/auth/check-role';
 import type { Database, UserRole, SellerModerationStatus } from '@/types/database.types';
 
 export interface SellerItem {
@@ -259,35 +260,25 @@ export async function assignSellerManager(
   sellerPhone: string,
   managerId: string | null
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
+  try {
+    const { supabase } = await requireAdmin();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    if (!sellerPhone) {
+      return { success: false, error: 'Не указан номер телефона продавца' };
+    }
 
-  if (!user) {
-    return { success: false, error: 'Пользователь не аутентифицирован' };
+    const { error } = await supabase
+      .from('sellers')
+      .update({ manager_id: managerId })
+      .eq('seller_phone', sellerPhone);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/sellers');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка назначения куратора' };
   }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role !== 'admin') {
-    return { success: false, error: 'Назначение куратора доступно только администратору' };
-  }
-
-  const { error } = await supabase
-    .from('sellers')
-    .update({ manager_id: managerId })
-    .eq('seller_phone', sellerPhone);
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-
-  revalidatePath('/sellers');
-  return { success: true };
 }

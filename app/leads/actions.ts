@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireAuth } from '@/lib/auth/check-role';
+import { LeadCreateSchema } from '@/lib/validations';
 import type { Database, LeadStatus } from '@/types/database.types';
 
 export interface LeadItem {
@@ -135,28 +137,17 @@ export async function createLead(input: {
   comment?: string;
   assigned_to?: string | null;
 }) {
-  const supabase = await createClient();
+  const { profile, supabase } = await requireAuth();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new Error('Необходима авторизация');
+  const parsed = LeadCreateSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0].message);
   }
 
-  const { data: currentProfile, error: profileError } = await supabase
-    .from('users')
-    .select('user_id')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (profileError || !currentProfile) {
-    throw new Error('Профиль пользователя не найден');
-  }
+  const valid = parsed.data;
 
   // Очистка телефона от лишних символов (хранятся строго цифры)
-  const cleanPhone = input.phone.replace(/\D/g, '');
+  const cleanPhone = valid.phone.replace(/\D/g, '');
   if (!cleanPhone) {
     throw new Error('Укажите корректный номер телефона');
   }
@@ -169,14 +160,14 @@ export async function createLead(input: {
   const { data: newLead, error } = await supabase
     .from('leads')
     .insert({
-      client_name: input.client_name.trim(),
+      client_name: valid.client_name.trim(),
       phone: phoneWithoutCode,
-      country_code: input.country_code || '996',
+      country_code: valid.country_code || '996',
       status: 'Открыт',
-      instagram: input.instagram?.trim() || null,
-      comment: input.comment?.trim() || null,
-      created_by: currentProfile.user_id,
-      assigned_to: input.assigned_to || null,
+      instagram: valid.instagram?.trim() || null,
+      comment: valid.comment?.trim() || null,
+      created_by: profile.user_id,
+      assigned_to: valid.assigned_to || null,
     })
     .select()
     .single();
@@ -205,7 +196,7 @@ export async function updateLead(
     status?: LeadStatus;
   }
 ) {
-  const supabase = await createClient();
+  const { supabase } = await requireAuth();
 
   const payload: Database['public']['Tables']['leads']['Update'] = {
     updated_at: new Date().toISOString(),
@@ -245,7 +236,7 @@ export async function updateLead(
  * Экспресс-смена статуса лида
  */
 export async function updateLeadStatus(leadId: string, status: LeadStatus) {
-  const supabase = await createClient();
+  const { supabase } = await requireAuth();
 
   const { data, error } = await supabase
     .from('leads')
@@ -271,7 +262,7 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
  * ВНИМАНИЕ: Физический вызов delete() строго запрещен триггером prevent_lead_delete!
  */
 export async function cancelLead(leadId: string, reason: string) {
-  const supabase = await createClient();
+  const { supabase } = await requireAuth();
 
   // Получаем текущий комментарий лида
   const { data: currentLead } = await supabase

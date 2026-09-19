@@ -27,6 +27,7 @@ export default function RatesPage() {
   const { showToast } = useToast();
 
   const [rates, setRates] = React.useState<EmployeeRateItem[]>([]);
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
   const [userName, setUserName] = React.useState('Сотрудник CRM');
@@ -200,13 +201,30 @@ export default function RatesPage() {
     },
   ];
 
+  // Контекстные действия тулбара реестра ставок (ЯРУС 3)
+  const rateActions = (
+    <button
+      type="button"
+      onClick={() => fetchData()}
+      className="min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+      title="Обновить реестр"
+      aria-label="Обновить реестр"
+    >
+      <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+      <span className="hidden sm:inline">Обновить</span>
+    </button>
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
       userName={userName}
       userLogin={userLogin}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      searchPlaceholder="Поиск по имени сотрудника или логину..."
     >
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Вкладки справочников */}
         <div className="flex items-center gap-2 border-b border-zinc-200/60 dark:border-zinc-800/60 pb-3">
           <Link
@@ -225,34 +243,7 @@ export default function RatesPage() {
           </Link>
         </div>
 
-        {/* Шапка раздела ставок */}
-        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                Персональные ставки мотивации
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-400 text-xs font-semibold border border-purple-500/30">
-                {rates.length} сотрудников
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Индивидуальные проценты начисления бонусов за первичное подключение (базово 30%) и сопровождение клиентов (базово 10%)
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={() => fetchData()}
-              title="Обновить"
-              className="w-9 h-9 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center justify-center transition-all active:scale-95 border border-zinc-200/60 dark:border-zinc-700/60"
-            >
-              <RotateCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-            </button>
-          </div>
-        </div>
-
-        {/* Реестр ставок DataJournal */}
+        {/* Реестр ставок DataJournal (ЯРУС 3) */}
         <DataJournal<EmployeeRateItem>
           data={rates}
           columns={columns}
@@ -261,6 +252,8 @@ export default function RatesPage() {
           searchPlaceholder="Поиск по имени сотрудника или логину..."
           onRowClick={currentUserRole === 'admin' ? handleOpenEdit : undefined}
           totalCount={rates.length}
+          externalSearchQuery={searchQuery}
+          customActions={rateActions}
         />
 
         {/* Модальное окно редактирования персональных условий */}

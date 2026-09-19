@@ -28,6 +28,7 @@ import {
   Users2,
   RefreshCw,
   Loader2,
+  RotateCcw,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { UserRole } from '@/types/database.types';
@@ -91,7 +92,8 @@ export default function SellersPage() {
     selectedSeller: null,
   });
 
-  // Фильтры
+  // Поиск и Фильтры (ЯРУС 1)
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [filterModeration, setFilterModeration] = React.useState<string>('all');
   const [filterActive, setFilterActive] = React.useState<string>('all');
   const [filterManager, setFilterManager] = React.useState<string>('all');
@@ -482,34 +484,113 @@ export default function SellersPage() {
     },
   ];
 
+  // Расчет количества активных фильтров (ЯРУС 1)
+  const activeFilterCount =
+    (filterModeration !== 'all' ? 1 : 0) +
+    (filterActive !== 'all' ? 1 : 0) +
+    (filterManager !== 'all' ? 1 : 0);
+
+  // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
+  const filterContent = (
+    <div className="space-y-3.5">
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Модерация
+        </label>
+        <select
+          value={filterModeration}
+          onChange={(e) => setFilterModeration(e.target.value)}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Любая модерация</option>
+          <option value="approved">Одобрен</option>
+          <option value="pending">На модерации</option>
+          <option value="rejected">Отклонен</option>
+          <option value="blocked">Заблокирован</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Активность
+        </label>
+        <select
+          value={filterActive}
+          onChange={(e) => setFilterActive(e.target.value)}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все статусы активности</option>
+          <option value="true">Только активные</option>
+          <option value="false">Только неактивные</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Куратор
+        </label>
+        <select
+          value={filterManager}
+          onChange={(e) => setFilterManager(e.target.value)}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все кураторы</option>
+          <option value="unassigned">Без куратора</option>
+          {managers.map((m) => (
+            <option key={m.user_id} value={m.user_id}>
+              {m.full_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {activeFilterCount > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setFilterModeration('all');
+            setFilterActive('all');
+            setFilterManager('all');
+          }}
+          className="w-full h-9 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5"
+        >
+          <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Сбросить фильтры</span>
+        </button>
+      )}
+    </div>
+  );
+
+  // Контекстные действия тулбара реестра продавцов (ЯРУС 3)
+  const sellerActions = (
+    <button
+      type="button"
+      onClick={() => fetchSellersData()}
+      className="min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+      title="Обновить базу продавцов"
+      aria-label="Обновить базу продавцов"
+    >
+      <RefreshCw className="w-4 h-4 text-blue-500 flex-shrink-0" strokeWidth={1.75} />
+      <span className="hidden sm:inline">Обновить</span>
+    </button>
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
       userName={userName}
       userLogin={userLogin}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      searchPlaceholder="Поиск по имени, телефону или магазину..."
+      filterCount={activeFilterCount}
+      filterContent={filterContent}
     >
-      <div className="space-y-6">
-        {/* Верхний информационный блок */}
-        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                База продавцов
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/30">
-                {stats.total} продавцов
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Реестр торговых точек и контрагентов, синхронизированных с Sotka API
-            </p>
-          </div>
-        </div>
-
-        {/* ВЕРХНИЙ БЛОК МЕТРИК / KPI КАРТОЧКИ В ЭСТЕТИКЕ APPLE ISLAND */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="space-y-4">
+        {/* ЯРУС 2: ВЕРХНИЙ БЛОК МЕТРИК / KPI КАРТОЧКИ (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
+        <div className="flex md:grid md:grid-cols-5 gap-2.5 md:gap-3 overflow-x-auto md:overflow-x-visible snap-x md:snap-none pb-2 md:pb-0 scrollbar-none -mx-3 px-3 md:mx-0 md:px-0">
           {/* Всего продавцов */}
-          <div className="p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3">
+          <div className="min-w-[150px] sm:min-w-[170px] md:min-w-0 snap-start p-3 sm:p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3 flex-shrink-0 md:flex-shrink">
             <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
               <Store className="w-5 h-5" strokeWidth={1.75} />
             </div>
@@ -524,7 +605,7 @@ export default function SellersPage() {
           </div>
 
           {/* Активных */}
-          <div className="p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3">
+          <div className="min-w-[150px] sm:min-w-[170px] md:min-w-0 snap-start p-3 sm:p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3 flex-shrink-0 md:flex-shrink">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
               <CheckCircle2 className="w-5 h-5" strokeWidth={1.75} />
             </div>
@@ -539,7 +620,7 @@ export default function SellersPage() {
           </div>
 
           {/* На модерации */}
-          <div className="p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3">
+          <div className="min-w-[150px] sm:min-w-[170px] md:min-w-0 snap-start p-3 sm:p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3 flex-shrink-0 md:flex-shrink">
             <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
               <Clock className="w-5 h-5" strokeWidth={1.75} />
             </div>
@@ -554,7 +635,7 @@ export default function SellersPage() {
           </div>
 
           {/* Общий баланс */}
-          <div className="p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3">
+          <div className="min-w-[170px] sm:min-w-[190px] md:min-w-0 snap-start p-3 sm:p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3 flex-shrink-0 md:flex-shrink">
             <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
               <Wallet className="w-5 h-5" strokeWidth={1.75} />
             </div>
@@ -569,7 +650,7 @@ export default function SellersPage() {
           </div>
 
           {/* Закреплено */}
-          <div className="p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3 col-span-2 md:col-span-1">
+          <div className="min-w-[150px] sm:min-w-[170px] md:min-w-0 snap-start p-3 sm:p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-3 flex-shrink-0 md:flex-shrink">
             <div className="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
               <UserCheck className="w-5 h-5" strokeWidth={1.75} />
             </div>
@@ -585,61 +666,7 @@ export default function SellersPage() {
           </div>
         </div>
 
-        {/* ПАНЕЛЬ ФИЛЬТРОВ И ДЕЙСТВИЙ */}
-        <div className="p-4 rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            {/* Модерация */}
-            <select
-              value={filterModeration}
-              onChange={(e) => setFilterModeration(e.target.value)}
-              className="h-9 px-3 rounded-xl bg-zinc-200/50 dark:bg-zinc-800/50 border border-zinc-200/60 dark:border-zinc-700/60 text-zinc-800 dark:text-zinc-200 focus:outline-none"
-            >
-              <option value="all">Любая модерация</option>
-              <option value="approved">Одобрен</option>
-              <option value="pending">На модерации</option>
-              <option value="rejected">Отклонен</option>
-              <option value="blocked">Заблокирован</option>
-            </select>
-
-            {/* Активность */}
-            <select
-              value={filterActive}
-              onChange={(e) => setFilterActive(e.target.value)}
-              className="h-9 px-3 rounded-xl bg-zinc-200/50 dark:bg-zinc-800/50 border border-zinc-200/60 dark:border-zinc-700/60 text-zinc-800 dark:text-zinc-200 focus:outline-none"
-            >
-              <option value="all">Все статусы активности</option>
-              <option value="true">Только активные</option>
-              <option value="false">Только неактивные</option>
-            </select>
-
-            {/* Куратор */}
-            <select
-              value={filterManager}
-              onChange={(e) => setFilterManager(e.target.value)}
-              className="h-9 px-3 rounded-xl bg-zinc-200/50 dark:bg-zinc-800/50 border border-zinc-200/60 dark:border-zinc-700/60 text-zinc-800 dark:text-zinc-200 focus:outline-none"
-            >
-              <option value="all">Все кураторы</option>
-              <option value="unassigned">Без куратора</option>
-              {managers.map((m) => (
-                <option key={m.user_id} value={m.user_id}>
-                  {m.full_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fetchSellersData()}
-              className="h-9 px-3.5 rounded-xl border border-zinc-200/60 dark:border-zinc-700/60 hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 text-xs font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} />
-              <span>Обновить</span>
-            </button>
-          </div>
-        </div>
-
-        {/* УНИВЕРСАЛЬНЫЙ РЕЕСТР DATAJOURNAL */}
+        {/* УНИВЕРСАЛЬНЫЙ РЕЕСТР DATAJOURNAL (ЯРУС 3) */}
         {isLoading ? (
           <div className="p-12 text-center rounded-3xl island-glass border border-white/20 dark:border-zinc-800/40 space-y-3">
             <Loader2 className="w-6 h-6 animate-spin mx-auto text-zinc-400" strokeWidth={1.75} />
@@ -654,6 +681,8 @@ export default function SellersPage() {
             searchPlaceholder="Поиск по имени, телефону или магазину..."
             emptyMessage="Продавцы не найдены. Выполните синхронизацию с Sotka API."
             totalCount={totalCount}
+            externalSearchQuery={searchQuery}
+            customActions={sellerActions}
             onRowClick={(seller) =>
               setModalState({
                 isOpen: true,

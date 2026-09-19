@@ -63,6 +63,11 @@ function LeadsContent() {
   // Состояние шторки скриптов продаж
   const [isScriptsOpen, setIsScriptsOpen] = React.useState(false);
 
+  // Единый поиск и фильтры верхней панели
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [filterStatus, setFilterStatus] = React.useState<string>('all');
+  const [filterConsultant, setFilterConsultant] = React.useState<string>('all');
+
   // Состояние модального окна EntityModal
   const [modalState, setModalState] = React.useState<{
     isOpen: boolean;
@@ -470,85 +475,154 @@ function LeadsContent() {
     });
   };
 
+  // Расчет количества активных фильтров
+  const activeFilterCount =
+    (filterStatus !== 'all' ? 1 : 0) + (filterConsultant !== 'all' ? 1 : 0);
+
+  // Содержимое всплывающего окна фильтров TopHeader
+  const filterContent = (
+    <div className="space-y-3.5">
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Статус воронки
+        </label>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все статусы воронки</option>
+          <option value="Открыт">Открыт</option>
+          <option value="Обработан">Обработан</option>
+          <option value="Назначен">Назначен</option>
+          <option value="Подписан">Подписан</option>
+          <option value="Отмена">Отмена</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Ответственный консультант
+        </label>
+        <select
+          value={filterConsultant}
+          onChange={(e) => setFilterConsultant(e.target.value)}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все консультанты</option>
+          <option value="unassigned">Без куратора</option>
+          {consultants.map((c) => (
+            <option key={c.user_id} value={c.user_id}>
+              {c.full_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {activeFilterCount > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatus('all');
+            setFilterConsultant('all');
+          }}
+          className="w-full h-9 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5"
+        >
+          <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Сбросить фильтры</span>
+        </button>
+      )}
+    </div>
+  );
+
+  // Фильтрация лидов по статусу и консультанту
+  const filteredLeads = React.useMemo(() => {
+    return leads.filter((lead) => {
+      if (filterStatus !== 'all' && lead.status !== filterStatus) return false;
+      if (filterConsultant !== 'all') {
+        if (filterConsultant === 'unassigned' && lead.assigned_to) return false;
+        if (filterConsultant !== 'unassigned' && lead.assigned_to !== filterConsultant) return false;
+      }
+      return true;
+    });
+  }, [leads, filterStatus, filterConsultant]);
+
+  // Контекстные действия тулбара реестра Лидов (ЯРУС 3)
+  const leadActions = (
+    <div className="flex items-center gap-2">
+      {/* Кнопка открытия базы скриптов */}
+      <button
+        type="button"
+        onClick={() => setIsScriptsOpen(true)}
+        className="min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+        title="Скрипты продаж"
+        aria-label="Скрипты продаж"
+      >
+        <BookOpen className="w-4 h-4 text-purple-500 flex-shrink-0" strokeWidth={1.75} />
+        <span className="hidden sm:inline">Скрипты продаж</span>
+      </button>
+
+      {/* Компактная кнопка создания лида [+] с touch target 44x44 */}
+      <button
+        type="button"
+        onClick={handleCreateClick}
+        className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive"
+        title="Добавить лид"
+        aria-label="Добавить лид"
+      >
+        <Plus className="w-5 h-5" strokeWidth={2.5} />
+      </button>
+    </div>
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
       userName={userName}
       userLogin={userLogin}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      searchPlaceholder="Быстрый поиск по телефону, имени или заметке..."
+      filterCount={activeFilterCount}
+      filterContent={filterContent}
     >
-      <div className="space-y-6">
-        {/* 1. Верхний информационный блок: KPI воронки и вызов скриптов */}
-        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                Входящие заявки (Лиды)
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/30">
-                {stats.total} заявок
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Реестр потенциальных клиентов, ведение воронки и коммуникация с продавцами
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
-            {/* Кнопка открытия базы скриптов */}
-            <button
-              onClick={() => setIsScriptsOpen(true)}
-              className="h-10 px-4 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50"
-            >
-              <BookOpen className="w-4 h-4 text-purple-500" strokeWidth={1.75} />
-              <span>Скрипты продаж</span>
-            </button>
-
-            {/* Кнопка создания лида */}
-            <button
-              onClick={handleCreateClick}
-              className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-md transition-all active:scale-95"
-            >
-              <Plus className="w-4 h-4" strokeWidth={2.5} />
-              <span>Добавить лид</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 2. KPI воронки продаж (Apple Island таблетки) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="p-3.5 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+      <div className="space-y-4">
+        {/* ЯРУС 2: KPI воронки продаж (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
+        <div className="flex sm:grid sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 overflow-x-auto sm:overflow-x-visible snap-x sm:snap-none pb-2 sm:pb-0 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0">
+          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
             <span className="text-[11px] text-zinc-400 font-medium">Всего в базе</span>
             <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{stats.total}</p>
           </div>
-          <div className="p-3.5 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Открыт</span>
             <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{stats.open}</p>
           </div>
-          <div className="p-3.5 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">Обработан</span>
             <p className="text-xl font-bold text-purple-700 dark:text-purple-300">{stats.processed}</p>
           </div>
-          <div className="p-3.5 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Назначен</span>
             <p className="text-xl font-bold text-amber-700 dark:text-amber-300">{stats.assigned}</p>
           </div>
-          <div className="p-3.5 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Подписан</span>
             <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{stats.signed}</p>
           </div>
-          <div className="p-3.5 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Отмена</span>
             <p className="text-xl font-bold text-rose-700 dark:text-rose-300">{stats.cancelled}</p>
           </div>
         </div>
 
-        {/* 3. Полиморфный реестр заявок DataJournal */}
+        {/* ЯРУС 3: Полиморфный реестр заявок DataJournal */}
         <DataJournal<LeadItem>
-          data={leads}
+          data={filteredLeads}
           columns={columns}
           keyField="lead_id"
           storageKey="leads_live"
-          searchPlaceholder="Поиск по клиенту, номеру телефона или заметке..."
+          externalSearchQuery={searchQuery}
+          customActions={leadActions}
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
           totalCount={totalCount}

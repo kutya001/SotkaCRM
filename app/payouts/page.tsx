@@ -78,7 +78,8 @@ export default function PayoutsPage() {
     transactionsCount: 0,
   });
 
-  // Фильтры
+  // Поиск и Фильтры (ЯРУС 1)
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
@@ -325,130 +326,147 @@ export default function PayoutsPage() {
     },
   ];
 
+  // Расчет количества активных фильтров (ЯРУС 1)
+  const activeFilterCount =
+    (selectedMonth !== 'all' ? 1 : 0) + (selectedCategory !== 'all' ? 1 : 0);
+
+  // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
+  const filterContent = (
+    <div className="space-y-3.5">
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Расчетный месяц
+        </label>
+        <select
+          value={selectedMonth}
+          onChange={handleMonthChange}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все месяцы</option>
+          {accrualMonths.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Категория
+        </label>
+        <select
+          value={selectedCategory}
+          onChange={handleCategoryChange}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все категории</option>
+          <option value="выплата зп">Выплата ЗП</option>
+          <option value="аванс">Аванс</option>
+          <option value="бонус">Бонус</option>
+          <option value="прочие начисления">Прочие</option>
+          <option value="удержание">Удержание</option>
+        </select>
+      </div>
+
+      {activeFilterCount > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMonth('all');
+            setSelectedCategory('all');
+            fetchData('all', 'all');
+          }}
+          className="w-full h-9 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5"
+        >
+          <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Сбросить фильтры</span>
+        </button>
+      )}
+    </div>
+  );
+
+  // Контекстные действия тулбара реестра выплат (ЯРУС 3)
+  const payoutActions = (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => fetchData()}
+        className="min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+        title="Обновить журнал"
+        aria-label="Обновить журнал"
+      >
+        <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+        <span className="hidden sm:inline">Обновить</span>
+      </button>
+
+      {currentUserRole === 'admin' && (
+        <button
+          type="button"
+          onClick={() => setIsCreateOpen(true)}
+          className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive"
+          title="Оформить выплату"
+          aria-label="Оформить выплату"
+        >
+          <Plus className="w-5 h-5" strokeWidth={2.5} />
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
       userName={userName}
       userLogin={userLogin}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      searchPlaceholder="Поиск по сотруднику, назначению или комментарию..."
+      filterCount={activeFilterCount}
+      filterContent={filterContent}
     >
-      <div className="space-y-6">
-        {/* 1. Шапка модуля выплат */}
-        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-                <Banknote className="w-4 h-4" strokeWidth={2} />
-              </div>
-              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                Журнал выплат персоналу
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-xs font-semibold border border-emerald-500/30">
-                {totalCount} проводок
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Учет начислений зарплат, авансов, бонусов за подключение/сопровождение и удержаний
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
-            {/* Селектор расчетного периода */}
-            <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60">
-              <Calendar className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
-              <select
-                value={selectedMonth}
-                onChange={handleMonthChange}
-                className="bg-transparent text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
-              >
-                <option value="all">Все месяцы</option>
-                {accrualMonths.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Селектор категории */}
-            <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60">
-              <Layers className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
-              <select
-                value={selectedCategory}
-                onChange={handleCategoryChange}
-                className="bg-transparent text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
-              >
-                <option value="all">Все категории</option>
-                <option value="выплата зп">Выплата ЗП</option>
-                <option value="аванс">Аванс</option>
-                <option value="бонус">Бонус</option>
-                <option value="прочие начисления">Прочие</option>
-                <option value="удержание">Удержание</option>
-              </select>
-            </div>
-
-            {/* Кнопка обновления */}
-            <button
-              onClick={() => fetchData()}
-              title="Обновить журнал"
-              className="w-9 h-9 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center justify-center transition-all active:scale-95 border border-zinc-200/60 dark:border-zinc-700/60"
-            >
-              <RotateCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-            </button>
-
-            {/* Кнопка оформления выплаты (только админ) */}
-            {currentUserRole === 'admin' && (
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="h-9 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95"
-              >
-                <Plus className="w-4 h-4" strokeWidth={2.5} />
-                <span>Оформить выплату</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* 2. KPI сводка */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+      <div className="space-y-4">
+        {/* ЯРУС 2: KPI сводка (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
+        <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 overflow-x-auto sm:overflow-x-visible snap-x sm:snap-none pb-2 sm:pb-0 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
             <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-500" strokeWidth={1.75} />
               Общий фонд выплат
             </span>
-            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">
+            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">
               {stats.totalPaid.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
               <Receipt className="w-3.5 h-3.5" strokeWidth={1.75} />
               Выданные авансы
             </span>
-            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">
+            <p className="text-xl font-bold text-amber-700 dark:text-amber-300 font-mono">
               {stats.totalAdvances.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
               <TrendingDown className="w-3.5 h-3.5" strokeWidth={1.75} />
               Удержания
             </span>
-            <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
+            <p className="text-xl font-bold text-rose-700 dark:text-rose-300 font-mono">
               {stats.totalDeductions.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1">
               <FileSpreadsheet className="w-3.5 h-3.5" strokeWidth={1.75} />
               Всего транзакций
             </span>
-            <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
+            <p className="text-xl font-bold text-blue-700 dark:text-blue-300 font-mono">
               {stats.transactionsCount}
             </p>
           </div>
         </div>
 
-        {/* 3. Универсальный реестр DataJournal */}
+        {/* ЯРУС 3: Универсальный реестр DataJournal */}
         <DataJournal<PayoutItem>
           data={payouts}
           columns={columns}
@@ -457,6 +475,8 @@ export default function PayoutsPage() {
           searchPlaceholder="Поиск по сотруднику, назначению или комментарию..."
           onRowClick={(row) => setSelectedPayout(row)}
           totalCount={totalCount}
+          externalSearchQuery={searchQuery}
+          customActions={payoutActions}
         />
 
         {/* 4. Модальное окно просмотра деталей проводки */}

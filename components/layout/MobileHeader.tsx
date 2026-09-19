@@ -7,27 +7,35 @@ import { ThemeToggle } from '@/components/theme/ThemeToggle';
 
 interface MobileHeaderProps {
   onOpenFilter?: () => void;
+  searchQuery?: string;
   onSearchChange?: (query: string) => void;
+  searchPlaceholder?: string;
+  filterCount?: number;
+  filterContent?: React.ReactNode;
 }
 
 const MODULE_TITLES: Record<string, string> = {
   '/': 'Дашборд',
-  '/leads': 'Лиды',
-  '/sellers': 'Продавцы',
-  '/payments': 'Платежи',
-  '/connections': 'Связи',
+  '/leads': 'Лиды (Воронка)',
+  '/sellers': 'База продавцов',
+  '/payments': 'Транзакции и платежи',
+  '/connections': 'Подключения',
   '/payouts': 'Выплаты',
-  '/plans': 'Справочники',
-  '/analytics': 'KPI',
+  '/plans': 'Справочники и тарифы',
+  '/rates': 'Персональные ставки',
+  '/analytics': 'KPI и аналитика',
 };
 
 export function MobileHeader({
-  onOpenFilter,
+  searchQuery = '',
   onSearchChange,
+  searchPlaceholder = 'Поиск по номеру, имени...',
+  filterCount = 0,
+  filterContent,
 }: MobileHeaderProps) {
   const pathname = usePathname();
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
-  const [searchQuery, setSearchQuery] = React.useState('');
+  const [isFilterModalOpen, setIsFilterModalOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const currentTitle = MODULE_TITLES[pathname] || 'SotkaCRM';
@@ -38,75 +46,131 @@ export function MobileHeader({
       if (next) {
         setTimeout(() => searchInputRef.current?.focus(), 100);
       } else {
-        setSearchQuery('');
         onSearchChange?.('');
       }
       return next;
     });
   };
 
-  const handleQueryChange = (val: string) => {
-    setSearchQuery(val);
-    onSearchChange?.(val);
-  };
+  // Закрытие поиска и фильтров при смене маршрута
+  React.useEffect(() => {
+    setIsSearchOpen(false);
+    setIsFilterModalOpen(false);
+  }, [pathname]);
 
   return (
-    <header className="lg:hidden fixed top-3 left-3 right-3 z-30 h-14 rounded-2xl island-glass px-3 flex items-center justify-between shadow-md">
-      {!isSearchOpen ? (
-        <>
-          <div className="flex items-center gap-2">
-            <h1 className="text-base font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">
-              {currentTitle}
-            </h1>
-          </div>
+    <>
+      <header className="lg:hidden fixed top-3 left-3 right-3 z-40 h-14 rounded-2xl island-glass px-2.5 flex items-center justify-between shadow-md">
+        {!isSearchOpen ? (
+          <>
+            <div className="flex items-center gap-2 pl-1.5">
+              <h1 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 tracking-tight truncate max-w-[170px] sm:max-w-xs">
+                {currentTitle}
+              </h1>
+            </div>
 
-          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
+              {onSearchChange && (
+                <button
+                  type="button"
+                  onClick={handleToggleSearch}
+                  className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive active:scale-95"
+                  title="Поиск"
+                  aria-label="Поиск"
+                >
+                  <Search className="w-5 h-5" strokeWidth={1.75} />
+                </button>
+              )}
+
+              {filterContent && (
+                <button
+                  type="button"
+                  onClick={() => setIsFilterModalOpen(true)}
+                  className="relative min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive active:scale-95"
+                  title="Фильтры"
+                  aria-label="Фильтры"
+                >
+                  <SlidersHorizontal className="w-5 h-5" strokeWidth={1.75} />
+                  {filterCount > 0 && (
+                    <span className="absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
+                      {filterCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              <div className="flex items-center justify-center min-w-[44px] min-h-[44px]">
+                <ThemeToggle />
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="w-full flex items-center gap-2 px-1">
+            <Search className="w-4 h-4 text-zinc-400 flex-shrink-0" strokeWidth={1.75} />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => onSearchChange?.(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="flex-1 h-10 bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange?.('')}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                aria-label="Очистить"
+              >
+                <X className="w-3.5 h-3.5" strokeWidth={2} />
+              </button>
+            )}
             <button
               type="button"
               onClick={handleToggleSearch}
-              className="w-9 h-9 rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive"
-              title="Поиск"
-              aria-label="Поиск"
+              className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 island-interactive active:scale-95"
+              aria-label="Закрыть поиск"
             >
-              <Search className="w-4.5 h-4.5" strokeWidth={1.75} />
+              <X className="w-5 h-5" strokeWidth={1.75} />
             </button>
+          </div>
+        )}
+      </header>
 
-            {onOpenFilter && (
+      {/* Мобильная шторка фильтров (Bottom Sheet / Modal) */}
+      {isFilterModalOpen && filterContent && (
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="fixed inset-0"
+            onClick={() => setIsFilterModalOpen(false)}
+          />
+          <div className="relative z-10 w-full max-h-[85vh] overflow-y-auto rounded-t-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 p-5 space-y-4 shadow-2xl animate-in slide-in-from-bottom duration-200">
+            <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-3">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4.5 h-4.5 text-zinc-500" strokeWidth={1.75} />
+                <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                  Фильтры реестра
+                </span>
+                {filterCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-blue-600 text-white text-xs font-bold">
+                    {filterCount}
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={onOpenFilter}
-                className="w-9 h-9 rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive"
-                title="Фильтры"
-                aria-label="Фильтры"
+                onClick={() => setIsFilterModalOpen(false)}
+                className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                aria-label="Закрыть фильтры"
               >
-                <SlidersHorizontal className="w-4.5 h-4.5" strokeWidth={1.75} />
+                <X className="w-5 h-5" strokeWidth={1.75} />
               </button>
-            )}
+            </div>
 
-            <ThemeToggle />
+            <div className="space-y-4 pb-6">{filterContent}</div>
           </div>
-        </>
-      ) : (
-        <div className="w-full flex items-center gap-2">
-          <Search className="w-4 h-4 text-zinc-400 flex-shrink-0" strokeWidth={1.75} />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => handleQueryChange(e.target.value)}
-            placeholder="Поиск по номеру, имени..."
-            className="flex-1 h-9 bg-transparent text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={handleToggleSearch}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 island-interactive"
-            aria-label="Закрыть поиск"
-          >
-            <X className="w-4 h-4" strokeWidth={1.75} />
-          </button>
         </div>
       )}
-    </header>
+    </>
   );
 }

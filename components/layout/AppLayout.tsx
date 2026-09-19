@@ -18,6 +18,11 @@ interface AppLayoutProps {
   onSignOut?: () => void;
   onSyncApi?: () => void;
   isSyncing?: boolean;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  searchPlaceholder?: string;
+  filterCount?: number;
+  filterContent?: React.ReactNode;
 }
 
 export function AppLayout({
@@ -28,6 +33,11 @@ export function AppLayout({
   onSignOut,
   onSyncApi,
   isSyncing = false,
+  searchQuery,
+  onSearchChange,
+  searchPlaceholder,
+  filterCount,
+  filterContent,
 }: AppLayoutProps) {
   const pathname = usePathname();
   const { showToast } = useToast();
@@ -100,10 +110,21 @@ export function AppLayout({
         onSyncApi={handleSync}
         isSyncing={isSyncing || internalSyncing}
         lastSyncedAt={lastSyncedAt}
+        searchQuery={searchQuery}
+        onSearchChange={onSearchChange}
+        searchPlaceholder={searchPlaceholder}
+        filterCount={filterCount}
+        filterContent={filterContent}
       />
 
       {/* МОБИЛЬНЫЙ СЛОЙ (экран < 1024px) */}
-      <MobileHeader />
+      <MobileHeader
+        searchQuery={searchQuery}
+        onSearchChange={onSearchChange}
+        searchPlaceholder={searchPlaceholder}
+        filterCount={filterCount}
+        filterContent={filterContent}
+      />
 
       {/* ЦЕНТРАЛЬНАЯ СКРОЛЛИРУЕМАЯ ОБЛАСТЬ */}
       <main

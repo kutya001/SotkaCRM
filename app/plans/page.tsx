@@ -34,6 +34,7 @@ export default function PlansPage() {
   const { showToast } = useToast();
 
   const [plans, setPlans] = React.useState<PlanItem[]>([]);
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
   const [userName, setUserName] = React.useState('Сотрудник CRM');
@@ -285,13 +286,44 @@ export default function PlansPage() {
     },
   ];
 
+  // Контекстные действия тулбара реестра тарифов (ЯРУС 3)
+  const planActions = (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => fetchData()}
+        className="min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+        title="Обновить каталог"
+        aria-label="Обновить каталог"
+      >
+        <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+        <span className="hidden sm:inline">Обновить</span>
+      </button>
+
+      {currentUserRole === 'admin' && (
+        <button
+          type="button"
+          onClick={handleOpenCreate}
+          className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive"
+          title="Добавить тариф"
+          aria-label="Добавить тариф"
+        >
+          <Plus className="w-5 h-5" strokeWidth={2.5} />
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
       userName={userName}
       userLogin={userLogin}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      searchPlaceholder="Поиск по названию или описанию тарифа..."
     >
-      <div className="space-y-6">
+      <div className="space-y-4">
         {/* Вкладки справочников */}
         <div className="flex items-center gap-2 border-b border-zinc-200/60 dark:border-zinc-800/60 pb-3">
           <Link
@@ -310,44 +342,7 @@ export default function PlansPage() {
           </Link>
         </div>
 
-        {/* Шапка раздела тарифов */}
-        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                Каталог тарифных планов
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/30">
-                {plans.length} тарифов
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Базовые тарифы для продавцов платформы, используемые при расчете бонусов за подключение и сопровождение
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={() => fetchData()}
-              title="Обновить"
-              className="w-9 h-9 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center justify-center transition-all active:scale-95 border border-zinc-200/60 dark:border-zinc-700/60"
-            >
-              <RotateCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-            </button>
-
-            {currentUserRole === 'admin' && (
-              <button
-                onClick={handleOpenCreate}
-                className="h-9 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95"
-              >
-                <Plus className="w-4 h-4" strokeWidth={2.5} />
-                <span>Добавить тариф</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Реестр тарифов DataJournal */}
+        {/* Реестр тарифов DataJournal (ЯРУС 3) */}
         <DataJournal<PlanItem>
           data={plans}
           columns={columns}
@@ -356,6 +351,8 @@ export default function PlansPage() {
           searchPlaceholder="Поиск по коду или названию тарифа..."
           onRowClick={currentUserRole === 'admin' ? handleOpenEdit : undefined}
           totalCount={plans.length}
+          externalSearchQuery={searchQuery}
+          customActions={planActions}
         />
 
         {/* Модальное окно создания / редактирования тарифа */}

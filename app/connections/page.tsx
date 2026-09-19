@@ -82,7 +82,8 @@ export default function ConnectionsPage() {
     totalBonusAmount: 0,
   });
 
-  // Фильтры
+  // Поиск и Фильтры (ЯРУС 1)
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
   const [selectedStatus, setSelectedStatus] = React.useState<string>('all');
@@ -416,115 +417,133 @@ export default function ConnectionsPage() {
     },
   ];
 
+  // Расчет количества активных фильтров (ЯРУС 1)
+  const activeFilterCount =
+    (selectedMonth !== 'all' ? 1 : 0) + (selectedStatus !== 'all' ? 1 : 0);
+
+  // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
+  const filterContent = (
+    <div className="space-y-3.5">
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Расчетный месяц
+        </label>
+        <select
+          value={selectedMonth}
+          onChange={handleMonthChange}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все месяцы</option>
+          {accrualMonths.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Статус клиента
+        </label>
+        <select
+          value={selectedStatus}
+          onChange={handleStatusFilterChange}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все статусы</option>
+          <option value="новый">Новый</option>
+          <option value="подключен">Подключен</option>
+          <option value="сопровождение">Сопровождение</option>
+          <option value="готов">Готов (Выплачен)</option>
+          <option value="отменен">Отменен</option>
+        </select>
+      </div>
+
+      {activeFilterCount > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedMonth('all');
+            setSelectedStatus('all');
+            fetchData('all', 'all');
+          }}
+          className="w-full h-9 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5"
+        >
+          <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Сбросить фильтры</span>
+        </button>
+      )}
+    </div>
+  );
+
+  // Контекстные действия тулбара реестра подключений (ЯРУС 3)
+  const connectionActions = (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => fetchData()}
+        className="min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+        title="Обновить реестр"
+        aria-label="Обновить реестр"
+      >
+        <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+        <span className="hidden sm:inline">Обновить</span>
+      </button>
+
+      {currentUserRole === 'admin' && (
+        <button
+          type="button"
+          onClick={() => {
+            setBillingResult(null);
+            setIsBillingModalOpen(true);
+          }}
+          className="min-h-[44px] h-11 px-3.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center gap-2 shadow-md transition-all active:scale-95 island-interactive"
+          title="Биллинг сопровождения"
+          aria-label="Биллинг сопровождения"
+        >
+          <Banknote className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+          <span className="hidden sm:inline">Биллинг сопровождения</span>
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
       userName={userName}
       userLogin={userLogin}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      searchPlaceholder="Поиск по продавцу, магазину или телефону..."
+      filterCount={activeFilterCount}
+      filterContent={filterContent}
     >
-      <div className="space-y-6">
-        {/* 1. Верхний информационный блок */}
-        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-500/20">
-                <Link2 className="w-4 h-4" strokeWidth={2} />
-              </div>
-              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                Реестр подключений (Клиенты)
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/30">
-                {totalCount} записей
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Закрепление продавцов за консультантами, контроль сопровождения и начисления комиссий
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
-            {/* Селектор расчетного месяца */}
-            <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60">
-              <Calendar className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
-              <select
-                value={selectedMonth}
-                onChange={handleMonthChange}
-                className="bg-transparent text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
-              >
-                <option value="all">Все месяцы</option>
-                {accrualMonths.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Селектор статуса клиента */}
-            <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60">
-              <Layers className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
-              <select
-                value={selectedStatus}
-                onChange={handleStatusFilterChange}
-                className="bg-transparent text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none cursor-pointer"
-              >
-                <option value="all">Все статусы</option>
-                <option value="новый">Новый</option>
-                <option value="подключен">Подключен</option>
-                <option value="сопровождение">Сопровождение</option>
-                <option value="готов">Готов (Выплачен)</option>
-                <option value="отменен">Отменен</option>
-              </select>
-            </div>
-
-            {/* Кнопка обновления */}
-            <button
-              onClick={() => fetchData()}
-              title="Обновить реестр"
-              className="w-9 h-9 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center justify-center transition-all active:scale-95 border border-zinc-200/60 dark:border-zinc-700/60"
-            >
-              <RotateCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-            </button>
-
-            {/* Кнопка запуска биллинга сопровождения (только admin) */}
-            {currentUserRole === 'admin' && (
-              <button
-                onClick={() => {
-                  setBillingResult(null);
-                  setIsBillingModalOpen(true);
-                }}
-                className="h-9 px-3.5 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95"
-              >
-                <Banknote className="w-4 h-4" strokeWidth={1.75} />
-                <span>Биллинг сопровождения</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* 2. KPI карточки */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+      <div className="space-y-4">
+        {/* ЯРУС 2: KPI карточки (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
+        <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 overflow-x-auto sm:overflow-x-visible snap-x sm:snap-none pb-2 sm:pb-0 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
             <span className="text-[11px] text-zinc-400 font-medium">Всего подключений</span>
-            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.total}</p>
+            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{stats.total}</p>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Новые за месяц</span>
-            <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
+            <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">В сопровождении</span>
-            <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
+            <p className="text-xl font-bold text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+          <div className="min-w-[170px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Бонусы к начислению</span>
-            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+            <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
               +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
             </p>
           </div>
         </div>
 
-        {/* 3. Универсальный реестр DataJournal */}
+        {/* ЯРУС 3: Универсальный реестр DataJournal */}
         <DataJournal<ConnectionItem>
           data={connections}
           columns={columns}
@@ -533,6 +552,8 @@ export default function ConnectionsPage() {
           searchPlaceholder="Поиск по продавцу, магазину или телефону..."
           onRowClick={handleRowClick}
           totalCount={totalCount}
+          externalSearchQuery={searchQuery}
+          customActions={connectionActions}
         />
 
         {/* 4. Модальное окно деталей закрепления и смены статуса (Glassmorphism) */}

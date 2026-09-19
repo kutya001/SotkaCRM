@@ -12,7 +12,14 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'SotkaCRM — Система управления продажами',
   description: 'CRM-платформа автоматизации отдела продаж и учета лидов сервиса Sotka',
-  manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/icon.svg',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',

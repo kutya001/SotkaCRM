@@ -132,3 +132,71 @@ export function flattenObject(
 
   return result;
 }
+
+/**
+ * 5. Преобразование даты в формат ISO 8601 для безопасной вставки в PostgreSQL TIMESTAMPTZ
+ * Предотвращает ошибку 'date/time field value out of range' при получении дат в формате DD.MM.YYYY HH:mm
+ * Все локализованные даты без часового пояса интерпретируются в поясе Бишкека (UTC+6).
+ */
+export function parseDateToISO(dateInput: unknown): string | null {
+  if (dateInput === null || dateInput === undefined) return null;
+
+  if (dateInput instanceof Date) {
+    return isNaN(dateInput.getTime()) ? null : dateInput.toISOString();
+  }
+
+  if (typeof dateInput === 'number') {
+    const ms = dateInput < 1e11 ? dateInput * 1000 : dateInput;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  if (typeof dateInput !== 'string') return null;
+
+  const trimmed = dateInput.trim();
+  if (!trimmed) return null;
+
+  // 1. Формат DD.MM.YYYY [HH:mm[:ss]] (типичный ответ API api.sotka.kg)
+  const dmyMatch = trimmed.match(
+    /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (dmyMatch) {
+    const [, rawDay, rawMonth, year, rawHours = '00', rawMinutes = '00', rawSeconds = '00'] = dmyMatch;
+    const day = rawDay.padStart(2, '0');
+    const month = rawMonth.padStart(2, '0');
+    const hours = rawHours.padStart(2, '0');
+    const minutes = rawMinutes.padStart(2, '0');
+    const seconds = rawSeconds.padStart(2, '0');
+
+    // Интерпретируем как локальное время Кыргызстана (UTC+6)
+    const isoLike = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+06:00`;
+    const parsed = new Date(isoLike);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  // 2. Формат YYYY-MM-DD [HH:mm[:ss]] без часового пояса
+  const ymdMatch = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (ymdMatch) {
+    const [, year, month, day, rawHours = '00', rawMinutes = '00', rawSeconds = '00'] = ymdMatch;
+    const hours = rawHours.padStart(2, '0');
+    const minutes = rawMinutes.padStart(2, '0');
+    const seconds = rawSeconds.padStart(2, '0');
+    const isoLike = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+06:00`;
+    const parsed = new Date(isoLike);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  // 3. Стандартный ISO 8601 или другие форматы, поддерживаемые Date.parse
+  const directParsed = new Date(trimmed);
+  if (!isNaN(directParsed.getTime())) {
+    return directParsed.toISOString();
+  }
+
+  return null;
+}

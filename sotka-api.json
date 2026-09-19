@@ -188,6 +188,7 @@
       "sellers": "seller_phone",
       "payments": "payment_id"
     },
-    "manager_assignment_preservation": "При обновлении таблицы sellers через upsert необходимо сохранять существующие поля manager_id и leads.seller_phone, не затирая их значениями по умолчанию."
+    "manager_assignment_preservation": "При обновлении таблицы sellers через upsert необходимо сохранять существующие поля manager_id и leads.seller_phone, не затирая их значениями по умолчанию.",
+    "date_to_iso_storage_format": "Даты из API (registered_at, last_activity, date_time) в локализованном формате DD.MM.YYYY HH:mm перед вставкой в Postgres (TIMESTAMPTZ) обязательно нормализуются функцией parseDateToISO в стандарт ISO 8601 с часовым поясом Asia/Bishkek (UTC+6) во избежание ошибки out of range."
   }
 }

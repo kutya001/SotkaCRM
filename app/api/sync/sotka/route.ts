@@ -8,6 +8,7 @@ import {
   fetchTransactions,
 } from '@/lib/services/sotka-api';
 import { roundMoney } from '@/lib/utils/money';
+import { parseDateToISO } from '@/lib/sotka';
 import type { Database } from '@/types/database.types';
 
 export const dynamic = 'force-dynamic';
@@ -135,8 +136,8 @@ async function handleSync(request: Request) {
           balance: roundMoney(item.balance),
           moderation: (item.moderation as any) || 'pending',
           is_active: item.is_active ?? true,
-          registered_at: item.registered_at || null,
-          last_activity: item.last_activity || null,
+          registered_at: parseDateToISO(item.registered_at),
+          last_activity: parseDateToISO(item.last_activity),
           employees_count: item.employees_count || 0,
           outlets_count: item.outlets_count || 0,
           brands: Array.isArray(item.brands) ? item.brands.join(', ') : item.brands || null,
@@ -189,7 +190,7 @@ async function handleSync(request: Request) {
             user_name: item.user_name || null,
             user_id: item.user_id ? String(item.user_id) : null,
             amount: roundMoney(item.amount),
-            date_time: item.date_time || new Date().toISOString(),
+            date_time: parseDateToISO(item.date_time) || new Date().toISOString(),
             tran_type: item.tran_type || 'topup',
             description: item.description || null,
             status: item.status || 'succeeded',

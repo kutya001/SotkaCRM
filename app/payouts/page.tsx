@@ -410,41 +410,41 @@ export default function PayoutsPage() {
       createTooltip="Оформить выплату"
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: KPI сводка (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
-        <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 overflow-x-auto sm:overflow-x-visible snap-x sm:snap-none pb-2 sm:pb-0 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0">
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" strokeWidth={1.75} />
-              Общий фонд выплат
+        {/* ЯРУС 2: KPI сводка (Адаптивная сетка: 2x2 на мобильных, 4 в ряд на десктопе) */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Фонд выплат</span>
             </span>
-            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">
+            <p className="text-sm sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 font-mono truncate">
               {stats.totalPaid.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
-              <Receipt className="w-3.5 h-3.5" strokeWidth={1.75} />
-              Выданные авансы
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
+              <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Авансы</span>
             </span>
-            <p className="text-xl font-bold text-amber-700 dark:text-amber-300 font-mono">
+            <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
               {stats.totalAdvances.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
-              <TrendingDown className="w-3.5 h-3.5" strokeWidth={1.75} />
-              Удержания
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1 truncate">
+              <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Удержания</span>
             </span>
-            <p className="text-xl font-bold text-rose-700 dark:text-rose-300 font-mono">
+            <p className="text-sm sm:text-xl font-bold text-rose-700 dark:text-rose-300 font-mono truncate">
               {stats.totalDeductions.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1">
-              <FileSpreadsheet className="w-3.5 h-3.5" strokeWidth={1.75} />
-              Всего транзакций
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
+              <FileSpreadsheet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Транзакции</span>
             </span>
-            <p className="text-xl font-bold text-blue-700 dark:text-blue-300 font-mono">
+            <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
               {stats.transactionsCount}
             </p>
           </div>

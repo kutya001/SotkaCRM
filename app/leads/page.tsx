@@ -559,32 +559,121 @@ function LeadsContent() {
       createTooltip="Добавить лид"
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: KPI воронки продаж (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
-        <div className="flex sm:grid sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 overflow-x-auto sm:overflow-x-visible snap-x sm:snap-none pb-2 sm:pb-0 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0">
-          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[11px] text-zinc-400 font-medium">Всего в базе</span>
-            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{stats.total}</p>
-          </div>
-          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Открыт</span>
-            <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{stats.open}</p>
-          </div>
-          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">Обработан</span>
-            <p className="text-xl font-bold text-purple-700 dark:text-purple-300">{stats.processed}</p>
-          </div>
-          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Назначен</span>
-            <p className="text-xl font-bold text-amber-700 dark:text-amber-300">{stats.assigned}</p>
-          </div>
-          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Подписан</span>
-            <p className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{stats.signed}</p>
-          </div>
-          <div className="min-w-[130px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-3.5 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Отмена</span>
-            <p className="text-xl font-bold text-rose-700 dark:text-rose-300">{stats.cancelled}</p>
-          </div>
+        {/* ЯРУС 2: KPI воронки продаж (Адаптивная сетка: 3x2 на мобильных, 6 в ряд на десктопе, интерактивный фильтр) */}
+        <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+          {/* Всего в базе */}
+          <button
+            type="button"
+            onClick={() => setFilterStatus('all')}
+            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+              filterStatus === 'all'
+                ? 'bg-white/95 dark:bg-zinc-800/90 border-zinc-400 dark:border-zinc-500 shadow-md ring-2 ring-zinc-500/20'
+                : 'bg-white/75 dark:bg-zinc-900/75 border-white/20 dark:border-zinc-800/40 hover:bg-white/90 dark:hover:bg-zinc-800/60'
+            }`}
+            title="Показать все лиды"
+          >
+            <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-medium truncate block w-full">
+              Всего в базе
+            </span>
+            <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100 mt-0.5">
+              {stats.total}
+            </p>
+          </button>
+
+          {/* Открыт */}
+          <button
+            type="button"
+            onClick={() => setFilterStatus(filterStatus === 'Открыт' ? 'all' : 'Открыт')}
+            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+              filterStatus === 'Открыт'
+                ? 'bg-blue-500/20 dark:bg-blue-500/25 border-blue-500/50 shadow-md ring-2 ring-blue-500/30'
+                : 'bg-blue-500/10 dark:bg-blue-500/5 border-blue-500/20 hover:bg-blue-500/15'
+            }`}
+            title="Фильтровать по статусу «Открыт»"
+          >
+            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block w-full">
+              Открыт
+            </span>
+            <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300 mt-0.5">
+              {stats.open}
+            </p>
+          </button>
+
+          {/* Обработан */}
+          <button
+            type="button"
+            onClick={() => setFilterStatus(filterStatus === 'Обработан' ? 'all' : 'Обработан')}
+            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+              filterStatus === 'Обработан'
+                ? 'bg-purple-500/20 dark:bg-purple-500/25 border-purple-500/50 shadow-md ring-2 ring-purple-500/30'
+                : 'bg-purple-500/10 dark:bg-purple-500/5 border-purple-500/20 hover:bg-purple-500/15'
+            }`}
+            title="Фильтровать по статусу «Обработан»"
+          >
+            <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block w-full">
+              Обработан
+            </span>
+            <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300 mt-0.5">
+              {stats.processed}
+            </p>
+          </button>
+
+          {/* Назначен */}
+          <button
+            type="button"
+            onClick={() => setFilterStatus(filterStatus === 'Назначен' ? 'all' : 'Назначен')}
+            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+              filterStatus === 'Назначен'
+                ? 'bg-amber-500/20 dark:bg-amber-500/25 border-amber-500/50 shadow-md ring-2 ring-amber-500/30'
+                : 'bg-amber-500/10 dark:bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/15'
+            }`}
+            title="Фильтровать по статусу «Назначен»"
+          >
+            <span className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 font-semibold truncate block w-full">
+              Назначен
+            </span>
+            <p className="text-base sm:text-xl font-bold font-mono text-amber-700 dark:text-amber-300 mt-0.5">
+              {stats.assigned}
+            </p>
+          </button>
+
+          {/* Подписан */}
+          <button
+            type="button"
+            onClick={() => setFilterStatus(filterStatus === 'Подписан' ? 'all' : 'Подписан')}
+            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+              filterStatus === 'Подписан'
+                ? 'bg-emerald-500/20 dark:bg-emerald-500/25 border-emerald-500/50 shadow-md ring-2 ring-emerald-500/30'
+                : 'bg-emerald-500/10 dark:bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/15'
+            }`}
+            title="Фильтровать по статусу «Подписан»"
+          >
+            <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block w-full">
+              Подписан
+            </span>
+            <p className="text-base sm:text-xl font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
+              {stats.signed}
+            </p>
+          </button>
+
+          {/* Отмена */}
+          <button
+            type="button"
+            onClick={() => setFilterStatus(filterStatus === 'Отмена' ? 'all' : 'Отмена')}
+            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+              filterStatus === 'Отмена'
+                ? 'bg-rose-500/20 dark:bg-rose-500/25 border-rose-500/50 shadow-md ring-2 ring-rose-500/30'
+                : 'bg-rose-500/10 dark:bg-rose-500/5 border-rose-500/20 hover:bg-rose-500/15'
+            }`}
+            title="Фильтровать по статусу «Отмена»"
+          >
+            <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold truncate block w-full">
+              Отмена
+            </span>
+            <p className="text-base sm:text-xl font-bold font-mono text-rose-700 dark:text-rose-300 mt-0.5">
+              {stats.cancelled}
+            </p>
+          </button>
         </div>
 
         {/* ЯРУС 3: Полиморфный реестр заявок DataJournal */}

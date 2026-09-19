@@ -513,23 +513,23 @@ export default function ConnectionsPage() {
       filterContent={filterContent}
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: KPI карточки (Десктоп: 1 ряд, Мобильный: горизонтальный snap-скролл) */}
-        <div className="flex sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 overflow-x-auto sm:overflow-x-visible snap-x sm:snap-none pb-2 sm:pb-0 scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0">
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[11px] text-zinc-400 font-medium">Всего подключений</span>
-            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">{stats.total}</p>
+        {/* ЯРУС 2: KPI карточки (Адаптивная сетка: 2x2 на мобильных, 4 в ряд на десктопе) */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium truncate block">Всего подключений</span>
+            <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</p>
           </div>
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Новые за месяц</span>
-            <p className="text-xl font-bold text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">Новые за месяц</span>
+            <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
           </div>
-          <div className="min-w-[150px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">В сопровождении</span>
-            <p className="text-xl font-bold text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block">В сопровождении</span>
+            <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
           </div>
-          <div className="min-w-[170px] sm:min-w-0 flex-1 flex-shrink-0 snap-start p-3 sm:p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Бонусы к начислению</span>
-            <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block">Бонусы к начислению</span>
+            <p className="text-base sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
               +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
             </p>
           </div>

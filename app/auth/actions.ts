@@ -55,8 +55,10 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
         .maybeSingle();
 
       if (!existingUser) {
+        const keyVal = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+        const keyPreview = `${keyVal.slice(0, 10)}...${keyVal.slice(-10)} (len ${keyVal.length})`;
         return { 
-          error: `Пользователь с таким логином не найден в системе. [auth: ${authError?.message || 'null'}; db: ${existError?.message || 'null'}; url: ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'none'}]` 
+          error: `Пользователь с таким логином не найден в системе. [auth: ${authError?.message || 'null'}; db: ${existError?.message || 'null'}; key: ${keyPreview}]` 
         };
       }
       return { error: 'Неверный логин или пароль.' };

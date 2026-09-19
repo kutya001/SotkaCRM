@@ -260,9 +260,32 @@ export function DataJournal<T extends Record<string, any>>({
     order: 'asc' | 'desc' | null;
   }>({ field: '', order: null });
 
+  type ActiveDropdown = 'filters' | 'columns' | null;
   const [filterRules, setFilterRules] = React.useState<FilterRule[]>([]);
-  const [isFilterOpen, setIsFilterOpen] = React.useState(false);
-  const [isColumnsMenuOpen, setIsColumnsMenuOpen] = React.useState(false);
+  const [activeDropdown, setActiveDropdown] = React.useState<ActiveDropdown>(null);
+  const toolbarRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        toolbarRef.current &&
+        !toolbarRef.current.contains(event.target as Node)
+      ) {
+        setActiveDropdown(null);
+      }
+    }
+
+    if (activeDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [activeDropdown]);
+
+  const toggleDropdown = (type: ActiveDropdown) => {
+    setActiveDropdown((prev) => (prev === type ? null : type));
+  };
 
   const handleSort = (field: string) => {
     setSortConfig((prev) => {
@@ -410,30 +433,45 @@ export function DataJournal<T extends Record<string, any>>({
   return (
     <div className="w-full space-y-4">
       {/* 1. Верхний управляющий тулбар реестра */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-4 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm">
-        {/* Заголовок и счетчик */}
-        <div className="flex items-center gap-3">
-          <div>
-            {title && (
-              <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                {title}
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-zinc-200/70 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                  {totalRows}
-                </span>
-              </h2>
-            )}
-            {subtitle && (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                {subtitle}
-              </p>
-            )}
+      <div
+        ref={toolbarRef}
+        className="relative z-30 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm"
+      >
+        {/* Заголовок и счетчик (отображаются только если переданы) */}
+        {(title || subtitle) && (
+          <div className="flex items-center gap-3">
+            <div>
+              {title && (
+                <h2 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                  {title}
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-zinc-200/70 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
+                    {totalRows}
+                  </span>
+                </h2>
+              )}
+              {subtitle && (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  {subtitle}
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Правые контролы: поиск, фильтры, колонки, переключатель вида */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        {/* Контролы: поиск, фильтры, колонки, переключатель вида */}
+        <div
+          className={`flex flex-wrap items-center gap-2 sm:gap-2.5 ${
+            title || subtitle ? '' : 'w-full justify-between'
+          }`}
+        >
           {/* Поле быстрого поиска */}
-          <div className="relative flex-1 sm:w-64 sm:flex-initial">
+          <div
+            className={`relative ${
+              title || subtitle
+                ? 'flex-1 sm:w-64 sm:flex-initial'
+                : 'flex-1 max-w-md'
+            }`}
+          >
             <Search
               className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
               strokeWidth={1.75}
@@ -447,6 +485,7 @@ export function DataJournal<T extends Record<string, any>>({
             />
             {searchQuery && (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
               >
@@ -455,169 +494,181 @@ export function DataJournal<T extends Record<string, any>>({
             )}
           </div>
 
-          {/* Кнопка фильтра */}
-          <div className="relative">
-            <button
-              onClick={() => setIsFilterOpen(!isFilterOpen)}
-              className={`h-9 px-3 rounded-xl border text-xs font-medium flex items-center gap-2 transition-all ${
-                filterRules.length > 0 || isFilterOpen
-                  ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent shadow-sm'
-                  : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" strokeWidth={1.75} />
-              <span>Фильтры</span>
-              {filterRules.length > 0 && (
-                <span className="w-4 h-4 rounded-full bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white text-[10px] flex items-center justify-center font-bold">
-                  {filterRules.length}
-                </span>
-              )}
-            </button>
-
-            {/* Выпадающая панель конструктора фильтров */}
-            {isFilterOpen && (
-              <div className="absolute right-0 top-11 z-40 w-80 sm:w-96 p-4 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-3 animate-in fade-in zoom-in-95 duration-150">
-                <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-2.5">
-                  <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                    Конструктор условий
+          <div className="flex items-center gap-2">
+            {/* Кнопка фильтра */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => toggleDropdown('filters')}
+                className={`h-9 px-3 rounded-xl border text-xs font-medium flex items-center gap-2 transition-all ${
+                  filterRules.length > 0 || activeDropdown === 'filters'
+                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent shadow-sm'
+                    : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Фильтры</span>
+                {filterRules.length > 0 && (
+                  <span className="w-4 h-4 rounded-full bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white text-[10px] flex items-center justify-center font-bold">
+                    {filterRules.length}
                   </span>
-                  <div className="flex items-center gap-2">
-                    {filterRules.length > 0 && (
-                      <button
-                        onClick={() => setFilterRules([])}
-                        className="text-[11px] text-rose-500 hover:underline"
-                      >
-                        Сбросить
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setIsFilterOpen(false)}
-                      className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-                    >
-                      <X className="w-4 h-4" strokeWidth={1.75} />
-                    </button>
-                  </div>
-                </div>
-
-                {filterRules.length === 0 ? (
-                  <p className="text-xs text-zinc-400 text-center py-3">
-                    Условия фильтрации не заданы
-                  </p>
-                ) : (
-                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                    {filterRules.map((rule) => (
-                      <div
-                        key={rule.id}
-                        className="flex items-center gap-1.5 p-2 rounded-xl bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-700/50"
-                      >
-                        <select
-                          value={rule.field}
-                          onChange={(e) =>
-                            updateFilterRule(rule.id, { field: e.target.value })
-                          }
-                          className="h-7 px-2 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
-                        >
-                          {initialColumns
-                            .filter((c) => c.filterable !== false)
-                            .map((c) => (
-                              <option key={c.key} value={c.key}>
-                                {c.label}
-                              </option>
-                            ))}
-                        </select>
-
-                        <select
-                          value={rule.operator}
-                          onChange={(e) =>
-                            updateFilterRule(rule.id, {
-                              operator: e.target.value as FilterOperator,
-                            })
-                          }
-                          className="h-7 px-1.5 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
-                        >
-                          <option value="contains">содержит</option>
-                          <option value="equals">равно</option>
-                          <option value="gt">больше</option>
-                          <option value="lt">меньше</option>
-                          <option value="neq">не равно</option>
-                        </select>
-
-                        <input
-                          type="text"
-                          value={rule.value}
-                          onChange={(e) =>
-                            updateFilterRule(rule.id, { value: e.target.value })
-                          }
-                          placeholder="Значение..."
-                          className="h-7 px-2 flex-1 min-w-[70px] text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100"
-                        />
-
-                        <button
-                          onClick={() => removeFilterRule(rule.id)}
-                          className="p-1 text-zinc-400 hover:text-rose-500"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
                 )}
+              </button>
 
-                <button
-                  onClick={addFilterRule}
-                  className="w-full h-8 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span>Добавить условие</span>
-                </button>
-              </div>
-            )}
-          </div>
+              {/* Выпадающая панель конструктора фильтров */}
+              {activeDropdown === 'filters' && (
+                <div className="absolute right-0 sm:right-auto sm:left-0 top-11 z-50 w-80 sm:w-96 p-4 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-2.5">
+                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                      Конструктор условий
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {filterRules.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setFilterRules([])}
+                          className="text-[11px] text-rose-500 hover:underline"
+                        >
+                          Сбросить
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setActiveDropdown(null)}
+                        className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                      >
+                        <X className="w-4 h-4" strokeWidth={1.75} />
+                      </button>
+                    </div>
+                  </div>
 
-          {/* Меню настройки видимости колонок */}
-          <div className="relative">
-            <button
-              onClick={() => setIsColumnsMenuOpen(!isColumnsMenuOpen)}
-              className="h-9 px-3 rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 text-xs font-medium flex items-center gap-1.5 transition-all"
-              title="Настройка отображаемых колонок"
-            >
-              <Table2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Колонки</span>
-              <ChevronDown className="w-3 h-3 text-zinc-400" strokeWidth={1.75} />
-            </button>
+                  {filterRules.length === 0 ? (
+                    <p className="text-xs text-zinc-400 text-center py-3">
+                      Условия фильтрации не заданы
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                      {filterRules.map((rule) => (
+                        <div
+                          key={rule.id}
+                          className="flex items-center gap-1.5 p-2 rounded-xl bg-zinc-100/70 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-700/50"
+                        >
+                          <select
+                            value={rule.field}
+                            onChange={(e) =>
+                              updateFilterRule(rule.id, { field: e.target.value })
+                            }
+                            className="h-7 px-2 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
+                          >
+                            {initialColumns
+                              .filter((c) => c.filterable !== false)
+                              .map((c) => (
+                                <option key={c.key} value={c.key}>
+                                  {c.label}
+                                </option>
+                              ))}
+                          </select>
 
-            {isColumnsMenuOpen && (
-              <div className="absolute right-0 top-11 z-40 w-56 p-3 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-2 animate-in fade-in zoom-in-95 duration-150">
-                <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-2">
-                  <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                    Видимость колонок
-                  </span>
+                          <select
+                            value={rule.operator}
+                            onChange={(e) =>
+                              updateFilterRule(rule.id, {
+                                operator: e.target.value as FilterOperator,
+                              })
+                            }
+                            className="h-7 px-1.5 text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
+                          >
+                            <option value="contains">содержит</option>
+                            <option value="equals">равно</option>
+                            <option value="gt">больше</option>
+                            <option value="lt">меньше</option>
+                            <option value="neq">не равно</option>
+                          </select>
+
+                          <input
+                            type="text"
+                            value={rule.value}
+                            onChange={(e) =>
+                              updateFilterRule(rule.id, { value: e.target.value })
+                            }
+                            placeholder="Значение..."
+                            className="h-7 px-2 flex-1 min-w-[70px] text-[11px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => removeFilterRule(rule.id)}
+                            className="p-1 text-zinc-400 hover:text-rose-500"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <button
-                    onClick={() => setIsColumnsMenuOpen(false)}
-                    className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                    type="button"
+                    onClick={addFilterRule}
+                    className="w-full h-8 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-center gap-1.5 transition-colors"
                   >
-                    <X className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Добавить условие</span>
                   </button>
                 </div>
-                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                  {initialColumns.map((col) => (
-                    <label
-                      key={col.key}
-                      className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 cursor-pointer text-xs text-zinc-800 dark:text-zinc-200"
+              )}
+            </div>
+
+            {/* Меню настройки видимости колонок */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => toggleDropdown('columns')}
+                className={`h-9 px-3 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-all ${
+                  activeDropdown === 'columns'
+                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent shadow-sm'
+                    : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
+                }`}
+                title="Настройка отображаемых колонок"
+              >
+                <Table2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span className="hidden sm:inline">Колонки</span>
+                <ChevronDown className="w-3 h-3 text-zinc-400" strokeWidth={1.75} />
+              </button>
+
+              {activeDropdown === 'columns' && (
+                <div className="absolute right-0 top-11 z-50 w-56 p-3 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-2 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-2">
+                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                      Видимость колонок
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveDropdown(null)}
+                      className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
                     >
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns[col.key] !== false}
-                        onChange={() => toggleColumnVisibility(col.key)}
-                        className="rounded border-zinc-300 dark:border-zinc-700 text-zinc-900 focus:ring-0"
-                      />
-                      <span className="truncate">{col.label}</span>
-                    </label>
-                  ))}
+                      <X className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    </button>
+                  </div>
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {initialColumns.map((col) => (
+                      <label
+                        key={col.key}
+                        className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 cursor-pointer text-xs text-zinc-800 dark:text-zinc-200"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={visibleColumns[col.key] !== false}
+                          onChange={() => toggleColumnVisibility(col.key)}
+                          className="rounded border-zinc-300 dark:border-zinc-700 text-zinc-900 focus:ring-0"
+                        />
+                        <span className="truncate">{col.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
           {/* Переключатель вида (Таблица / Карточки) */}
           <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40">
@@ -657,6 +708,7 @@ export function DataJournal<T extends Record<string, any>>({
           )}
         </div>
       </div>
+    </div>
 
       {/* Индикаторы активных фильтров (Чипы) */}
       {filterRules.some((r) => r.value.trim()) && (
@@ -688,7 +740,7 @@ export function DataJournal<T extends Record<string, any>>({
       {/* 2. Представление данных: Таблица или Карточки */}
       {isClient && viewMode === 'table' ? (
         /* ТАБЛИЧНЫЙ ВИД (TABLE VIEW) */
-        <div className="w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm">
+        <div className="relative z-10 w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm">
           <div className="overflow-x-auto max-h-[680px]">
             <table className="w-full text-left border-collapse">
               {/* Sticky-шапка */}
@@ -954,7 +1006,7 @@ export function DataJournal<T extends Record<string, any>>({
         </div>
       ) : (
         /* КАРТОЧНЫЙ ВИД (CARD VIEW ДЛЯ МОБИЛЬНЫХ) */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {paginatedData.length === 0 ? (
             <div className="col-span-full p-8 text-center rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-xs text-zinc-400">
               {emptyMessage}

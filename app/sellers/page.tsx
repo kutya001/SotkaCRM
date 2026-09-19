@@ -489,6 +489,23 @@ export default function SellersPage() {
       userLogin={userLogin}
     >
       <div className="space-y-6">
+        {/* Верхний информационный блок */}
+        <div className="p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                База продавцов
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/30">
+                {stats.total} продавцов
+              </span>
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              Реестр торговых точек и контрагентов, синхронизированных с Sotka API
+            </p>
+          </div>
+        </div>
+
         {/* ВЕРХНИЙ БЛОК МЕТРИК / KPI КАРТОЧКИ В ЭСТЕТИКЕ APPLE ISLAND */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {/* Всего продавцов */}
@@ -634,8 +651,6 @@ export default function SellersPage() {
             columns={columns}
             keyField="seller_phone"
             storageKey="sotka_sellers_journal"
-            title="База продавцов"
-            subtitle={`Всего: ${totalCount} записей`}
             searchPlaceholder="Поиск по имени, телефону или магазину..."
             emptyMessage="Продавцы не найдены. Выполните синхронизацию с Sotka API."
             totalCount={totalCount}

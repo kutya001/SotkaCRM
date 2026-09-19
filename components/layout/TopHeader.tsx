@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
-import { Search, RefreshCw, X, ShieldAlert } from 'lucide-react';
+import { RefreshCw, ShieldAlert } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import type { UserRole } from '@/types/database.types';
 
@@ -35,8 +35,6 @@ export function TopHeader({
   lastSyncedAt,
 }: TopHeaderProps) {
   const pathname = usePathname();
-  const [searchQuery, setSearchQuery] = React.useState('');
-
   const currentTitle = MODULE_TITLES[pathname] || 'SotkaCRM';
 
   return (
@@ -50,32 +48,6 @@ export function TopHeader({
         <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">
           {currentTitle}
         </h1>
-      </div>
-
-      {/* Центральная часть: строка быстрого поиска */}
-      <div className="flex-1 max-w-md mx-6">
-        <div className="relative flex items-center">
-          <Search
-            className="w-4 h-4 absolute left-3 text-zinc-400 pointer-events-none"
-            strokeWidth={1.75}
-          />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Быстрый поиск по телефону, имени или магазину..."
-            className="w-full h-9 pl-9 pr-8 text-xs bg-zinc-200/50 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-700/50 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:focus:ring-zinc-500 transition-all"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-            >
-              <X className="w-3.5 h-3.5" strokeWidth={1.75} />
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Правая часть: действия, тема, синхронизация */}

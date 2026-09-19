@@ -454,11 +454,8 @@ export default function PayoutsPage() {
           columns={columns}
           keyField="payout_id"
           storageKey="payouts_journal"
-          title="Реестр финансовых проводок"
-          subtitle="Фиксация безналичных и наличных взаиморасчетов с сотрудниками"
           searchPlaceholder="Поиск по сотруднику, назначению или комментарию..."
           onRowClick={(row) => setSelectedPayout(row)}
-          onCreateClick={currentUserRole === 'admin' ? () => setIsCreateOpen(true) : undefined}
           totalCount={totalCount}
         />
 

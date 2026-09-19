@@ -258,8 +258,6 @@ export default function RatesPage() {
           columns={columns}
           keyField="user_id"
           storageKey="rates_journal"
-          title="Реестр ставок сотрудников"
-          subtitle="Синхронизировано с таблицей employee_rates"
           searchPlaceholder="Поиск по имени сотрудника или логину..."
           onRowClick={currentUserRole === 'admin' ? handleOpenEdit : undefined}
           totalCount={rates.length}

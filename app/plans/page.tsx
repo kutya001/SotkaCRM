@@ -353,8 +353,6 @@ export default function PlansPage() {
           columns={columns}
           keyField="plan_id"
           storageKey="plans_journal"
-          title="Действующие тарифы"
-          subtitle="Синхронизировано с базой данных (триггер audit_plan_price_trigger активен)"
           searchPlaceholder="Поиск по коду или названию тарифа..."
           onRowClick={currentUserRole === 'admin' ? handleOpenEdit : undefined}
           totalCount={plans.length}

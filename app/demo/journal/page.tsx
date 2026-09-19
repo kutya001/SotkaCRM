@@ -563,8 +563,6 @@ export default function DemoJournalPage() {
           columns={columns}
           keyField="id"
           storageKey="demo_leads"
-          title="Реестр лидов (Демо)"
-          subtitle="Интерактивная выборка синтетических записей CRM"
           searchPlaceholder="Быстрый поиск по клиенту, телефону или точке..."
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}

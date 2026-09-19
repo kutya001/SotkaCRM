@@ -548,12 +548,9 @@ function LeadsContent() {
           columns={columns}
           keyField="lead_id"
           storageKey="leads_live"
-          title="Реестр лидов"
-          subtitle="Синхронизировано с базой данных PostgreSQL"
           searchPlaceholder="Поиск по клиенту, номеру телефона или заметке..."
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
-          onCreateClick={handleCreateClick}
           totalCount={totalCount}
         />
 

@@ -530,8 +530,6 @@ export default function ConnectionsPage() {
           columns={columns}
           keyField="connection_id"
           storageKey="connections_journal"
-          title="Журнал привязок"
-          subtitle="Активные клиенты и закрепленные за ними консультанты"
           searchPlaceholder="Поиск по продавцу, магазину или телефону..."
           onRowClick={handleRowClick}
           totalCount={totalCount}

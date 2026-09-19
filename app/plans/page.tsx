@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getPlans,
@@ -554,11 +555,7 @@ export default function PlansPage() {
                           </span>
                         </div>
                         <span className="text-[10px] text-zinc-400 font-mono">
-                          {new Date(item.changed_at).toLocaleDateString('ru-RU', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: '2-digit',
-                          })}
+                          <FormattedDate date={item.changed_at} type="shortDate" />
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-200/40 dark:border-zinc-700/40">

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getPayouts,
@@ -303,14 +304,11 @@ export default function PayoutsPage() {
       minWidth: 110,
       sortable: true,
       filterable: true,
-      renderCell: (row) => {
-        const d = new Date(row.payout_date);
-        return (
-          <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-            {d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-          </span>
-        );
-      },
+      renderCell: (row) => (
+        <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+          <FormattedDate date={row.payout_date} type="date" />
+        </span>
+      ),
     },
     {
       key: 'comment',
@@ -521,7 +519,7 @@ export default function PayoutsPage() {
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Дата выдачи:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    {new Date(selectedPayout.payout_date).toLocaleDateString('ru-RU')}
+                    <FormattedDate date={selectedPayout.payout_date} type="date" />
                   </span>
                 </div>
                 <div className="flex justify-between border-t border-zinc-200/50 dark:border-zinc-700/50 pt-2">

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getSellers,
@@ -436,7 +437,7 @@ export default function SellersPage() {
       immutable: true,
       renderCustomView: (val: any) => (
         <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400">
-          {val ? new Date(val).toLocaleString('ru-RU') : 'Нет данных'}
+          <FormattedDate date={val} type="dateTime" fallback="Нет данных" />
         </span>
       ),
     },
@@ -447,7 +448,7 @@ export default function SellersPage() {
       immutable: true,
       renderCustomView: (val: any) => (
         <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400">
-          {val ? new Date(val).toLocaleString('ru-RU') : 'Нет активности'}
+          <FormattedDate date={val} type="dateTime" fallback="Нет активности" />
         </span>
       ),
     },
@@ -458,7 +459,7 @@ export default function SellersPage() {
       immutable: true,
       renderCustomView: (val: any) => (
         <span className="text-xs font-mono text-zinc-500">
-          {val ? new Date(val).toLocaleString('ru-RU') : 'Не синхронизировался'}
+          <FormattedDate date={val} type="dateTime" fallback="Не синхронизировался" />
         </span>
       ),
     },

@@ -44,7 +44,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning className={inter.variable}>
-      <body className="font-sans antialiased selection:bg-zinc-800 selection:text-white dark:selection:bg-zinc-200 dark:selection:text-zinc-900">
+      <body suppressHydrationWarning className="font-sans antialiased selection:bg-zinc-800 selection:text-white dark:selection:bg-zinc-200 dark:selection:text-zinc-900">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

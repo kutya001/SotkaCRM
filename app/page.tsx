@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import type { UserRole } from '@/types/database.types';
 
 export default function DashboardPage() {
@@ -433,7 +434,7 @@ export default function DashboardPage() {
                       {l.status}
                     </span>
                     <span className="text-[11px] text-zinc-400 font-mono hidden sm:inline">
-                      {new Date(l.created_at).toLocaleDateString('ru-RU')}
+                      <FormattedDate date={l.created_at} type="date" />
                     </span>
                   </div>
                 </div>

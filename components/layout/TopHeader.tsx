@@ -99,7 +99,7 @@ export function TopHeader({
             />
             <span>{isSyncing ? 'Синхронизация...' : 'Синхронизация API'}</span>
             {lastSyncedAt && !isSyncing && (
-              <span className="text-[10px] text-zinc-400 font-mono hidden xl:inline">
+              <span suppressHydrationWarning className="text-[10px] text-zinc-400 font-mono hidden xl:inline">
                 ({lastSyncedAt})
               </span>
             )}

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getUserProfileAndKpi,
@@ -165,7 +166,7 @@ export default function ProfilePage() {
               </div>
               {profile?.created_at && (
                 <p className="text-[11px] text-zinc-400 pt-0.5">
-                  В системе с {new Date(profile.created_at).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
+                  В системе с <FormattedDate date={profile.created_at} type="monthYear" />
                 </p>
               )}
             </div>

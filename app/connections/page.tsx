@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getConnections,
@@ -345,14 +346,11 @@ export default function ConnectionsPage() {
       minWidth: 120,
       sortable: true,
       filterable: true,
-      renderCell: (row) => {
-        const d = new Date(row.assigned_at);
-        return (
-          <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
-            {d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-          </span>
-        );
-      },
+      renderCell: (row) => (
+        <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
+          <FormattedDate date={row.assigned_at} type="date" />
+        </span>
+      ),
     },
     {
       key: 'plan_price',
@@ -588,7 +586,7 @@ export default function ConnectionsPage() {
                     Дата привязки
                   </span>
                   <p className="font-semibold text-zinc-900 dark:text-zinc-100 font-mono">
-                    {new Date(selectedConnection.assigned_at).toLocaleDateString('ru-RU')}
+                    <FormattedDate date={selectedConnection.assigned_at} type="date" />
                   </p>
                   <span className="text-[10px] text-zinc-400 block font-mono">
                     Период: {selectedConnection.accrual_month}

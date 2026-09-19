@@ -6,6 +6,7 @@ import { DataJournal, type ColumnDef, PIPELINE_STATUS_OPTIONS } from '@/componen
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { SalesScriptsSheet } from '@/components/leads/SalesScriptsSheet';
 import { LeadSellerMappingModal } from '@/components/leads/LeadSellerMappingModal';
+import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getLeads,
@@ -239,15 +240,11 @@ export default function LeadsPage() {
       minWidth: 120,
       sortable: true,
       filterable: true,
-      renderCell: (row) => {
-        const d = new Date(row.created_at);
-        return (
-          <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
-            {d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}{' '}
-            {d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        );
-      },
+      renderCell: (row) => (
+        <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
+          <FormattedDate date={row.created_at} type="shortDateTime" />
+        </span>
+      ),
     },
     {
       key: 'comment',

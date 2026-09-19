@@ -48,14 +48,16 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
 
     if (authError || !authData.user) {
       // Проверяем, существует ли логин в системе для информативного сообщения
-      const { data: existingUser } = await supabase
+      const { data: existingUser, error: existError } = await supabase
         .from('users')
         .select('user_id')
         .ilike('login', cleanLogin)
         .maybeSingle();
 
       if (!existingUser) {
-        return { error: 'Пользователь с таким логином не найден в системе.' };
+        return { 
+          error: `Пользователь с таким логином не найден в системе. [auth: ${authError?.message || 'null'}; db: ${existError?.message || 'null'}; url: ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'none'}]` 
+        };
       }
       return { error: 'Неверный логин или пароль.' };
     }

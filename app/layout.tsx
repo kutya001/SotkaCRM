@@ -35,14 +35,26 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
+import { cookies } from 'next/headers';
 import { ToastProvider } from '@/components/ui/Toast';
 import { AuthProvider } from '@/components/auth/AuthProvider';
+import type { UserRole } from '@/types/database.types';
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const rawRole = cookieStore.get('crm_role')?.value;
+  const initialRole =
+    rawRole && ['admin', 'consultant', 'smm'].includes(rawRole)
+      ? (rawRole as UserRole)
+      : undefined;
+  const rawName = cookieStore.get('crm_user_name')?.value;
+  const initialUserName = rawName ? decodeURIComponent(rawName) : undefined;
+  const initialUserLogin = cookieStore.get('crm_user_login')?.value;
+
   return (
     <html lang="ru" suppressHydrationWarning className={inter.variable}>
       <body suppressHydrationWarning className="font-sans antialiased selection:bg-zinc-800 selection:text-white dark:selection:bg-zinc-200 dark:selection:text-zinc-900">
@@ -52,7 +64,11 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AuthProvider>
+          <AuthProvider
+            initialRole={initialRole}
+            initialUserName={initialUserName}
+            initialUserLogin={initialUserLogin}
+          >
             <ToastProvider>{children}</ToastProvider>
           </AuthProvider>
         </ThemeProvider>
@@ -60,3 +76,4 @@ export default function RootLayout({
     </html>
   );
 }
+

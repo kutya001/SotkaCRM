@@ -75,7 +75,7 @@ export function SalesScriptsSheet({ isOpen, onClose }: SalesScriptsSheetProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[60] flex justify-end bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Оверлей закрытия */}
       <div className="fixed inset-0" onClick={onClose} />
 

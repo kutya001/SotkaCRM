@@ -62,6 +62,7 @@ export interface DataJournalProps<T extends Record<string, any>> {
   searchPlaceholder?: string;
   externalSearchQuery?: string;
   customActions?: React.ReactNode;
+  customRowActions?: (row: T) => React.ReactNode;
   createTooltip?: string;
   onRowClick?: (row: T) => void;
   onStatusChange?: (row: T, newStatus: string) => void;
@@ -108,6 +109,7 @@ export function DataJournal<T extends Record<string, any>>({
   searchPlaceholder = 'Поиск по всем полям...',
   externalSearchQuery,
   customActions,
+  customRowActions,
   createTooltip,
   onRowClick,
   onStatusChange,
@@ -808,6 +810,8 @@ export function DataJournal<T extends Record<string, any>>({
                         {/* Закрепленные действия */}
                         <td className="sticky right-0 z-10 px-4 py-3 text-right backdrop-blur-2xl bg-white/90 dark:bg-zinc-900/90 shadow-[-4px_0_12px_rgba(0,0,0,0.03)] dark:shadow-[-4px_0_12px_rgba(0,0,0,0.2)]">
                           <div className="flex items-center justify-end gap-1.5">
+                            {customRowActions && customRowActions(row)}
+
                             {onRowClick && (
                               <button
                                 onClick={() => onRowClick(row)}
@@ -932,7 +936,9 @@ export function DataJournal<T extends Record<string, any>>({
                           <div key={col.key} className="flex items-center justify-between text-xs">
                             <span className="text-zinc-400 text-[11px]">{col.label}:</span>
                             <span className="font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[60%]">
-                              {col.type === 'currency'
+                              {col.renderCell
+                                ? col.renderCell(row, val)
+                                : col.type === 'currency'
                                 ? `${Number(val || 0).toLocaleString('ru-RU')} сом`
                                 : String(val ?? '—')}
                             </span>
@@ -945,7 +951,7 @@ export function DataJournal<T extends Record<string, any>>({
                     className="flex items-center justify-between gap-1.5 pt-1"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {cleanDigits && (
                         <>
                           <a
@@ -979,6 +985,8 @@ export function DataJournal<T extends Record<string, any>>({
                           <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
                         )}
                       </button>
+
+                      {customRowActions && customRowActions(row)}
                     </div>
 
                     {statusCol && onStatusChange && (

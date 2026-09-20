@@ -258,7 +258,7 @@ export async function linkLeadToSeller(params: {
 
   // 4. Определяем ответственного менеджера / консультанта
   const responsibleManagerId =
-    lead.assigned_to || params.managerId || currentProfile.user_id;
+    params.managerId || lead.assigned_to || currentProfile.user_id;
 
   // 5. Определяем стоимость тарифа
   let planPrice = 2500;

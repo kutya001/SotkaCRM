@@ -341,23 +341,29 @@ export default function SellersPage() {
       filterable: true,
       renderCell: (row: SellerItem) => {
         if (currentUserRole === 'admin') {
+          const isUnassigned = !row.manager_id;
           return (
-            <select
-              value={row.manager_id || ''}
-              onClick={(e) => e.stopPropagation()}
-              onChange={async (e) => {
-                const val = e.target.value || null;
-                await handleAssignManager(row.seller_phone, val);
-              }}
-              className="h-7 px-2 text-xs font-medium rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-            >
-              <option value="">Не назначен</option>
-              {managers.map((m) => (
-                <option key={m.user_id} value={m.user_id}>
-                  {m.full_name}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <select
+                value={row.manager_id || ''}
+                onChange={async (e) => {
+                  const val = e.target.value || null;
+                  await handleAssignManager(row.seller_phone, val);
+                }}
+                className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
+                  isUnassigned
+                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
+                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
+                }`}
+              >
+                <option value="">{isUnassigned ? '+ Назначить куратора' : 'Не назначен'}</option>
+                {managers.map((m) => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.full_name}
+                  </option>
+                ))}
+              </select>
+            </div>
           );
         }
         if (!row.manager_user) {

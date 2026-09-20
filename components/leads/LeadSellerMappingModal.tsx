@@ -15,6 +15,7 @@ import {
   Building2,
   ArrowRight,
   ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -33,6 +34,7 @@ interface LeadSellerMappingModalProps {
   onSuccess: () => void;
   currentUserId?: string;
   currentUserRole?: UserRole;
+  consultants?: { user_id: string; full_name: string; role?: string }[];
 }
 
 export function LeadSellerMappingModal({
@@ -42,12 +44,14 @@ export function LeadSellerMappingModal({
   onSuccess,
   currentUserId,
   currentUserRole = 'consultant',
+  consultants = [],
 }: LeadSellerMappingModalProps) {
   const { showToast } = useToast();
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [sellers, setSellers] = React.useState<AvailableSellerItem[]>([]);
   const [selectedSeller, setSelectedSeller] = React.useState<AvailableSellerItem | null>(null);
+  const [selectedManagerId, setSelectedManagerId] = React.useState<string>('');
   const [isLoading, setIsLoading] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [consultantRate, setConsultantRate] = React.useState<number>(30);
@@ -69,18 +73,26 @@ export function LeadSellerMappingModal({
     }
   }, [showToast]);
 
-  // Загрузка ставки консультанта
+  // Загрузка ставки консультанта и инициализация ответственного менеджера
   React.useEffect(() => {
     if (isOpen && lead) {
-      const targetUserId = lead.assigned_to || currentUserId;
-      if (targetUserId) {
-        getConsultantRate(targetUserId).then((rate) => setConsultantRate(rate));
+      const initialManager = lead.assigned_to || (consultants[0]?.user_id) || currentUserId || '';
+      setSelectedManagerId(initialManager);
+      if (initialManager) {
+        getConsultantRate(initialManager).then((rate) => setConsultantRate(rate));
       }
       loadAvailableSellers('');
       setSelectedSeller(null);
       setSearchQuery('');
     }
-  }, [isOpen, lead, currentUserId, loadAvailableSellers]);
+  }, [isOpen, lead, currentUserId, consultants, loadAvailableSellers]);
+
+  // Обновление ставки при смене ответственного администратором
+  React.useEffect(() => {
+    if (selectedManagerId) {
+      getConsultantRate(selectedManagerId).then((rate) => setConsultantRate(rate));
+    }
+  }, [selectedManagerId]);
 
   // Debounced поиск при вводе
   React.useEffect(() => {
@@ -108,7 +120,7 @@ export function LeadSellerMappingModal({
       const res = await linkLeadToSeller({
         leadId: lead.lead_id,
         sellerPhone: selectedSeller.seller_phone,
-        managerId: lead.assigned_to || currentUserId,
+        managerId: selectedManagerId || lead.assigned_to || currentUserId,
       });
 
       if (!res.success) {
@@ -132,7 +144,7 @@ export function LeadSellerMappingModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
@@ -157,6 +169,34 @@ export function LeadSellerMappingModal({
             <X className="w-4 h-4" strokeWidth={1.75} />
           </button>
         </div>
+
+        {/* Выбор ответственного консультанта (для Администратора) */}
+        {currentUserRole === 'admin' && consultants.length > 0 && (
+          <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/80 dark:border-zinc-700/60 space-y-1.5">
+            <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <UserCheck className="w-3.5 h-3.5 text-blue-500" strokeWidth={2} />
+                <span>Ответственный сотрудник (консультант):</span>
+              </span>
+              {!lead.assigned_to && (
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                  Не был назначен
+                </span>
+              )}
+            </label>
+            <select
+              value={selectedManagerId}
+              onChange={(e) => setSelectedManagerId(e.target.value)}
+              className="w-full h-9 px-3 text-xs font-medium rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              {consultants.map((c) => (
+                <option key={c.user_id} value={c.user_id}>
+                  {c.full_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Строка поиска свободных продавцов */}
         <div className="relative">

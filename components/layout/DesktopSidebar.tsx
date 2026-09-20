@@ -82,31 +82,37 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+import { useUser } from '@/components/auth/AuthProvider';
+
 export function DesktopSidebar({
   collapsed,
   onToggleCollapse,
-  userRole = 'admin',
-  userName = 'Сотрудник',
-  userLogin = 'user',
+  userRole,
+  userName,
+  userLogin,
   onSignOut,
 }: DesktopSidebarProps) {
   const pathname = usePathname();
+  const user = useUser();
+  const effectiveRole = userRole || user.role || 'consultant';
+  const effectiveName = userName || user.userName || 'Сотрудник CRM';
+  const effectiveLogin = userLogin || user.userLogin || 'user';
 
   const filteredNavItems = NAV_ITEMS.filter((item) =>
-    item.roles.includes(userRole)
+    item.roles.includes(effectiveRole)
   );
 
   const roleLabel = {
     admin: 'Администратор',
     consultant: 'Консультант',
     smm: 'SMM-оператор',
-  }[userRole];
+  }[effectiveRole];
 
   const RoleIcon = {
     admin: ShieldAlert,
     consultant: ShieldCheck,
     smm: Shield,
-  }[userRole];
+  }[effectiveRole];
 
   return (
     <aside
@@ -201,11 +207,11 @@ export function DesktopSidebar({
               title="Перейти в профиль"
             >
               <div className="w-8 h-8 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 flex-shrink-0 group-hover:scale-105 transition-transform">
-                {userName.slice(0, 2).toUpperCase()}
+                {effectiveName.slice(0, 2).toUpperCase()}
               </div>
               <div className="flex flex-col truncate">
                 <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                  {userName}
+                  {effectiveName}
                 </span>
                 <span className="text-[10px] text-zinc-500 flex items-center gap-1 truncate">
                   <RoleIcon className="w-3 h-3 flex-shrink-0" strokeWidth={1.75} />
@@ -230,9 +236,9 @@ export function DesktopSidebar({
             <Link
               href="/profile"
               className="w-9 h-9 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 hover:ring-2 hover:ring-blue-500 transition-all"
-              title={`Профиль: ${userName} (${roleLabel})`}
+              title={`Профиль: ${effectiveName} (${roleLabel})`}
             >
-              {userName.slice(0, 2).toUpperCase()}
+              {effectiveName.slice(0, 2).toUpperCase()}
             </Link>
             {onSignOut && (
               <button

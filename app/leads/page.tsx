@@ -31,6 +31,8 @@ import {
   Sparkles,
   Layers,
   RotateCcw,
+  Link2,
+  Store,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -243,34 +245,42 @@ function LeadsContent() {
       filterable: true,
       renderCell: (row) => {
         if (currentUserRole === 'admin') {
+          const isUnassigned = !row.assigned_to;
           return (
-            <select
-              value={row.assigned_to || ''}
-              onClick={(e) => e.stopPropagation()}
-              onChange={async (e) => {
-                const newConsultantId = e.target.value;
-                if (!newConsultantId) return;
-                try {
-                  const res = await assignLeadConsultant(row.lead_id, newConsultantId);
-                  if (res.success) {
-                    showToast('Консультант переназначен', 'success');
-                    fetchInitialData();
-                  } else {
-                    showToast(res.error || 'Ошибка назначения', 'error');
+            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <select
+                value={row.assigned_to || ''}
+                onChange={async (e) => {
+                  const newConsultantId = e.target.value;
+                  if (!newConsultantId) return;
+                  try {
+                    const res = await assignLeadConsultant(row.lead_id, newConsultantId);
+                    if (res.success) {
+                      showToast('Консультант назначен', 'success');
+                      fetchInitialData();
+                    } else {
+                      showToast(res.error || 'Ошибка назначения', 'error');
+                    }
+                  } catch {
+                    showToast('Ошибка при назначении консультанта', 'error');
                   }
-                } catch {
-                  showToast('Ошибка при переназначении консультанта', 'error');
-                }
-              }}
-              className="h-7 px-2 text-xs font-medium rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-            >
-              <option value="" disabled>Не назначен</option>
-              {consultants.map((c) => (
-                <option key={c.user_id} value={c.user_id}>
-                  {c.full_name}
+                }}
+                className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
+                  isUnassigned
+                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
+                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
+                }`}
+              >
+                <option value="" disabled>
+                  + Назначить сотрудника
                 </option>
-              ))}
-            </select>
+                {consultants.map((c) => (
+                  <option key={c.user_id} value={c.user_id}>
+                    {c.full_name}
+                  </option>
+                ))}
+              </select>
+            </div>
           );
         }
         if (!row.assigned_user) {
@@ -617,6 +627,48 @@ function LeadsContent() {
     </div>
   );
 
+  // Быстрые действия в строках таблицы и карточках DataJournal
+  const renderCustomRowActions = React.useCallback(
+    (row: LeadItem) => {
+      if (currentUserRole === 'smm') return null;
+
+      if (!row.seller_phone && row.status !== 'Отмена') {
+        return (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleLinkSeller(row);
+            }}
+            className="p-1.5 rounded-lg text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 bg-purple-500/10 border border-purple-500/20 transition-all active:scale-95 flex items-center gap-1"
+            title="Быстро связать с продавцом платформы"
+          >
+            <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
+            <span className="hidden xl:inline text-[11px] font-semibold">Связать</span>
+          </button>
+        );
+      }
+
+      if (row.seller_phone) {
+        return (
+          <span
+            className="p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-mono flex items-center gap-1"
+            title={`Привязан к продавцу +${row.seller_phone}`}
+          >
+            <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span className="hidden xl:inline font-semibold">Связан</span>
+          </span>
+        );
+      }
+
+      return null;
+    },
+    [currentUserRole, handleLinkSeller]
+  );
+
+  const isAnyModalOpen =
+    modalState.isOpen || mappingModal.isOpen || isScriptsOpen || cancelDialog.isOpen;
+
   return (
     <AppLayout
       userRole={currentUserRole}
@@ -629,6 +681,7 @@ function LeadsContent() {
       filterContent={filterContent}
       onCreateClick={handleCreateClick}
       createTooltip="Добавить лид"
+      hideFab={isAnyModalOpen}
     >
       <div className="space-y-4">
         {/* ЯРУС 2: KPI воронки продаж (Адаптивная сетка: 3x2 на мобильных, 6 в ряд на десктопе, интерактивный фильтр) */}
@@ -756,6 +809,7 @@ function LeadsContent() {
           storageKey="leads_live"
           externalSearchQuery={searchQuery}
           customActions={leadActions}
+          customRowActions={renderCustomRowActions}
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
           totalCount={totalCount}
@@ -777,6 +831,7 @@ function LeadsContent() {
           onCreate={handleCreateLead}
           onStatusChange={handleStatusChangeInModal}
           onLinkSeller={handleLinkSeller}
+          createSubmitLabel="Сохранить запись"
         />
 
         {/* 5. Шторка базы знаний скриптов продаж */}
@@ -787,7 +842,7 @@ function LeadsContent() {
 
         {/* 6. Диалог отмены сделки с указанием причины */}
         {cancelDialog.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
             <div
               className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
               onClick={(e) => e.stopPropagation()}
@@ -851,6 +906,7 @@ function LeadsContent() {
           lead={mappingModal.lead}
           currentUserId={currentUserId}
           currentUserRole={currentUserRole}
+          consultants={consultants}
           onSuccess={async () => {
             setModalState((prev) => ({ ...prev, isOpen: false }));
             await fetchInitialData();

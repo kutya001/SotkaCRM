@@ -27,6 +27,7 @@ interface AppLayoutProps {
   filterContent?: React.ReactNode;
   onCreateClick?: () => void;
   createTooltip?: string;
+  hideFab?: boolean;
 }
 
 export function AppLayout({
@@ -44,6 +45,7 @@ export function AppLayout({
   filterContent,
   onCreateClick,
   createTooltip = 'Добавить',
+  hideFab = false,
 }: AppLayoutProps) {
   const pathname = usePathname();
   const { showToast } = useToast();
@@ -153,12 +155,12 @@ export function AppLayout({
 
       {/* УНИВЕРСАЛЬНАЯ КНОПКА ДОБАВЛЕНИЯ: */}
       {/* Мобильная кнопка FAB под большой палец правой руки */}
-      {(onCreateClick || pathname === '/leads') && (
+      {(onCreateClick || pathname === '/leads') && !hideFab && (
         <FAB onClick={handleFabClick} label={createTooltip} />
       )}
 
       {/* Десктопная кнопка добавления в правом нижнем углу как аккуратный квадратик-островок */}
-      {onCreateClick && (
+      {onCreateClick && !hideFab && (
         <button
           type="button"
           onClick={onCreateClick}

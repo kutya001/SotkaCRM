@@ -42,7 +42,19 @@ function getCookie(name: string): string | null {
   return match ? decodeURIComponent(match[2]) : null;
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+interface AuthProviderProps {
+  children: React.ReactNode;
+  initialRole?: UserRole;
+  initialUserName?: string;
+  initialUserLogin?: string;
+}
+
+export function AuthProvider({
+  children,
+  initialRole,
+  initialUserName,
+  initialUserLogin,
+}: AuthProviderProps) {
   const [profile, setProfile] = React.useState<UserProfile | null>(() => {
     if (typeof window === 'undefined') return null;
     try {
@@ -53,12 +65,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   const [role, setRole] = React.useState<UserRole>(() => {
+    if (initialRole && ['admin', 'consultant', 'smm'].includes(initialRole)) {
+      return initialRole;
+    }
     if (typeof window !== 'undefined') {
       try {
         const cached = localStorage.getItem(STORAGE_KEY);
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (parsed?.role) return parsed.role as UserRole;
+          if (parsed?.role && ['admin', 'consultant', 'smm'].includes(parsed.role)) {
+            return parsed.role as UserRole;
+          }
         }
       } catch {}
       const fromCookie = getCookie('crm_role');
@@ -66,10 +83,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return fromCookie as UserRole;
       }
     }
-    return 'admin';
+    return 'consultant';
   });
 
   const [userName, setUserName] = React.useState<string>(() => {
+    if (initialUserName) return initialUserName;
     if (typeof window !== 'undefined') {
       try {
         const cached = localStorage.getItem(STORAGE_KEY);
@@ -79,12 +97,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {}
       const fromCookie = getCookie('crm_user_name');
-      if (fromCookie) return fromCookie;
+      if (fromCookie) return decodeURIComponent(fromCookie);
     }
     return 'Сотрудник CRM';
   });
 
   const [userLogin, setUserLogin] = React.useState<string>(() => {
+    if (initialUserLogin) return initialUserLogin;
     if (typeof window !== 'undefined') {
       try {
         const cached = localStorage.getItem(STORAGE_KEY);

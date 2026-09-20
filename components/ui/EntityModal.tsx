@@ -63,6 +63,7 @@ export interface EntityModalProps<T extends Record<string, any>> {
   onCreate?: (newData: Partial<T>) => Promise<void> | void;
   onStatusChange?: (newStatus: string) => Promise<void> | void;
   onLinkSeller?: (data: T) => void;
+  createSubmitLabel?: string;
 }
 
 export function EntityModal<T extends Record<string, any>>({
@@ -80,6 +81,7 @@ export function EntityModal<T extends Record<string, any>>({
   onCreate,
   onStatusChange,
   onLinkSeller,
+  createSubmitLabel = 'Сохранить запись',
 }: EntityModalProps<T>) {
   const { showToast } = useToast();
 
@@ -198,7 +200,7 @@ export function EntityModal<T extends Record<string, any>>({
   const currentStatus = data ? String(data[statusField] ?? '') : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end lg:items-center justify-center p-0 lg:p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[60] flex items-end lg:items-center justify-center p-0 lg:p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       {/* Матовый кликабельный оверлей */}
       <div className="fixed inset-0" onClick={onClose} />
 
@@ -550,9 +552,9 @@ export function EntityModal<T extends Record<string, any>>({
                 {isSubmitting ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
                 ) : (
-                  <Plus className="w-3.5 h-3.5" strokeWidth={2.5} />
+                  <Save className="w-3.5 h-3.5" strokeWidth={2} />
                 )}
-                <span>Создать запись</span>
+                <span>{createSubmitLabel}</span>
               </button>
             </>
           )}

@@ -6,12 +6,16 @@ import { usePathname } from 'next/navigation';
 import { UserCheck, Store, Banknote, User, BarChart3 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
+import { useUser } from '@/components/auth/AuthProvider';
+
 interface MobileBottomBarProps {
   userRole?: UserRole;
 }
 
-export function MobileBottomBar({ userRole = 'admin' }: MobileBottomBarProps) {
+export function MobileBottomBar({ userRole }: MobileBottomBarProps) {
   const pathname = usePathname();
+  const user = useUser();
+  const effectiveRole = userRole || user.role || 'consultant';
 
   const navItems = [
     {
@@ -24,19 +28,19 @@ export function MobileBottomBar({ userRole = 'admin' }: MobileBottomBarProps) {
       title: 'Продавцы',
       href: '/sellers',
       icon: Store,
-      show: userRole !== 'smm',
+      show: effectiveRole !== 'smm',
     },
     {
       title: 'Финансы',
       href: '/payouts',
       icon: Banknote,
-      show: userRole !== 'smm',
+      show: effectiveRole !== 'smm',
     },
     {
       title: 'KPI',
       href: '/analytics',
       icon: BarChart3,
-      show: userRole !== 'smm',
+      show: effectiveRole !== 'smm',
     },
     {
       title: 'Профиль',

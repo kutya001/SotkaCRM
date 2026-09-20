@@ -1070,3 +1070,26 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * `idx_leads_status_created` на `leads(status, created_at DESC)` — ускорение фильтрации воронки лидов с сортировкой по времени.
 * `idx_sellers_mod_active` на `sellers(moderation, is_active, registered_at DESC)` — ускорение фильтрации модерации и статуса активности продавцов.
 * `idx_sellers_manager_active` на `sellers(manager_id, is_active)` — ускорение фильтрации закрепленных продавцов.
+
+---
+
+### 10. Регламент строгой ролевой изоляции данных (Миграция `006_strict_data_isolation.sql`)
+
+**10.1. Изоляция воронки и выборки лидов (`leads`):**
+* В RPC `get_leads_funnel_stats()`:
+  * Для роли `consultant` расчет показателей ведется строго по лидам, где `assigned_to = v_user_uuid`.
+  * Для роли `smm` — строго по `created_by = v_user_uuid`.
+  * Для роли `admin` — сквозной аудит по всей таблице.
+* В RLS-политике `leads_select_policy`:
+  * `consultant` видит исключительно лиды, где `assigned_to = (SELECT get_current_crm_user_id())`.
+  * `smm` видит исключительно лиды, где `created_by = (SELECT get_current_crm_user_id())`.
+  * `admin` обладает полным доступом на чтение всех лидов.
+
+**10.2. Изоляция базы продавцов (`sellers`):**
+* В RPC `get_sellers_kpi_stats()`:
+  * Для роли `consultant` метрики рассчитываются исключительно по продавцам, закрепленным за ним (`manager_id = v_user_uuid`).
+  * Для роли `smm` возвращаются нулевые показатели (доступ закрыт).
+  * Для роли `admin` возвращаются сквозные агрегаты по всей платформе.
+* В RLS-политике `sellers_select_policy`:
+  * `consultant` имеет доступ к закрепленным за ним продавцам (`manager_id = (SELECT get_current_crm_user_id())`), а также к незакрепленным (`manager_id IS NULL`) для обеспечения возможности ручной привязки через `getAvailableSellersForMapping`.
+  * `admin` имеет доступ ко всем продавцам.

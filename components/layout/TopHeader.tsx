@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
@@ -30,6 +31,8 @@ const MODULE_TITLES: Record<string, string> = {
   '/plans': 'Справочники и тарифы',
   '/rates': 'Персональные ставки',
   '/analytics': 'KPI и аналитика',
+  '/employees': 'Сотрудники',
+  '/profile': 'Мой профиль',
 };
 
 export function TopHeader({
@@ -215,10 +218,14 @@ export function TopHeader({
         {/* Переключатель темы оформления */}
         <ThemeToggle />
 
-        {/* Мини-аватар профиля */}
-        <div className="w-10 h-10 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center text-xs font-bold shadow-sm flex-shrink-0">
+        {/* Мини-аватар профиля с переходом в /profile */}
+        <Link
+          href="/profile"
+          className="w-10 h-10 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center text-xs font-bold shadow-sm flex-shrink-0 hover:opacity-85 transition-opacity"
+          title={`Профиль: ${userName}`}
+        >
           {userName.slice(0, 2).toUpperCase()}
-        </div>
+        </Link>
       </div>
     </header>
   );

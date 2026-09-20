@@ -78,21 +78,28 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
     sortOrder = 'desc',
   } = params;
 
-  let query = supabase
-    .from('leads')
-    .select(
-      `
-        *,
-        assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
-        created_user:users!leads_created_by_fkey(user_id, full_name, role)
-      `,
-      { count: 'exact' }
-    );
+    let query = supabase
+      .from('leads')
+      .select(
+        `
+          *,
+          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
+          created_user:users!leads_created_by_fkey(user_id, full_name, role)
+        `,
+        { count: 'exact' }
+      );
 
-  // Фильтрация по статусу
-  if (status && status !== 'Все') {
-    query = query.eq('status', status as LeadStatus);
-  }
+    // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только свои назначенные лиды, SMM — только свои созданные
+    if (currentProfile?.role === 'consultant') {
+      query = query.eq('assigned_to', currentProfile.user_id);
+    } else if (currentProfile?.role === 'smm') {
+      query = query.eq('created_by', currentProfile.user_id);
+    }
+
+    // Фильтрация по статусу
+    if (status && status !== 'Все') {
+      query = query.eq('status', status as LeadStatus);
+    }
 
   // Поиск по имени, телефону или комментарию
   if (search.trim()) {
@@ -507,4 +514,51 @@ export async function getLeadsStats() {
     signed: data.filter((l) => l.status === 'Подписан').length,
     cancelled: data.filter((l) => l.status === 'Отмена').length,
   };
+}
+
+/**
+ * Быстрое назначение/переназначение ответственного консультанта администратором
+ */
+export async function assignLeadConsultant(
+  leadId: string,
+  consultantId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { profile, supabase } = await requireAuth();
+
+    if (profile.role !== 'admin') {
+      return { success: false, error: 'Переназначение консультантов доступно только администратору' };
+    }
+
+    const { data: currentLead } = await supabase
+      .from('leads')
+      .select('status')
+      .eq('lead_id', leadId)
+      .single();
+
+    const updates: Database['public']['Tables']['leads']['Update'] = {
+      assigned_to: consultantId,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Если статус был Открыт или Обработан, автоматически переводим в Назначен
+    if (currentLead && (currentLead.status === 'Открыт' || currentLead.status === 'Обработан')) {
+      updates.status = 'Назначен';
+    }
+
+    const { error } = await supabase
+      .from('leads')
+      .update(updates)
+      .eq('lead_id', leadId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/leads');
+    revalidatePath('/analytics');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
 }

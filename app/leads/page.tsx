@@ -17,6 +17,7 @@ import {
   cancelLead,
   getConsultantsList,
   getLeadsStats,
+  assignLeadConsultant,
   type LeadItem,
 } from './actions';
 import {
@@ -236,11 +237,42 @@ function LeadsContent() {
     {
       key: 'assigned_to',
       label: 'Ответственный',
-      width: 170,
-      minWidth: 140,
+      width: 180,
+      minWidth: 150,
       sortable: true,
       filterable: true,
       renderCell: (row) => {
+        if (currentUserRole === 'admin') {
+          return (
+            <select
+              value={row.assigned_to || ''}
+              onClick={(e) => e.stopPropagation()}
+              onChange={async (e) => {
+                const newConsultantId = e.target.value;
+                if (!newConsultantId) return;
+                try {
+                  const res = await assignLeadConsultant(row.lead_id, newConsultantId);
+                  if (res.success) {
+                    showToast('Консультант переназначен', 'success');
+                    fetchInitialData();
+                  } else {
+                    showToast(res.error || 'Ошибка назначения', 'error');
+                  }
+                } catch {
+                  showToast('Ошибка при переназначении консультанта', 'error');
+                }
+              }}
+              className="h-7 px-2 text-xs font-medium rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="" disabled>Не назначен</option>
+              {consultants.map((c) => (
+                <option key={c.user_id} value={c.user_id}>
+                  {c.full_name}
+                </option>
+              ))}
+            </select>
+          );
+        }
         if (!row.assigned_user) {
           return (
             <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">

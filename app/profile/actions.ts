@@ -1,6 +1,8 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type { Database, UserRole, LeadStatus } from '@/types/database.types';
 
 export interface UserProfileData {
@@ -52,6 +54,7 @@ export interface AdminKpiStats {
 export interface UserKpiResponse {
   profile: UserProfileData | null;
   role: UserRole;
+  currentUserRole?: UserRole;
   smmStats?: SmmKpiStats;
   consultantStats?: ConsultantKpiStats;
   adminStats?: AdminKpiStats;
@@ -59,9 +62,10 @@ export interface UserKpiResponse {
 }
 
 /**
- * Получение профиля текущего пользователя и расчет персональных KPI
+ * Получение профиля пользователя и расчет персональных KPI.
+ * Если передан targetUserId, только администратор может просмотреть данные другого сотрудника.
  */
-export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
+export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserKpiResponse> {
   const supabase = await createClient();
 
   const {
@@ -72,18 +76,50 @@ export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
     return { profile: null, role: 'consultant', error: 'Пользователь не авторизован' };
   }
 
-  const { data: profile } = await supabase
+  const { data: callerProfile } = await supabase
     .from('users')
     .select('user_id, login, full_name, phone, role, is_active, created_at')
     .eq('auth_id', user.id)
     .single();
 
-  if (!profile) {
+  if (!callerProfile) {
     return { profile: null, role: 'consultant', error: 'Профиль не найден' };
   }
 
-  const role = profile.role as UserRole;
-  const userId = profile.user_id;
+  const callerRole = callerProfile.role as UserRole;
+  let targetProfile: UserProfileData = callerProfile;
+
+  // Если запрошен профиль другого пользователя
+  if (targetUserId && targetUserId !== callerProfile.user_id) {
+    if (callerRole !== 'admin') {
+      return {
+        profile: null,
+        role: callerRole,
+        currentUserRole: callerRole,
+        error: 'Доступ к чужим профилям разрешен только администратору',
+      };
+    }
+
+    const { data: requestedUser, error: targetError } = await supabase
+      .from('users')
+      .select('user_id, login, full_name, phone, role, is_active, created_at')
+      .eq('user_id', targetUserId)
+      .single();
+
+    if (targetError || !requestedUser) {
+      return {
+        profile: null,
+        role: callerRole,
+        currentUserRole: callerRole,
+        error: 'Запрошенный сотрудник не найден',
+      };
+    }
+
+    targetProfile = requestedUser;
+  }
+
+  const role = targetProfile.role as UserRole;
+  const userId = targetProfile.user_id;
   const currentMonth = new Date().toISOString().substring(0, 7);
 
   // 1. KPI для SMM-специалиста
@@ -124,8 +160,9 @@ export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
     const signedRate = totalLeads > 0 ? Math.round((signedLeads / totalLeads) * 100) : 0;
 
     return {
-      profile,
+      profile: targetProfile,
       role,
+      currentUserRole: callerRole,
       smmStats: {
         todayLeads,
         weekLeads,
@@ -213,8 +250,9 @@ export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
     }
 
     return {
-      profile,
+      profile: targetProfile,
       role,
+      currentUserRole: callerRole,
       consultantStats: {
         activeAssignedLeads,
         closedDeals,
@@ -263,15 +301,15 @@ export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
     }
   }
 
-  // Продавцы и их суммарный баланс из предвычисленного RPC
   const sellersData = (sellersRpcRes.data as any) || {};
   const totalActiveSellers = Number(sellersData.active) || 0;
   const totalSellersBalance = Number(sellersData.totalBalance) || 0;
   const lastSyncedAt = lastSyncRes.data?.synced_at || null;
 
   return {
-    profile,
+    profile: targetProfile,
     role,
+    currentUserRole: callerRole,
     adminStats: {
       leadsFunnel: funnel,
       totalPayoutFundMonth: Math.round(totalPayoutFundMonth * 100) / 100,
@@ -280,4 +318,201 @@ export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
       lastSyncedAt,
     },
   };
+}
+
+/**
+ * Получение всех сотрудников для селектора администратора
+ */
+export async function getAllUsersForAdmin(): Promise<{
+  users: UserProfileData[];
+  error?: string;
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { users: [], error: 'Не авторизован' };
+  }
+
+  const { data: callerProfile } = await supabase
+    .from('users')
+    .select('role')
+    .eq('auth_id', user.id)
+    .single();
+
+  if (!callerProfile || callerProfile.role !== 'admin') {
+    return { users: [], error: 'Доступно только администратору' };
+  }
+
+  const { data: allUsers, error } = await supabase
+    .from('users')
+    .select('user_id, login, full_name, phone, role, is_active, created_at')
+    .order('full_name', { ascending: true });
+
+  if (error) {
+    return { users: [], error: error.message };
+  }
+
+  return { users: allUsers || [] };
+}
+
+/**
+ * Редактирование профиля (ФИО, телефон, и если администратор — роль и активность)
+ */
+export async function updateUserProfile(input: {
+  full_name?: string;
+  phone?: string | null;
+  role?: UserRole;
+  is_active?: boolean;
+  targetUserId?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: 'Пользователь не авторизован' };
+  }
+
+  const { data: callerProfile } = await supabase
+    .from('users')
+    .select('user_id, role')
+    .eq('auth_id', user.id)
+    .single();
+
+  if (!callerProfile) {
+    return { success: false, error: 'Профиль не найден' };
+  }
+
+  const isEditingOther = input.targetUserId && input.targetUserId !== callerProfile.user_id;
+
+  if (isEditingOther && callerProfile.role !== 'admin') {
+    return { success: false, error: 'Редактирование чужого профиля доступно только администратору' };
+  }
+
+  const targetId = input.targetUserId || callerProfile.user_id;
+
+  const updates: Database['public']['Tables']['users']['Update'] = {};
+  if (input.full_name !== undefined) {
+    if (input.full_name.trim().length < 2) {
+      return { success: false, error: 'ФИО должно содержать минимум 2 символа' };
+    }
+    updates.full_name = input.full_name.trim();
+  }
+
+  if (input.phone !== undefined) {
+    updates.phone = input.phone?.trim() || null;
+  }
+
+  // Только администратор может менять роль и статус активности
+  if (callerProfile.role === 'admin') {
+    if (input.role !== undefined) {
+      updates.role = input.role;
+    }
+    if (input.is_active !== undefined) {
+      updates.is_active = input.is_active;
+    }
+  }
+
+  const { data: updatedUser, error: updateError } = await supabase
+    .from('users')
+    .update(updates)
+    .eq('user_id', targetId)
+    .select('auth_id, full_name, role')
+    .single();
+
+  if (updateError) {
+    return { success: false, error: updateError.message };
+  }
+
+  // Синхронизируем метаданные в auth.users через сервисный клиент
+  if (updatedUser?.auth_id) {
+    try {
+      const adminClient = createAdminClient();
+      await adminClient.auth.admin.updateUserById(updatedUser.auth_id, {
+        user_metadata: {
+          full_name: updatedUser.full_name,
+          role: updatedUser.role,
+        },
+      });
+    } catch (metaErr) {
+      console.warn('Предупреждение при обновлении auth_metadata:', metaErr);
+    }
+  }
+
+  revalidatePath('/profile');
+  revalidatePath('/employees');
+  return { success: true };
+}
+
+/**
+ * Смена пароля (для себя или сброс пароля любого сотрудника администратором)
+ */
+export async function changeUserPassword(input: {
+  newPassword: string;
+  targetUserId?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  if (!input.newPassword || input.newPassword.length < 6) {
+    return { success: false, error: 'Пароль должен содержать не менее 6 символов' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: 'Пользователь не авторизован' };
+  }
+
+  const { data: callerProfile } = await supabase
+    .from('users')
+    .select('user_id, role')
+    .eq('auth_id', user.id)
+    .single();
+
+  if (!callerProfile) {
+    return { success: false, error: 'Профиль пользователя не найден' };
+  }
+
+  const isResettingOther = input.targetUserId && input.targetUserId !== callerProfile.user_id;
+
+  if (isResettingOther && callerProfile.role !== 'admin') {
+    return { success: false, error: 'Сброс паролей других пользователей доступен только администратору' };
+  }
+
+  try {
+    const adminClient = createAdminClient();
+
+    let targetAuthId = user.id;
+
+    if (isResettingOther) {
+      const { data: targetUser, error: findError } = await supabase
+        .from('users')
+        .select('auth_id')
+        .eq('user_id', input.targetUserId!)
+        .single();
+
+      if (findError || !targetUser?.auth_id) {
+        return { success: false, error: 'Сотрудник для смены пароля не найден' };
+      }
+      targetAuthId = targetUser.auth_id;
+    }
+
+    const { error: authError } = await adminClient.auth.admin.updateUserById(targetAuthId, {
+      password: input.newPassword,
+    });
+
+    if (authError) {
+      return { success: false, error: authError.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Ошибка при смене пароля:', err);
+    return { success: false, error: err?.message || 'Не удалось обновить пароль' };
+  }
 }

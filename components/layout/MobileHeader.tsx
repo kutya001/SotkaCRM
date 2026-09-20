@@ -24,6 +24,8 @@ const MODULE_TITLES: Record<string, string> = {
   '/plans': 'Справочники и тарифы',
   '/rates': 'Персональные ставки',
   '/analytics': 'KPI и аналитика',
+  '/employees': 'Сотрудники',
+  '/profile': 'Мой профиль',
 };
 
 export function MobileHeader({

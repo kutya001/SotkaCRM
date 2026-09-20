@@ -11,6 +11,7 @@ import {
   getSellers,
   getSellersStats,
   getManagersList,
+  assignSellerManager,
   type SellerItem,
   type SellersStats,
 } from './actions';
@@ -161,7 +162,19 @@ export default function SellersPage() {
     fetchSellersData();
   }, [fetchSellersData]);
 
-
+  const handleAssignManager = async (sellerPhone: string, managerId: string | null) => {
+    try {
+      const res = await assignSellerManager(sellerPhone, managerId);
+      if (res.success) {
+        showToast('Куратор назначен. Связь в подключениях синхронизирована', 'success');
+        fetchSellersData();
+      } else {
+        showToast(res.error || 'Ошибка назначения куратора', 'error');
+      }
+    } catch {
+      showToast('Ошибка при назначении куратора', 'error');
+    }
+  };
 
   // Конфигурация колонок DataJournal
   const columns: ColumnDef<SellerItem>[] = [
@@ -178,14 +191,36 @@ export default function SellersPage() {
           </div>
           <div className="min-w-0">
             <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-              {row.seller_name || 'Без имени'}
+              {row.seller_name || 'Не указано'}
             </div>
-            <div className="text-[11px] text-zinc-400 truncate">
-              {row.store || 'Магазин не указан'}
+            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+              {row.store || 'Без названия'}
             </div>
           </div>
         </div>
       ),
+    },
+    {
+      key: 'linked_lead',
+      label: 'Связанный лид',
+      width: 170,
+      minWidth: 140,
+      sortable: false,
+      renderCell: (row: SellerItem) => {
+        if (!row.linked_lead) {
+          return <span className="text-[11px] text-zinc-400">Прямое подключение</span>;
+        }
+        return (
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+              {row.linked_lead.client_name}
+            </span>
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+              Лид: {row.linked_lead.status}
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: 'store',
@@ -300,11 +335,31 @@ export default function SellersPage() {
     {
       key: 'manager_id',
       label: 'Куратор',
-      width: 160,
-      minWidth: 130,
+      width: 180,
+      minWidth: 150,
       sortable: true,
       filterable: true,
       renderCell: (row: SellerItem) => {
+        if (currentUserRole === 'admin') {
+          return (
+            <select
+              value={row.manager_id || ''}
+              onClick={(e) => e.stopPropagation()}
+              onChange={async (e) => {
+                const val = e.target.value || null;
+                await handleAssignManager(row.seller_phone, val);
+              }}
+              className="h-7 px-2 text-xs font-medium rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="">Не назначен</option>
+              {managers.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {m.full_name}
+                </option>
+              ))}
+            </select>
+          );
+        }
         if (!row.manager_user) {
           return (
             <span className="text-[11px] text-zinc-400 italic">Не назначен</span>
@@ -338,6 +393,34 @@ export default function SellersPage() {
       label: 'Название магазина',
       type: 'text',
       immutable: true,
+    },
+    {
+      name: 'linked_lead',
+      label: 'Связанный лид из воронки',
+      type: 'text',
+      immutable: true,
+      renderCustomView: (_val: any, data: SellerItem) => {
+        if (!data.linked_lead) {
+          return (
+            <span className="text-xs text-zinc-400">Прямое подключение (без лида)</span>
+          );
+        }
+        return (
+          <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                {data.linked_lead.client_name}
+              </p>
+              <p className="text-[11px] text-zinc-400 font-mono">
+                ID: {data.linked_lead.lead_id.slice(0, 8)}...
+              </p>
+            </div>
+            <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Лид: {data.linked_lead.status}
+            </span>
+          </div>
+        );
+      },
     },
     {
       name: 'seller_phone',
@@ -441,11 +524,48 @@ export default function SellersPage() {
       label: 'Ответственный куратор',
       type: 'text',
       immutable: true,
-      renderCustomView: (val: any, data: SellerItem) => (
-        <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
-          {data?.manager_user?.full_name || 'Не назначен'}
-        </span>
-      ),
+      renderCustomView: (_val: any, data: SellerItem) => {
+        if (currentUserRole === 'admin') {
+          return (
+            <div className="flex items-center gap-2">
+              <select
+                value={data?.manager_id || ''}
+                onChange={async (e) => {
+                  const val = e.target.value || null;
+                  await handleAssignManager(data.seller_phone, val);
+                  setModalState((prev) =>
+                    prev.selectedSeller
+                      ? {
+                          ...prev,
+                          selectedSeller: {
+                            ...prev.selectedSeller,
+                            manager_id: val,
+                            manager_user: val
+                              ? managers.find((m) => m.user_id === val) || null
+                              : null,
+                          },
+                        }
+                      : prev
+                  );
+                }}
+                className="w-full h-10 px-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Не назначен</option>
+                {managers.map((m) => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.full_name} ({m.role === 'admin' ? 'Админ' : 'Консультант'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+        }
+        return (
+          <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
+            {data?.manager_user?.full_name || 'Не назначен'}
+          </span>
+        );
+      },
     },
   ];
 

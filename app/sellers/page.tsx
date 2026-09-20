@@ -11,7 +11,6 @@ import {
   getSellers,
   getSellersStats,
   getManagersList,
-  assignSellerManager,
   type SellerItem,
   type SellersStats,
 } from './actions';
@@ -83,10 +82,10 @@ export default function SellersPage() {
     { user_id: string; full_name: string; role: string; login: string }[]
   >([]);
 
-  // Состояние модального окна EntityModal
+  // Состояние модального окна EntityModal (строго режим просмотра)
   const [modalState, setModalState] = React.useState<{
     isOpen: boolean;
-    mode: 'view' | 'edit';
+    mode: 'view';
     selectedSeller: SellerItem | null;
   }>({
     isOpen: false,
@@ -162,29 +161,7 @@ export default function SellersPage() {
     fetchSellersData();
   }, [fetchSellersData]);
 
-  // Назначение куратора из модального окна (только админ)
-  const handleAssignManager = async (seller: SellerItem, newManagerId: string | null) => {
-    if (currentUserRole !== 'admin') {
-      showToast('Назначение куратора доступно только администратору', 'error');
-      return;
-    }
 
-    try {
-      const res = await assignSellerManager(seller.seller_phone, newManagerId);
-      if (!res.success) {
-        showToast(res.error || 'Ошибка при сохранении куратора', 'error');
-        return;
-      }
-      showToast('Куратор успешно назначен', 'success');
-      fetchSellersData();
-      setModalState((prev) => ({
-        ...prev,
-        isOpen: false,
-      }));
-    } catch {
-      showToast('Не удалось обновить куратора', 'error');
-    }
-  };
 
   // Конфигурация колонок DataJournal
   const columns: ColumnDef<SellerItem>[] = [
@@ -462,19 +439,13 @@ export default function SellersPage() {
     {
       name: 'manager_id',
       label: 'Ответственный куратор',
-      type: 'select',
-      immutable: currentUserRole !== 'admin',
-      options: [
-        { value: '', label: 'Не назначен' },
-        ...managers.map((m) => ({
-          value: m.user_id,
-          label: `${m.full_name} (${m.role === 'admin' ? 'Админ' : 'Консультант'})`,
-        })),
-      ],
-      helperText:
-        currentUserRole === 'admin'
-          ? 'Выберите сотрудника для персонального закрепления'
-          : 'Назначение куратора доступно только администраторам',
+      type: 'text',
+      immutable: true,
+      renderCustomView: (val: any, data: SellerItem) => (
+        <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
+          {data?.manager_user?.full_name || 'Не назначен'}
+        </span>
+      ),
     },
   ];
 
@@ -696,15 +667,7 @@ export default function SellersPage() {
           fields={modalFields}
           keyField="seller_phone"
           phoneField="seller_phone"
-          initialMode={currentUserRole === 'admin' ? 'edit' : 'view'}
-          onSave={async (updated) => {
-            if (modalState.selectedSeller) {
-              await handleAssignManager(
-                modalState.selectedSeller,
-                updated.manager_id || null
-              );
-            }
-          }}
+          initialMode="view"
         />
       </div>
     </AppLayout>

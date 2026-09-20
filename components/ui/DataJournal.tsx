@@ -697,6 +697,18 @@ export function DataJournal<T extends Record<string, any>>({
                                 colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
                               };
 
+                            if (!onStatusChange) {
+                              return (
+                                <td key={col.key} className="px-4 py-3">
+                                  <span
+                                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass}`}
+                                  >
+                                    {currentOption.label}
+                                  </span>
+                                </td>
+                              );
+                            }
+
                             const isDropdownOpen =
                               activeStatusDropdownRowKey === `${rowKey}_${col.key}`;
 

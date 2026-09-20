@@ -183,6 +183,26 @@ export async function createLead(input: {
         ? cleanPhone.substring(3)
         : cleanPhone;
 
+    // Инвариант назначения ответственного:
+    // 1. Для консультанта лид ВСЕГДА принудительно назначается строго на него самого
+    let finalAssignedTo = valid.assigned_to;
+    if (profile.role === 'consultant') {
+      finalAssignedTo = profile.user_id;
+    } else if (!finalAssignedTo) {
+      // 2. Для администратора/SMM, если ответственный не передан, назначаем первого активного консультанта/админа
+      const { data: defaultConsultant } = await supabase
+        .from('users')
+        .select('user_id')
+        .eq('is_active', true)
+        .in('role', ['consultant', 'admin'])
+        .order('full_name', { ascending: true })
+        .limit(1)
+        .single();
+      if (defaultConsultant) {
+        finalAssignedTo = defaultConsultant.user_id;
+      }
+    }
+
     const { data: newLead, error } = await supabase
       .from('leads')
       .insert({
@@ -193,7 +213,7 @@ export async function createLead(input: {
         instagram: valid.instagram || null,
         comment: valid.comment || null,
         created_by: profile.user_id,
-        assigned_to: valid.assigned_to || null,
+        assigned_to: finalAssignedTo || null,
       })
       .select(
         `

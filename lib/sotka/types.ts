@@ -14,6 +14,7 @@ export interface SotkaSellerItem {
   seller_name?: string;
   seller_phone: string;
   iso_code?: string;
+  store?: string;
   stores?: string[];
   outlets_count?: number;
   employees_count?: number;

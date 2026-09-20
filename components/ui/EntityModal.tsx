@@ -40,6 +40,8 @@ export interface EntityFieldConfig<T> {
   immutable?: boolean; // Readonly, click to copy with vibration
   isSystem?: boolean; // Hidden in create mode
   required?: boolean;
+  disabled?: boolean;
+  defaultValue?: any;
   options?: { value: string; label: string }[];
   helperText?: string;
   countryCodeKey?: string;
@@ -94,7 +96,9 @@ export function EntityModal<T extends Record<string, any>>({
         const initialForm: Record<string, any> = {};
         fields.forEach((f) => {
           if (!f.isSystem) {
-            if (f.type === 'status') {
+            if (f.defaultValue !== undefined) {
+              initialForm[String(f.name)] = f.defaultValue;
+            } else if (f.type === 'status') {
               initialForm[String(f.name)] = statusOptions[0]?.value || 'Открыт';
             } else if (f.type === 'phone') {
               initialForm[String(f.name)] = '';
@@ -105,6 +109,13 @@ export function EntityModal<T extends Record<string, any>>({
             }
           }
         });
+        if (data) {
+          Object.entries(data).forEach(([k, v]) => {
+            if (v !== undefined && v !== null) {
+              initialForm[k] = v;
+            }
+          });
+        }
         setFormData(initialForm);
       } else if (data) {
         setFormData({ ...data });
@@ -220,7 +231,7 @@ export function EntityModal<T extends Record<string, any>>({
 
           <div className="flex items-center gap-2">
             {/* Кнопка переключения в режим редактирования */}
-            {mode === 'view' && (
+            {mode === 'view' && Boolean(onSave) && (
               <button
                 onClick={() => setMode('edit')}
                 className="h-8 px-3 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
@@ -400,7 +411,10 @@ export function EntityModal<T extends Record<string, any>>({
                             <select
                               value={String(formData[field.countryCodeKey || 'country_code'] || '996')}
                               onChange={(e) => handleFieldChange(field.countryCodeKey || 'country_code', e.target.value)}
-                              className="w-36 h-9 px-2.5 text-xs font-mono bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all flex-shrink-0"
+                              disabled={field.disabled}
+                              className={`w-36 h-9 px-2.5 text-xs font-mono bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all flex-shrink-0 ${
+                                field.disabled ? 'opacity-60 cursor-not-allowed bg-zinc-100 dark:bg-zinc-800' : ''
+                              }`}
                             >
                               {CIS_COUNTRIES.map((c) => (
                                 <option key={c.code + c.label} value={c.code}>
@@ -413,8 +427,11 @@ export function EntityModal<T extends Record<string, any>>({
                               value={val ?? ''}
                               onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
                               required={field.required}
+                              disabled={field.disabled}
                               placeholder={field.placeholder || '700123456'}
-                              className="flex-1 h-9 px-3 text-xs font-mono bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
+                              className={`flex-1 h-9 px-3 text-xs font-mono bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all ${
+                                field.disabled ? 'opacity-60 cursor-not-allowed bg-zinc-100 dark:bg-zinc-800' : ''
+                              }`}
                             />
                           </div>
                         ) : field.type === 'textarea' ? (
@@ -422,16 +439,22 @@ export function EntityModal<T extends Record<string, any>>({
                             value={val ?? ''}
                             onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
                             required={field.required}
+                            disabled={field.disabled}
                             rows={3}
                             placeholder={field.placeholder || field.label}
-                            className="w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
+                            className={`w-full px-3 py-2 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all ${
+                              field.disabled ? 'opacity-60 cursor-not-allowed bg-zinc-100 dark:bg-zinc-800' : ''
+                            }`}
                           />
                         ) : field.type === 'select' || field.type === 'status' ? (
                           <select
                             value={val ?? ''}
                             onChange={(e) => handleFieldChange(fieldKey, e.target.value)}
                             required={field.required}
-                            className="w-full h-9 px-3 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
+                            disabled={field.disabled}
+                            className={`w-full h-9 px-3 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all ${
+                              field.disabled ? 'opacity-60 cursor-not-allowed bg-zinc-100 dark:bg-zinc-800' : ''
+                            }`}
                           >
                             {(field.options || statusOptions).map((opt) => (
                               <option key={opt.value} value={opt.value}>
@@ -452,8 +475,11 @@ export function EntityModal<T extends Record<string, any>>({
                               )
                             }
                             required={field.required}
+                            disabled={field.disabled}
                             placeholder={field.placeholder || field.label}
-                            className="w-full h-9 px-3 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
+                            className={`w-full h-9 px-3 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all ${
+                              field.disabled ? 'opacity-60 cursor-not-allowed bg-zinc-100 dark:bg-zinc-800' : ''
+                            }`}
                           />
                         )}
                         {field.helperText && (

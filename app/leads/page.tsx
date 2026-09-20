@@ -143,16 +143,31 @@ function LeadsContent() {
     fetchInitialData();
   }, [fetchInitialData]);
 
+  // Автоматический расчет ответственного консультанта по умолчанию
+  const defaultConsultantId = React.useMemo(() => {
+    if (currentUserRole === 'consultant') {
+      return currentUserId;
+    }
+    const currentInList = consultants.find((c) => c.user_id === currentUserId);
+    if (currentInList) {
+      return currentInList.user_id;
+    }
+    return consultants[0]?.user_id || '';
+  }, [currentUserRole, currentUserId, consultants]);
+
   // Автоматическое открытие формы создания при переходе по ?action=create (кнопка FAB)
   React.useEffect(() => {
     if (searchParams.get('action') === 'create') {
       setModalState({
         isOpen: true,
         mode: 'create',
-        selectedLead: null,
+        selectedLead: {
+          assigned_to: defaultConsultantId,
+          status: 'Открыт',
+        } as any,
       });
     }
-  }, [searchParams]);
+  }, [searchParams, defaultConsultantId]);
 
   // Конфигурация колонок DataJournal
   const columns: ColumnDef<LeadItem>[] = [
@@ -317,13 +332,27 @@ function LeadsContent() {
         name: 'assigned_to',
         label: 'Ответственный консультант',
         type: 'select',
-        options: [
-          { value: '', label: '— Не назначен —' },
-          ...consultants.map((c) => ({
-            value: c.user_id,
-            label: `${c.full_name} (${c.role})`,
-          })),
-        ],
+        disabled: currentUserRole === 'consultant',
+        defaultValue: defaultConsultantId,
+        helperText:
+          currentUserRole === 'consultant'
+            ? 'Лид автоматически закрепляется за вами'
+            : undefined,
+        options:
+          currentUserRole === 'consultant'
+            ? [
+                {
+                  value: currentUserId,
+                  label: `${userName || 'Текущий сотрудник'} (Консультант)`,
+                },
+              ]
+            : [
+                { value: '', label: '— Не назначен —' },
+                ...consultants.map((c) => ({
+                  value: c.user_id,
+                  label: `${c.full_name} (${c.role === 'admin' ? 'Администратор' : 'Консультант'})`,
+                })),
+              ],
       },
       {
         name: 'comment',
@@ -332,7 +361,7 @@ function LeadsContent() {
         placeholder: 'Заметки по клиенту, детали разговора, пожелания...',
       },
     ],
-    [consultants]
+    [consultants, currentUserRole, currentUserId, userName, defaultConsultantId]
   );
 
   // Обработчики строк DataJournal
@@ -348,7 +377,10 @@ function LeadsContent() {
     setModalState({
       isOpen: true,
       mode: 'create',
-      selectedLead: null,
+      selectedLead: {
+        assigned_to: defaultConsultantId,
+        status: 'Открыт',
+      } as any,
     });
   };
 
@@ -392,13 +424,18 @@ function LeadsContent() {
       throw new Error('Заполните имя клиента и номер телефона');
     }
 
+    const assignedConsultant =
+      currentUserRole === 'consultant'
+        ? currentUserId
+        : newLeadData.assigned_to || defaultConsultantId || null;
+
     const res = await createLead({
       client_name: newLeadData.client_name,
       phone: newLeadData.phone,
       country_code: newLeadData.country_code || '996',
       instagram: newLeadData.instagram || undefined,
       comment: newLeadData.comment || undefined,
-      assigned_to: newLeadData.assigned_to || null,
+      assigned_to: assignedConsultant,
     });
 
     if (!res.success) {

@@ -192,10 +192,20 @@ async function handleSync(request: Request) {
         );
         const safePlanId = resolvedPlanId && validPlanIds.has(resolvedPlanId) ? resolvedPlanId : null;
 
+        // Извлечение названия магазина: внешний API передает store (строка) или массив stores
+        let resolvedStore = 'Без названия';
+        if (typeof item.store === 'string' && item.store.trim()) {
+          resolvedStore = item.store.trim();
+        } else if (Array.isArray(item.stores) && item.stores.length > 0) {
+          resolvedStore = item.stores.filter(Boolean).join(', ') || 'Без названия';
+        } else if (typeof (item as any).stores === 'string' && (item as any).stores.trim()) {
+          resolvedStore = (item as any).stores.trim();
+        }
+
         return {
           seller_phone: normalizedPhone,
           seller_name: item.seller_name || 'Без имени',
-          store: item.stores?.[0] || 'Без названия',
+          store: resolvedStore,
           plan_id: safePlanId,
           plan_name: resolvedPlanName,
           balance: roundMoney(item.balance),

@@ -111,7 +111,7 @@
       "crm_db_mapping": {
         "seller_phone": "CONCAT(item.iso_code, item.seller_phone)",
         "seller_name": "item.seller_name",
-        "store": "item.stores[0] || 'Без названия'",
+        "store": "item.store || (item.stores && item.stores[0]) || 'Без названия'",
         "plan_id": "resolveSotkaPlan(item.plans[0]).planId",
         "plan_name": "resolveSotkaPlan(item.plans[0]).planName",
         "balance": "item.balance",

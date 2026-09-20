@@ -112,8 +112,8 @@
         "seller_phone": "CONCAT(item.iso_code, item.seller_phone)",
         "seller_name": "item.seller_name",
         "store": "item.stores[0] || 'Без названия'",
-        "plan_id": "item.plans[0] ? CONCAT('PLN-', item.plans[0]) : null",
-        "plan_name": "item.plans[0] || 'Без тарифа'",
+        "plan_id": "resolveSotkaPlan(item.plans[0]).planId",
+        "plan_name": "resolveSotkaPlan(item.plans[0]).planName",
         "balance": "item.balance",
         "moderation": "item.moderation || 'pending'",
         "is_active": "item.is_active",
@@ -189,6 +189,7 @@
       "payments": "payment_id"
     },
     "manager_assignment_preservation": "При обновлении таблицы sellers через upsert необходимо сохранять существующие поля manager_id и leads.seller_phone, не затирая их значениями по умолчанию.",
-    "date_to_iso_storage_format": "Даты из API (registered_at, last_activity, date_time) в локализованном формате DD.MM.YYYY HH:mm перед вставкой в Postgres (TIMESTAMPTZ) обязательно нормализуются функцией parseDateToISO в стандарт ISO 8601 с часовым поясом Asia/Bishkek (UTC+6) во избежание ошибки out of range."
+    "date_to_iso_storage_format": "Даты из API (registered_at, last_activity, date_time) в локализованном формате DD.MM.YYYY HH:mm перед вставкой в Postgres (TIMESTAMPTZ) обязательно нормализуются функцией parseDateToISO в стандарт ISO 8601 с часовым поясом Asia/Bishkek (UTC+6) во избежание ошибки out of range.",
+    "plan_resolution_foreign_key_guard": "Названия планов из Sotka API (Базовый, Премиум, Бизнес, Корпоративный) разрешаются в первичные ключи plans.plan_id (PLN-BASE, PLN-PREM, PLN-BIZ, PLN-CORP) через resolveSotkaPlan. Если тариф отсутствует в plans, он либо авто-регистрируется, либо передается как NULL для строгого соблюдения foreign key constraint sellers_plan_id_fkey."
   }
 }

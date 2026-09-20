@@ -8,7 +8,7 @@ import {
   fetchTransactions,
 } from '@/lib/services/sotka-api';
 import { roundMoney } from '@/lib/utils/money';
-import { parseDateToISO } from '@/lib/sotka';
+import { parseDateToISO, resolveSotkaPlan } from '@/lib/sotka';
 import type { Database } from '@/types/database.types';
 
 export const dynamic = 'force-dynamic';
@@ -106,6 +106,22 @@ async function handleSync(request: Request) {
       });
     }
 
+    // Справочник тарифов для предотвращения нарушения foreign key sellers_plan_id_fkey
+    const { data: dbPlans } = await adminSupabase
+      .from('plans')
+      .select('plan_id, plan_name');
+
+    const dbPlansMap = new Map<string, string>();
+    const validPlanIds = new Set<string>();
+
+    if (dbPlans) {
+      for (const p of dbPlans) {
+        validPlanIds.add(p.plan_id);
+        dbPlansMap.set(p.plan_id.toLowerCase(), p.plan_id);
+        dbPlansMap.set(p.plan_name.toLowerCase(), p.plan_id);
+      }
+    }
+
     let sellerOffset = 0;
     const sellerLimit = 100;
     let hasMoreSellers = true;
@@ -118,6 +134,46 @@ async function handleSync(request: Request) {
         break;
       }
 
+      // Предварительная регистрация новых/неизвестных тарифов для гарантии целостности внешнего ключа
+      for (const item of items) {
+        const rawPlan = item.plans?.[0];
+        if (
+          rawPlan &&
+          typeof rawPlan === 'string' &&
+          rawPlan.trim() &&
+          rawPlan.trim().toLowerCase() !== 'без тарифа'
+        ) {
+          const cleanName = rawPlan.trim();
+          const resolved = resolveSotkaPlan(cleanName, dbPlansMap, validPlanIds);
+          if (!resolved.planId || !validPlanIds.has(resolved.planId)) {
+            const cleanSlug = cleanName
+              .toUpperCase()
+              .replace(/[^A-Z0-9А-ЯЁ]/gi, '')
+              .slice(0, 16);
+            const newPlanId = `PLN-${cleanSlug || 'CUSTOM'}`;
+            try {
+              await adminSupabase.from('plans').upsert(
+                {
+                  plan_id: newPlanId,
+                  plan_name: cleanName,
+                  price: 2500.0,
+                  billing_period: 'Месяц',
+                  description: 'Автоматически зарегистрирован при синхронизации Sotka API',
+                  is_active: true,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'plan_id' }
+              );
+              validPlanIds.add(newPlanId);
+              dbPlansMap.set(newPlanId.toLowerCase(), newPlanId);
+              dbPlansMap.set(cleanName.toLowerCase(), newPlanId);
+            } catch (planErr) {
+              console.warn('[Sotka Sync] Не удалось автоматически создать тариф:', planErr);
+            }
+          }
+        }
+      }
+
       const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] = items.map((item) => {
         const rawDigits = item.seller_phone ? String(item.seller_phone).replace(/\D/g, '') : '';
         const normalizedPhone = rawDigits.startsWith('996')
@@ -127,12 +183,21 @@ async function handleSync(request: Request) {
         // Сохраняем локально назначенного менеджера
         const preservedManagerId = existingManagersMap.get(normalizedPhone) || null;
 
+        // Безопасное сопоставление тарифа (гарантия исключения sellers_plan_id_fkey)
+        const rawPlan = item.plans?.[0];
+        const { planId: resolvedPlanId, planName: resolvedPlanName } = resolveSotkaPlan(
+          rawPlan,
+          dbPlansMap,
+          validPlanIds
+        );
+        const safePlanId = resolvedPlanId && validPlanIds.has(resolvedPlanId) ? resolvedPlanId : null;
+
         return {
           seller_phone: normalizedPhone,
           seller_name: item.seller_name || 'Без имени',
           store: item.stores?.[0] || 'Без названия',
-          plan_id: item.plans?.[0] ? `PLN-${item.plans[0]}` : null,
-          plan_name: item.plans?.[0] || 'Без тарифа',
+          plan_id: safePlanId,
+          plan_name: resolvedPlanName,
           balance: roundMoney(item.balance),
           moderation: (item.moderation as any) || 'pending',
           is_active: item.is_active ?? true,
@@ -147,16 +212,23 @@ async function handleSync(request: Request) {
         };
       });
 
+      // Дедупликация продавцов по seller_phone в рамках текущего батча
+      const sellersMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
+      for (const s of sellersToUpsert) {
+        sellersMap.set(s.seller_phone, s);
+      }
+      const uniqueSellers = Array.from(sellersMap.values());
+
       const { error: sellersUpsertError } = await adminSupabase
         .from('sellers')
-        .upsert(sellersToUpsert, { onConflict: 'seller_phone' });
+        .upsert(uniqueSellers, { onConflict: 'seller_phone' });
 
       if (sellersUpsertError) {
         console.error('[Sotka Sync] Ошибка upsert продавцов:', sellersUpsertError);
         throw new Error(`Ошибка сохранения продавцов: ${sellersUpsertError.message}`);
       }
 
-      syncedSellersCount += items.length;
+      syncedSellersCount += uniqueSellers.length;
       sellerOffset += items.length;
 
       if (sellerOffset >= total || items.length < sellerLimit) {
@@ -198,9 +270,17 @@ async function handleSync(request: Request) {
           };
         });
 
+        // Дедупликация платежей по payment_id в рамках текущего батча
+        // Исключает ошибку PostgreSQL 21000 ("ON CONFLICT DO UPDATE command cannot affect row a second time")
+        const paymentsMap = new Map<string, Database['public']['Tables']['payments']['Insert']>();
+        for (const p of paymentsToUpsert) {
+          paymentsMap.set(p.payment_id, p);
+        }
+        const uniquePayments = Array.from(paymentsMap.values());
+
         const { error: paymentsUpsertError } = await adminSupabase
           .from('payments')
-          .upsert(paymentsToUpsert, { onConflict: 'payment_id' });
+          .upsert(uniquePayments, { onConflict: 'payment_id' });
 
         if (paymentsUpsertError) {
           console.error('[Sotka Sync] Ошибка upsert платежей:', paymentsUpsertError);
@@ -208,7 +288,7 @@ async function handleSync(request: Request) {
           break;
         }
 
-        syncedPaymentsCount += items.length;
+        syncedPaymentsCount += uniquePayments.length;
         txOffset += items.length;
 
         if (txOffset >= total || items.length < txLimit) {

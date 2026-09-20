@@ -200,3 +200,79 @@ export function parseDateToISO(dateInput: unknown): string | null {
 
   return null;
 }
+
+/**
+ * 6. Стандартный справочник соответствий названий тарифов Sotka API -> plan_id в SotkaCRM
+ */
+export const STANDARD_PLAN_MAPPINGS: Record<string, string> = {
+  'базовый': 'PLN-BASE',
+  'base': 'PLN-BASE',
+  'basic': 'PLN-BASE',
+  'pln-base': 'PLN-BASE',
+
+  'премиум': 'PLN-PREM',
+  'premium': 'PLN-PREM',
+  'prem': 'PLN-PREM',
+  'pln-prem': 'PLN-PREM',
+
+  'бизнес': 'PLN-BIZ',
+  'business': 'PLN-BIZ',
+  'biz': 'PLN-BIZ',
+  'pln-biz': 'PLN-BIZ',
+
+  'корпоративный': 'PLN-CORP',
+  'корпоратив': 'PLN-CORP',
+  'corporate': 'PLN-CORP',
+  'corp': 'PLN-CORP',
+  'pln-corp': 'PLN-CORP',
+};
+
+/**
+ * Нормализация и сопоставление тарифа продавца из Sotka API с каталогом plans
+ * Гарантирует предотвращение ошибки foreign key constraint "sellers_plan_id_fkey"
+ */
+export function resolveSotkaPlan(
+  rawPlan: unknown,
+  dbPlansMap?: Map<string, string>,
+  validPlanIds?: Set<string>
+): { planId: string | null; planName: string } {
+  if (!rawPlan || typeof rawPlan !== 'string') {
+    return { planId: null, planName: 'Без тарифа' };
+  }
+
+  const trimmed = rawPlan.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'без тарифа') {
+    return { planId: null, planName: 'Без тарифа' };
+  }
+
+  const lower = trimmed.toLowerCase();
+
+  // 1. Поиск в переданной карте БД (если предоставлена)
+  if (dbPlansMap && dbPlansMap.has(lower)) {
+    const candidateId = dbPlansMap.get(lower)!;
+    if (!validPlanIds || validPlanIds.has(candidateId)) {
+      return { planId: candidateId, planName: trimmed };
+    }
+  }
+
+  // 2. Поиск в стандартных маппингах
+  if (STANDARD_PLAN_MAPPINGS[lower]) {
+    const candidateId = STANDARD_PLAN_MAPPINGS[lower];
+    if (!validPlanIds || validPlanIds.has(candidateId)) {
+      return { planId: candidateId, planName: trimmed };
+    }
+  }
+
+  // 3. Поиск по частичному совпадению
+  for (const [key, id] of Object.entries(STANDARD_PLAN_MAPPINGS)) {
+    if (lower.includes(key) || key.includes(lower)) {
+      if (!validPlanIds || validPlanIds.has(id)) {
+        return { planId: id, planName: trimmed };
+      }
+    }
+  }
+
+  // 4. Если передан validPlanIds и candidateId в нем отсутствует - строго возвращаем null
+  // для исключения нарушения внешнего ключа sellers_plan_id_fkey
+  return { planId: null, planName: trimmed };
+}

@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
+export const PG_UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const PayoutSchema = z.object({
-  user_id: z.string().uuid('Некорректный идентификатор сотрудника'),
+  user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
   accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ'),
   payout_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата выплаты должна быть в формате ГГГГ-ММ-ДД'),
   amount: z.coerce.number().positive('Сумма выплаты должна быть больше нуля'),
@@ -13,7 +16,7 @@ export const PayoutSchema = z.object({
 });
 
 export const EmployeeRateSchema = z.object({
-  user_id: z.string().uuid('Некорректный идентификатор сотрудника'),
+  user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
   connection_percent: z.coerce.number().min(0).max(100, 'Процент подключения должен быть от 0 до 100'),
   maintenance_percent: z.coerce.number().min(0).max(100, 'Процент сопровождения должен быть от 0 до 100'),
   effective_from: z.string().regex(/^\d{4}-\d{2}$/, 'Период действия должен быть в формате ГГГГ-ММ'),
@@ -28,23 +31,19 @@ export const PlanUpdateSchema = z.object({
 });
 
 /**
- * Приведение идентификаторов внешних ключей к строгому UUID или null.
- * Пустые строки, пробелы, "none", "null", "undefined", "—" преобразуются в null.
+ * Приведение идентификаторов внешних ключей к строгому UUID PostgreSQL или null.
+ * Whitelist: если строка соответствует формату UUID (32 hex-символа), возвращается строка.
+ * Любые иные значения (пустые строки, плейсхолдеры "—", "-", "unassigned", "none", null, undefined)
+ * гарантированно преобразуются в null.
  */
 export function normalizeNullableUuid(val: unknown): string | null {
   if (val === null || val === undefined) return null;
   if (typeof val === 'string') {
     const trimmed = val.trim();
-    if (
-      trimmed === '' ||
-      trimmed.toLowerCase() === 'none' ||
-      trimmed.toLowerCase() === 'null' ||
-      trimmed.toLowerCase() === 'undefined' ||
-      trimmed.startsWith('—')
-    ) {
-      return null;
+    if (PG_UUID_REGEX.test(trimmed)) {
+      return trimmed;
     }
-    return trimmed;
+    return null;
   }
   return null;
 }
@@ -58,7 +57,7 @@ export const LeadCreateSchema = z.object({
   assigned_to: z
     .preprocess(
       (val) => normalizeNullableUuid(val),
-      z.string().uuid('Некорректный идентификатор ответственного').nullable().optional()
+      z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор ответственного').nullable().optional()
     )
     .default(null),
 });

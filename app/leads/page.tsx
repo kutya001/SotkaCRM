@@ -273,64 +273,67 @@ function LeadsContent() {
     },
   ];
 
-  // Конфигурация полей EntityModal
-  const entityFields: EntityFieldConfig<LeadItem>[] = [
-    {
-      name: 'lead_id',
-      label: 'ID заявки (UUID)',
-      immutable: true,
-      isSystem: true,
-    },
-    {
-      name: 'created_at',
-      label: 'Дата поступления',
-      immutable: true,
-      isSystem: true,
-    },
-    {
-      name: 'client_name',
-      label: 'Имя клиента или название точки',
-      required: true,
-      placeholder: 'Например: Айбек (Магазин Береке)',
-    },
-    {
-      name: 'phone',
-      label: 'Номер телефона',
-      type: 'phone',
-      required: true,
-      placeholder: '700123456 (без кода страны)',
-      helperText: 'Номер абонента без пробелов и тире (код страны слева)',
-    },
-    {
-      name: 'instagram',
-      label: 'Instagram аккаунт',
-      placeholder: '@username или ссылка',
-    },
-    {
-      name: 'status',
-      label: 'Этап воронки',
-      type: 'status',
-      required: true,
-    },
-    {
-      name: 'assigned_to',
-      label: 'Ответственный консультант',
-      type: 'select',
-      options: [
-        { value: '', label: '— Не назначен —' },
-        ...consultants.map((c) => ({
-          value: c.user_id,
-          label: `${c.full_name} (${c.role})`,
-        })),
-      ],
-    },
-    {
-      name: 'comment',
-      label: 'Комментарий и история контакта',
-      type: 'textarea',
-      placeholder: 'Заметки по клиенту, детали разговора, пожелания...',
-    },
-  ];
+  // Конфигурация полей EntityModal (мемоизирована для предотвращения сброса формы при ререндере)
+  const entityFields: EntityFieldConfig<LeadItem>[] = React.useMemo(
+    () => [
+      {
+        name: 'lead_id',
+        label: 'ID заявки (UUID)',
+        immutable: true,
+        isSystem: true,
+      },
+      {
+        name: 'created_at',
+        label: 'Дата поступления',
+        immutable: true,
+        isSystem: true,
+      },
+      {
+        name: 'client_name',
+        label: 'Имя клиента или название точки',
+        required: true,
+        placeholder: 'Например: Айбек (Магазин Береке)',
+      },
+      {
+        name: 'phone',
+        label: 'Номер телефона',
+        type: 'phone',
+        required: true,
+        placeholder: '700123456 (без кода страны)',
+        helperText: 'Номер абонента без пробелов и тире (код страны слева)',
+      },
+      {
+        name: 'instagram',
+        label: 'Instagram аккаунт',
+        placeholder: '@username или ссылка',
+      },
+      {
+        name: 'status',
+        label: 'Этап воронки',
+        type: 'status',
+        required: true,
+      },
+      {
+        name: 'assigned_to',
+        label: 'Ответственный консультант',
+        type: 'select',
+        options: [
+          { value: '', label: '— Не назначен —' },
+          ...consultants.map((c) => ({
+            value: c.user_id,
+            label: `${c.full_name} (${c.role})`,
+          })),
+        ],
+      },
+      {
+        name: 'comment',
+        label: 'Комментарий и история контакта',
+        type: 'textarea',
+        placeholder: 'Заметки по клиенту, детали разговора, пожелания...',
+      },
+    ],
+    [consultants]
+  );
 
   // Обработчики строк DataJournal
   const handleRowClick = (lead: LeadItem) => {
@@ -395,7 +398,7 @@ function LeadsContent() {
       country_code: newLeadData.country_code || '996',
       instagram: newLeadData.instagram || undefined,
       comment: newLeadData.comment || undefined,
-      assigned_to: newLeadData.assigned_to,
+      assigned_to: newLeadData.assigned_to || null,
     });
 
     if (!res.success) {

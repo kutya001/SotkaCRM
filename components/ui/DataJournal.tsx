@@ -393,8 +393,9 @@ export function DataJournal<T extends Record<string, any>>({
     setCurrentPage(1);
   }, [effectiveSearch, filterRules, pageSize]);
 
-  const totalRows = totalCount ?? sortedData.length;
-  const totalPages = Math.ceil(sortedData.length / pageSize) || 1;
+  const hasActiveFilters = Boolean(effectiveSearch?.trim()) || filterRules.length > 0;
+  const totalRows = hasActiveFilters ? sortedData.length : (totalCount ?? sortedData.length);
+  const totalPages = Math.ceil(totalRows / pageSize) || 1;
   const paginatedData = React.useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return sortedData.slice(start, start + pageSize);

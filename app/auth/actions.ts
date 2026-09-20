@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type { UserRole } from '@/types/database.types';
 
 export interface AuthState {
@@ -54,14 +55,19 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
       }
 
       // Проверяем, существует ли логин в системе для информативного сообщения
-      const { data: existingUser, error: existError } = await supabase
-        .from('users')
-        .select('user_id')
-        .ilike('login', cleanLogin)
-        .maybeSingle();
+      try {
+        const adminSupabase = createAdminClient();
+        const { data: existingUser, error: existError } = await adminSupabase
+          .from('users')
+          .select('user_id')
+          .ilike('login', cleanLogin)
+          .maybeSingle();
 
-      if (!existError && !existingUser) {
-        return { error: 'Пользователь с таким логином не найден в системе.' };
+        if (!existError && !existingUser) {
+          return { error: 'Пользователь с таким логином не найден в системе.' };
+        }
+      } catch {
+        // Если сервисный ключ недоступен, возвращаем безопасное стандартное сообщение
       }
       return { error: 'Неверный логин или пароль.' };
     }

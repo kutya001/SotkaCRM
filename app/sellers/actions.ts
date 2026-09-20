@@ -94,7 +94,7 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
 
   const {
     page = 1,
-    pageSize = 50,
+    pageSize = 1000,
     search,
     moderation,
     isActive,
@@ -194,6 +194,22 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
  */
 export async function getSellersStats(): Promise<SellersStats> {
   const supabase = await createClient();
+
+  // Попытка вызвать предвычисленный SQL-агрегат get_sellers_kpi_stats (миграция 003)
+  try {
+    const { data: rpcStats, error: rpcError } = await supabase.rpc('get_sellers_kpi_stats');
+    if (!rpcError && rpcStats) {
+      return {
+        total: Number(rpcStats.total) || 0,
+        active: Number(rpcStats.active) || 0,
+        pendingModeration: Number(rpcStats.pendingModeration) || 0,
+        totalBalance: Number(rpcStats.totalBalance) || 0,
+        assigned: Number(rpcStats.assigned) || 0,
+      };
+    }
+  } catch (rpcErr) {
+    console.warn('RPC get_sellers_kpi_stats недоступен, fallback на агрегацию:', rpcErr);
+  }
 
   const { data, error } = await supabase
     .from('sellers')

@@ -87,7 +87,7 @@ export async function getPayouts(
 
   const {
     page = 1,
-    pageSize = 100,
+    pageSize = 1000,
     search = '',
     accrualMonth,
     category,

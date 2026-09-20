@@ -626,6 +626,36 @@ export type Database = {
         Args: { p_login: string }
         Returns: string
       }
+      link_lead_to_seller: {
+        Args: {
+          p_lead_id: string
+          p_seller_phone: string
+          p_manager_id: string | null
+          p_assigned_by: string
+        }
+        Returns: { success: boolean; connection_id?: string; error?: string }
+      }
+      get_leads_funnel_stats: {
+        Args: Record<string, never>
+        Returns: {
+          total: number
+          open: number
+          processed: number
+          assigned: number
+          signed: number
+          cancelled: number
+        }
+      }
+      get_sellers_kpi_stats: {
+        Args: Record<string, never>
+        Returns: {
+          total: number
+          active: number
+          pendingModeration: number
+          totalBalance: number
+          assigned: number
+        }
+      }
     }
     Enums: {
       client_lifecycle_status:

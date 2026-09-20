@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { getLeadsStats } from '@/app/leads/actions';
 import { getPayoutsStats } from '@/app/payouts/actions';
-import { getSellers } from '@/app/sellers/actions';
+import { getSellersStats } from '@/app/sellers/actions';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
 import { formatMoney } from '@/lib/utils/money';
 import type { UserRole } from '@/types/database.types';
@@ -56,11 +56,11 @@ export default function AnalyticsPage() {
     async function loadData() {
       setIsLoading(true);
       try {
-        const [profileRes, leadsRes, payoutsRes, sellersRes] = await Promise.all([
+        const [profileRes, leadsRes, payoutsRes, sellersStatsRes] = await Promise.all([
           getUserProfileAndKpi(),
           getLeadsStats(),
           getPayoutsStats(),
-          getSellers({ page: 1, pageSize: 1 }),
+          getSellersStats(),
         ]);
 
         if (profileRes.profile) {
@@ -72,12 +72,12 @@ export default function AnalyticsPage() {
         setLeadsStats(leadsRes);
         setPayoutsStats(payoutsRes);
 
-        if (sellersRes) {
+        if (sellersStatsRes) {
           setSellersStats({
-            total: sellersRes.totalCount || 0,
-            active: sellersRes.sellers.filter((s) => s.is_active).length,
-            pending: sellersRes.sellers.filter((s) => s.moderation === 'pending').length,
-            totalBalance: sellersRes.sellers.reduce((acc, s) => acc + (s.balance || 0), 0),
+            total: sellersStatsRes.total,
+            active: sellersStatsRes.active,
+            pending: sellersStatsRes.pendingModeration,
+            totalBalance: sellersStatsRes.totalBalance,
           });
         }
       } catch (err) {

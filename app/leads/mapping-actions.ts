@@ -180,7 +180,32 @@ export async function linkLeadToSeller(params: {
     return { success: false, error: 'Роль SMM не имеет прав на связывание лида с продавцом' };
   }
 
-  // 1. Проверяем лид
+  // 1. Попытка атомарного связывания в единой транзакции через link_lead_to_seller (миграция 003)
+  try {
+    const { data: rpcResult, error: rpcError } = await supabase.rpc('link_lead_to_seller', {
+      p_lead_id: params.leadId,
+      p_seller_phone: params.sellerPhone,
+      p_manager_id: params.managerId || null,
+      p_assigned_by: currentProfile.user_id,
+    });
+
+    if (!rpcError && rpcResult) {
+      if (!rpcResult.success) {
+        return { success: false, error: rpcResult.error || 'Ошибка связывания лида с продавцом' };
+      }
+      revalidatePath('/leads');
+      revalidatePath('/sellers');
+      revalidatePath('/connections');
+      return {
+        success: true,
+        connectionId: rpcResult.connection_id,
+      };
+    }
+  } catch (rpcErr) {
+    console.warn('RPC link_lead_to_seller недоступен, выполняется fallback-связывание:', rpcErr);
+  }
+
+  // Fallback: Пошаговое связывание (если миграция хранимой процедуры еще не применена в БД)
   const { data: lead, error: leadError } = await supabase
     .from('leads')
     .select('*')

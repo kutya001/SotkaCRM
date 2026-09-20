@@ -71,7 +71,7 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
 
   const {
     page = 1,
-    pageSize = 25,
+    pageSize = 1000,
     search = '',
     status,
     sortBy = 'created_at',
@@ -233,7 +233,32 @@ export async function updateLead(
   }
 ): Promise<{ success: boolean; error?: string; lead?: LeadItem }> {
   try {
-    const { supabase } = await requireAuth();
+    const { profile, supabase } = await requireAuth();
+
+    // RBAC: Проверка прав доступа к изменению лида
+    if (profile.role !== 'admin') {
+      const { data: targetLead } = await supabase
+        .from('leads')
+        .select('created_by, assigned_to')
+        .eq('lead_id', leadId)
+        .single();
+
+      if (!targetLead) {
+        return { success: false, error: 'Лид не найден в системе' };
+      }
+
+      if (profile.role === 'smm' && targetLead.created_by !== profile.user_id) {
+        return { success: false, error: 'Роль SMM может редактировать только созданные собой лиды' };
+      }
+
+      if (
+        profile.role === 'consultant' &&
+        targetLead.assigned_to &&
+        targetLead.assigned_to !== profile.user_id
+      ) {
+        return { success: false, error: 'Лид назначен на другого консультанта' };
+      }
+    }
 
     const payload: Database['public']['Tables']['leads']['Update'] = {
       updated_at: new Date().toISOString(),
@@ -294,7 +319,23 @@ export async function updateLeadStatus(
   status: LeadStatus
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAuth();
+    const { profile, supabase } = await requireAuth();
+
+    if (profile.role === 'smm') {
+      return { success: false, error: 'Роль SMM не имеет прав на смену статуса воронки' };
+    }
+
+    if (profile.role === 'consultant') {
+      const { data: targetLead } = await supabase
+        .from('leads')
+        .select('assigned_to')
+        .eq('lead_id', leadId)
+        .single();
+
+      if (targetLead && targetLead.assigned_to && targetLead.assigned_to !== profile.user_id) {
+        return { success: false, error: 'Лид назначен на другого консультанта' };
+      }
+    }
 
     const { error } = await supabase
       .from('leads')
@@ -326,14 +367,30 @@ export async function cancelLead(
   reason: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAuth();
+    const { profile, supabase } = await requireAuth();
 
-    // Получаем текущий комментарий лида
+    if (profile.role === 'smm') {
+      return { success: false, error: 'Роль SMM не имеет прав на отмену сделки' };
+    }
+
+    // Получаем текущий комментарий лида и проверяем права
     const { data: currentLead } = await supabase
       .from('leads')
-      .select('comment')
+      .select('assigned_to, comment')
       .eq('lead_id', leadId)
       .single();
+
+    if (!currentLead) {
+      return { success: false, error: 'Лид не найден в системе' };
+    }
+
+    if (
+      profile.role === 'consultant' &&
+      currentLead.assigned_to &&
+      currentLead.assigned_to !== profile.user_id
+    ) {
+      return { success: false, error: 'Лид назначен на другого консультанта' };
+    }
 
     const now = new Date().toLocaleDateString('ru-RU');
     const cancellationNote = `[Отмена (${now})]: ${reason.trim()}`;
@@ -389,6 +446,23 @@ export async function getConsultantsList() {
  */
 export async function getLeadsStats() {
   const supabase = await createClient();
+
+  // Попытка получить предвычисленные агрегаты через SQL-функцию get_leads_funnel_stats (миграция 003)
+  try {
+    const { data: rpcStats, error: rpcError } = await supabase.rpc('get_leads_funnel_stats');
+    if (!rpcError && rpcStats) {
+      return {
+        total: Number(rpcStats.total) || 0,
+        open: Number(rpcStats.open) || 0,
+        processed: Number(rpcStats.processed) || 0,
+        assigned: Number(rpcStats.assigned) || 0,
+        signed: Number(rpcStats.signed) || 0,
+        cancelled: Number(rpcStats.cancelled) || 0,
+      };
+    }
+  } catch (rpcErr) {
+    console.warn('RPC get_leads_funnel_stats недоступен, fallback на агрегацию в памяти:', rpcErr);
+  }
 
   const { data, error } = await supabase
     .from('leads')

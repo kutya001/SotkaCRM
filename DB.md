@@ -1049,3 +1049,24 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * Если тариф совпадает с известным («Базовый», «Премиум», «Бизнес», «Корпоративный»), выставляется соответствующий `plan_id`.
 * Если от внешнего API поступает новый тариф, он предварительно регистрируется в таблице `plans`.
 * Если тариф не определен или пуст, в поле `sellers.plan_id` передается строго `NULL`, гарантируя соблюдение внешнего ключа `sellers_plan_id_fkey` без сбоев транзакции. Исходное название тарифа при этом сохраняется в текстовом поле `sellers.plan_name`.
+
+---
+
+### 9. Регламент оптимизации производительности СУБД (Миграция `005_performance_rpcs_and_indexes.sql`)
+
+**9.1. Кэширование RLS-политик через InitPlan (`(SELECT ...)`):**
+* В политиках `leads_select_policy`, `leads_update_policy`, `sellers_select_policy`, `sellers_admin_write_policy`, `payments_select_policy`, `payments_admin_write_policy`, `connections_select_policy` вызовы процедур `get_current_user_role()` и `get_current_crm_user_id()` обернуты в конструкцию `(SELECT ...)`.
+* Это исключает вызов функций на каждую сканируемую строку таблицы (Per-Row Evaluation) и позволяет планировщику PostgreSQL вычислять роль пользователя однократно за весь запрос в виде InitPlan.
+
+**9.2. Индексы подстрочного поиска GIN (`pg_trgm`):**
+Для ускорения операций подстрочной фильтрации (`ILIKE '%...%'`) подключено расширение `pg_trgm` и развернуты GIN-индексы:
+* `idx_leads_client_name_trgm` на `leads(client_name gin_trgm_ops)`
+* `idx_leads_phone_trgm` на `leads(phone gin_trgm_ops)`
+* `idx_sellers_name_trgm` на `sellers(seller_name gin_trgm_ops)`
+* `idx_sellers_store_trgm` на `sellers(store gin_trgm_ops)`
+* `idx_sellers_phone_trgm` на `sellers(seller_phone gin_trgm_ops)`
+
+**9.3. Составные B-Tree индексы:**
+* `idx_leads_status_created` на `leads(status, created_at DESC)` — ускорение фильтрации воронки лидов с сортировкой по времени.
+* `idx_sellers_mod_active` на `sellers(moderation, is_active, registered_at DESC)` — ускорение фильтрации модерации и статуса активности продавцов.
+* `idx_sellers_manager_active` на `sellers(manager_id, is_active)` — ускорение фильтрации закрепленных продавцов.

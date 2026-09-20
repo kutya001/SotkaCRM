@@ -228,62 +228,46 @@ export async function getUserProfileAndKpi(): Promise<UserKpiResponse> {
   }
 
   // 3. KPI для Администратора
-  const { data: allLeads } = await supabase.from('leads').select('status');
+  const [funnelRpcRes, sellersRpcRes, payoutsRes, lastSyncRes] = await Promise.all([
+    supabase.rpc('get_leads_funnel_stats'),
+    supabase.rpc('get_sellers_kpi_stats'),
+    supabase
+      .from('employee_payouts')
+      .select('amount, payout_category')
+      .eq('accrual_month', currentMonth),
+    supabase
+      .from('sellers')
+      .select('synced_at')
+      .order('synced_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  const funnelData = (funnelRpcRes.data as any) || {};
   const funnel = {
-    total: allLeads?.length || 0,
-    open: 0,
-    processed: 0,
-    assigned: 0,
-    signed: 0,
-    cancelled: 0,
+    total: Number(funnelData.total) || 0,
+    open: Number(funnelData.open) || 0,
+    processed: Number(funnelData.processed) || 0,
+    assigned: Number(funnelData.assigned) || 0,
+    signed: Number(funnelData.signed) || 0,
+    cancelled: Number(funnelData.cancelled) || 0,
   };
 
-  if (allLeads) {
-    for (const l of allLeads) {
-      if (l.status === 'Открыт') funnel.open++;
-      else if (l.status === 'Обработан') funnel.processed++;
-      else if (l.status === 'Назначен') funnel.assigned++;
-      else if (l.status === 'Подписан') funnel.signed++;
-      else if (l.status === 'Отмена') funnel.cancelled++;
-    }
-  }
-
   // Зарплатный фонд текущего месяца
-  const { data: payouts } = await supabase
-    .from('employee_payouts')
-    .select('amount, payout_category')
-    .eq('accrual_month', currentMonth);
-
+  const payouts = payoutsRes.data || [];
   let totalPayoutFundMonth = 0;
-  if (payouts) {
-    for (const p of payouts) {
-      const amt = Number(p.amount) || 0;
-      if (p.payout_category !== 'удержание') {
-        totalPayoutFundMonth += amt;
-      }
+  for (const p of payouts) {
+    const amt = Number(p.amount) || 0;
+    if (p.payout_category !== 'удержание') {
+      totalPayoutFundMonth += amt;
     }
   }
 
-  // Продавцы и их суммарный баланс
-  const { data: sellers } = await supabase
-    .from('sellers')
-    .select('balance, is_active, synced_at');
-
-  let totalActiveSellers = 0;
-  let totalSellersBalance = 0;
-  let lastSyncedAt: string | null = null;
-
-  if (sellers) {
-    for (const s of sellers) {
-      if (s.is_active) totalActiveSellers++;
-      totalSellersBalance += Number(s.balance) || 0;
-      if (s.synced_at) {
-        if (!lastSyncedAt || s.synced_at > lastSyncedAt) {
-          lastSyncedAt = s.synced_at;
-        }
-      }
-    }
-  }
+  // Продавцы и их суммарный баланс из предвычисленного RPC
+  const sellersData = (sellersRpcRes.data as any) || {};
+  const totalActiveSellers = Number(sellersData.active) || 0;
+  const totalSellersBalance = Number(sellersData.totalBalance) || 0;
+  const lastSyncedAt = lastSyncRes.data?.synced_at || null;
 
   return {
     profile,

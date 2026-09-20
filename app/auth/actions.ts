@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -75,7 +76,7 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
     // 3. Извлечение профиля сотрудника
     const { data: userProfile, error: profileError } = await supabase
       .from('users')
-      .select('user_id, auth_id, login, role, is_active')
+      .select('user_id, auth_id, login, full_name, role, is_active')
       .eq('auth_id', authData.user.id)
       .single();
 
@@ -89,6 +90,13 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
       await supabase.auth.signOut();
       return { error: 'Учетная запись отключена или заблокирована администратором.' };
     }
+
+    const cookieStore = await cookies();
+    cookieStore.set('crm_role', userProfile.role, { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 });
+    cookieStore.set('crm_active', userProfile.is_active ? 'true' : 'false', { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 });
+    cookieStore.set('crm_user_name', encodeURIComponent(userProfile.full_name || 'Сотрудник CRM'), { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 });
+    cookieStore.set('crm_user_login', userProfile.login, { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 });
+    cookieStore.set('crm_user_id', userProfile.user_id, { path: '/', httpOnly: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 30 });
 
     shouldRedirect = true;
   } catch (err: unknown) {
@@ -113,6 +121,12 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  const cookieStore = await cookies();
+  cookieStore.delete('crm_role');
+  cookieStore.delete('crm_active');
+  cookieStore.delete('crm_user_name');
+  cookieStore.delete('crm_user_login');
+  cookieStore.delete('crm_user_id');
   revalidatePath('/', 'layout');
   redirect('/login');
 }

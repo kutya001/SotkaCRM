@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { createClient } from '@/lib/supabase/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, UserRole } from '@/types/database.types';
@@ -20,8 +21,10 @@ export interface AuthContext {
 
 /**
  * Валидация активной сессии пользователя и извлечение профиля из БД.
+ * Мемоизировано через React.cache() на время жизненного цикла HTTP-запроса,
+ * исключая дублирующие обращения к Auth API и таблице users при множественных экшенах.
  */
-export async function requireAuth(): Promise<AuthContext> {
+export const requireAuth = cache(async (): Promise<AuthContext> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -51,7 +54,7 @@ export async function requireAuth(): Promise<AuthContext> {
     profile: profile as AuthContext['profile'],
     supabase,
   };
-}
+});
 
 /**
  * Проверка прав роли администратора (строго admin).

@@ -67,42 +67,52 @@ export async function updateSession(request: NextRequest) {
 
   // 4. Защита маршрутов по ролевой модели (RBAC)
   if (user && !isApiRoute && !isAuthPage) {
-    // Получаем профиль пользователя
-    const { data: profile } = await supabase
-      .from('users')
-      .select('*')
-      .eq('auth_id', user.id)
-      .single();
+    let role = request.cookies.get('crm_role')?.value;
+    let isActive = request.cookies.get('crm_active')?.value;
 
-    if (profile) {
-      // Если учетная запись заблокирована
-      if (!profile.is_active) {
-        const url = request.nextUrl.clone();
-        url.pathname = '/login';
-        url.searchParams.set('error', 'blocked');
-        return createRedirectWithCookies(url, supabaseResponse);
-      }
+    // Быстрый fallback, если куки еще не инициализированы
+    if (!role) {
+      const { data: profile } = await supabase
+        .from('users')
+        .select('role, is_active')
+        .eq('auth_id', user.id)
+        .single();
 
-      // Маршруты /admin/* и /plans/* разрешены строго для роли admin
-      if (
-        (pathname.startsWith('/admin') || pathname.startsWith('/plans')) &&
-        profile.role !== 'admin'
-      ) {
-        const url = request.nextUrl.clone();
-        url.pathname = '/';
-        return createRedirectWithCookies(url, supabaseResponse);
+      if (profile) {
+        role = profile.role;
+        isActive = profile.is_active ? 'true' : 'false';
+        supabaseResponse.cookies.set('crm_role', role, { path: '/', httpOnly: false, sameSite: 'lax' });
+        supabaseResponse.cookies.set('crm_active', isActive, { path: '/', httpOnly: false, sameSite: 'lax' });
       }
+    }
 
-      // Роли smm запрещен доступ к продавцам, платежам, связям, выплатам, аналитике и тарифам
-      const restrictedForSmm = ['/sellers', '/payments', '/connections', '/payouts', '/analytics', '/plans', '/rates'];
-      if (
-        profile.role === 'smm' &&
-        restrictedForSmm.some((prefix) => pathname.startsWith(prefix))
-      ) {
-        const url = request.nextUrl.clone();
-        url.pathname = '/leads';
-        return createRedirectWithCookies(url, supabaseResponse);
-      }
+    // Если учетная запись заблокирована
+    if (isActive === 'false') {
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
+      url.searchParams.set('error', 'blocked');
+      return createRedirectWithCookies(url, supabaseResponse);
+    }
+
+    // Маршруты /admin/* и /plans/* разрешены строго для роли admin
+    if (
+      (pathname.startsWith('/admin') || pathname.startsWith('/plans')) &&
+      role !== 'admin'
+    ) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/';
+      return createRedirectWithCookies(url, supabaseResponse);
+    }
+
+    // Роли smm запрещен доступ к продавцам, платежам, связям, выплатам, аналитике и тарифам
+    const restrictedForSmm = ['/sellers', '/payments', '/connections', '/payouts', '/analytics', '/plans', '/rates'];
+    if (
+      role === 'smm' &&
+      restrictedForSmm.some((prefix) => pathname.startsWith(prefix))
+    ) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/leads';
+      return createRedirectWithCookies(url, supabaseResponse);
     }
   }
 

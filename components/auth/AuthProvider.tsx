@@ -36,12 +36,70 @@ const UserContext = React.createContext<UserContextValue>({
   signOut: async () => {},
 });
 
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [profile, setProfile] = React.useState<UserProfile | null>(null);
-  const [role, setRole] = React.useState<UserRole>('consultant');
-  const [userName, setUserName] = React.useState<string>('Сотрудник CRM');
-  const [userLogin, setUserLogin] = React.useState<string>('user');
-  const [isLoading, setIsLoading] = React.useState(true);
+  const [profile, setProfile] = React.useState<UserProfile | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const cached = localStorage.getItem(STORAGE_KEY);
+      if (cached) return JSON.parse(cached) as UserProfile;
+    } catch {}
+    return null;
+  });
+
+  const [role, setRole] = React.useState<UserRole>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(STORAGE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.role) return parsed.role as UserRole;
+        }
+      } catch {}
+      const fromCookie = getCookie('crm_role');
+      if (fromCookie && ['admin', 'consultant', 'smm'].includes(fromCookie)) {
+        return fromCookie as UserRole;
+      }
+    }
+    return 'admin';
+  });
+
+  const [userName, setUserName] = React.useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(STORAGE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.full_name) return parsed.full_name;
+        }
+      } catch {}
+      const fromCookie = getCookie('crm_user_name');
+      if (fromCookie) return fromCookie;
+    }
+    return 'Сотрудник CRM';
+  });
+
+  const [userLogin, setUserLogin] = React.useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(STORAGE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.login) return parsed.login;
+        }
+      } catch {}
+      const fromCookie = getCookie('crm_user_login');
+      if (fromCookie) return fromCookie;
+    }
+    return 'user';
+  });
+
+  const [isLoading, setIsLoading] = React.useState(false);
 
   // Синхронная инициализация из localStorage на первом кадре для 0ms задержки
   React.useEffect(() => {
@@ -54,7 +112,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setRole(parsed.role);
           setUserName(parsed.full_name || 'Сотрудник CRM');
           setUserLogin(parsed.login || 'user');
-          setIsLoading(false);
         }
       }
     } catch {}

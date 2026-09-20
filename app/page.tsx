@@ -67,10 +67,10 @@ export default function DashboardPage() {
           setUserLogin(profileRes.profile.login);
         }
 
-        // Запрашиваем реальные счетчики
-        const [leadsCountRes, sellersCountRes, connCountRes, payoutsRes, recentLeadsRes] =
+        // Запрашиваем реальные счетчики через быстрые агрегаты
+        const [funnelRes, sellersCountRes, connCountRes, payoutsRes, recentLeadsRes] =
           await Promise.all([
-            supabase.from('leads').select('status', { count: 'exact' }),
+            supabase.rpc('get_leads_funnel_stats'),
             supabase.from('sellers').select('*', { count: 'exact', head: true }),
             supabase.from('connections').select('*', { count: 'exact', head: true }),
             supabase.from('employee_payouts').select('amount, payout_category'),
@@ -81,13 +81,10 @@ export default function DashboardPage() {
               .limit(5),
           ]);
 
-        const allLeads = leadsCountRes.data || [];
-        let openCount = 0;
-        let signedCount = 0;
-        for (const l of allLeads) {
-          if (l.status === 'Открыт') openCount++;
-          if (l.status === 'Подписан') signedCount++;
-        }
+        const funnel = (funnelRes.data as any) || {};
+        const openCount = Number(funnel.open) || 0;
+        const signedCount = Number(funnel.signed) || 0;
+        const totalLeads = Number(funnel.total) || 0;
 
         let payoutsSum = 0;
         if (payoutsRes.data) {
@@ -99,7 +96,7 @@ export default function DashboardPage() {
         }
 
         setCounts({
-          totalLeads: leadsCountRes.count || allLeads.length,
+          totalLeads,
           openLeads: openCount,
           signedLeads: signedCount,
           totalSellers: sellersCountRes.count || 0,

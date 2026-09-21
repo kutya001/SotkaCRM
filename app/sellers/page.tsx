@@ -116,10 +116,18 @@ export default function SellersPage() {
   const [filterActive, setFilterActive] = React.useState<string>('all');
   const [filterManager, setFilterManager] = React.useState<string>('all');
 
+  const formatPhone = (p?: string | null) => {
+    if (!p) return '—';
+    const trimmed = p.trim();
+    return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
+  };
+
   // Загрузка начальных данных
   const fetchSellersData = React.useCallback(
-    async (page = 1, search = '') => {
-      setIsLoading(true);
+    async (page = 1, search = '', silent = false) => {
+      if (!silent) {
+        setIsLoading(true);
+      }
       try {
         const [sellersRes, statsRes, managersRes] = await Promise.all([
           getSellers({
@@ -155,7 +163,9 @@ export default function SellersPage() {
         console.error(err);
         showToast('Ошибка при загрузке базы продавцов', 'error');
       } finally {
-        setIsLoading(false);
+        if (!silent) {
+          setIsLoading(false);
+        }
       }
     },
     [filterModeration, filterActive, filterManager, router, showToast]
@@ -179,15 +189,42 @@ export default function SellersPage() {
   }, [fetchSellersData]);
 
   const handleAssignManager = async (sellerPhone: string, managerId: string | null) => {
+    const previousSellers = [...sellers];
+    const targetManager = managers.find((m) => m.user_id === managerId);
+
+    // Оптимистичное обновление
+    setSellers((prev) =>
+      prev.map((s) => {
+        if (s.seller_phone === sellerPhone) {
+          return {
+            ...s,
+            manager_id: managerId,
+            manager_user: targetManager
+              ? {
+                  user_id: targetManager.user_id,
+                  full_name: targetManager.full_name,
+                  role: targetManager.role,
+                  login: targetManager.login,
+                  color: targetManager.color,
+                }
+              : null,
+          };
+        }
+        return s;
+      })
+    );
+
     try {
       const res = await assignSellerManager(sellerPhone, managerId);
       if (res.success) {
         showToast('Куратор назначен. Связь в подключениях синхронизирована', 'success');
-        fetchSellersData();
+        await fetchSellersData(1, searchQuery, true);
       } else {
+        setSellers(previousSellers);
         showToast(res.error || 'Ошибка назначения куратора', 'error');
       }
     } catch {
+      setSellers(previousSellers);
       showToast('Ошибка при назначении куратора', 'error');
     }
   };
@@ -261,7 +298,7 @@ export default function SellersPage() {
       phoneAccessor: (row: SellerItem) => row.seller_phone,
       renderCell: (row: SellerItem) => (
         <span className="text-xs font-mono text-zinc-800 dark:text-zinc-200">
-          +{row.seller_phone}
+          {formatPhone(row.seller_phone)}
         </span>
       ),
     },
@@ -427,7 +464,7 @@ export default function SellersPage() {
           );
         }
 
-        if (currentUserRole === 'admin') {
+        if (currentUserRole === 'admin' || currentUserRole === 'consultant') {
           return (
             <button
               type="button"
@@ -798,7 +835,7 @@ export default function SellersPage() {
         {/* Телефон и быстрые кнопки связи */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
           <div className="font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-            +{seller.seller_phone}
+            {formatPhone(seller.seller_phone)}
           </div>
           <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
             {cleanPhone && (
@@ -919,7 +956,7 @@ export default function SellersPage() {
                   </span>
                 </div>
               </div>
-            ) : currentUserRole === 'admin' ? (
+            ) : (currentUserRole === 'admin' || currentUserRole === 'consultant') ? (
               <button
                 type="button"
                 onClick={() => setLinkLeadModal({ isOpen: true, seller })}
@@ -1073,7 +1110,7 @@ export default function SellersPage() {
           isOpen={linkLeadModal.isOpen}
           onClose={() => setLinkLeadModal({ isOpen: false, seller: null })}
           seller={linkLeadModal.seller}
-          onSuccess={() => fetchSellersData()}
+          onSuccess={() => fetchSellersData(1, searchQuery, true)}
         />
       </div>
     </AppLayout>

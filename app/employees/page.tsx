@@ -14,6 +14,12 @@ import {
   resetEmployeePassword,
   type EmployeeItem,
 } from './actions';
+import {
+  getEmployeeRatesHistory,
+  upsertEmployeeRate,
+  deleteEmployeeRatePeriod,
+  type EmployeeRateHistoryItem,
+} from '@/app/rates/actions';
 import { getUserProfileAndKpi } from '@/app/profile/actions';
 import {
   Users,
@@ -30,6 +36,9 @@ import {
   Unlock,
   ShieldAlert,
   Palette,
+  Percent,
+  Trash2,
+  X,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 import { ColorPicker } from '@/components/ui/ColorPicker';
@@ -72,6 +81,14 @@ export default function EmployeesPage() {
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
   const [isUpdating, setIsUpdating] = React.useState(false);
+
+  // Персональные процентные ставки сотрудника (мотивация)
+  const [employeeRates, setEmployeeRates] = React.useState<EmployeeRateHistoryItem[]>([]);
+  const [isRatesLoading, setIsRatesLoading] = React.useState(false);
+  const [newRatePeriod, setNewRatePeriod] = React.useState(new Date().toISOString().substring(0, 7));
+  const [newConnPercent, setNewConnPercent] = React.useState<number>(50);
+  const [newMaintPercent, setNewMaintPercent] = React.useState<number>(10);
+  const [isAddingRate, setIsAddingRate] = React.useState(false);
 
   // Модальное окно сброса пароля
   const [isPasswordModalOpen, setIsPasswordModalOpen] = React.useState(false);
@@ -165,14 +182,79 @@ export default function EmployeesPage() {
   };
 
   // Открытие окна редактирования
-  const handleOpenEdit = (emp: EmployeeItem) => {
+  const handleOpenEdit = async (emp: EmployeeItem) => {
     setSelectedEmployee(emp);
     setEditFullName(emp.full_name);
     setEditPhone(emp.phone || '');
     setEditRole(emp.role);
     setEditColor(emp.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(emp.is_active);
+    setNewRatePeriod(new Date().toISOString().substring(0, 7));
+    setNewConnPercent(50);
+    setNewMaintPercent(10);
+    setEmployeeRates([]);
+    setIsRatesLoading(true);
     setIsEditModalOpen(true);
+
+    try {
+      const history = await getEmployeeRatesHistory(emp.user_id);
+      setEmployeeRates(history);
+      if (history.length > 0) {
+        setNewConnPercent(history[0].connection_percent);
+        setNewMaintPercent(history[0].maintenance_percent);
+      }
+    } catch {
+      showToast('Не удалось загрузить ставки сотрудника', 'error');
+    } finally {
+      setIsRatesLoading(false);
+    }
+  };
+
+  // Добавление / обновление ставки на период
+  const handleAddRatePeriod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployee) return;
+    if (newConnPercent < 0 || newMaintPercent < 0) {
+      showToast('Проценты ставок не могут быть отрицательными', 'error');
+      return;
+    }
+    setIsAddingRate(true);
+    try {
+      const res = await upsertEmployeeRate({
+        user_id: selectedEmployee.user_id,
+        connection_percent: newConnPercent,
+        maintenance_percent: newMaintPercent,
+        effective_from: newRatePeriod,
+      });
+      if (res.success) {
+        showToast(`Ставка для периода ${newRatePeriod} установлена`, 'success');
+        const history = await getEmployeeRatesHistory(selectedEmployee.user_id);
+        setEmployeeRates(history);
+      } else {
+        showToast(res.error || 'Ошибка при сохранении ставки', 'error');
+      }
+    } catch {
+      showToast('Сбой сервера при сохранении ставки', 'error');
+    } finally {
+      setIsAddingRate(false);
+    }
+  };
+
+  // Удаление периода ставки
+  const handleDeleteRatePeriod = async (rateId: string) => {
+    if (!selectedEmployee) return;
+    try {
+      const res = await deleteEmployeeRatePeriod(rateId);
+      if (res.success) {
+        showToast('Период ставки удален', 'success');
+        const history = await getEmployeeRatesHistory(selectedEmployee.user_id);
+        setEmployeeRates(history);
+      } else {
+        showToast(res.error || 'Ошибка при удалении ставки', 'error');
+      }
+    } catch {
+      showToast('Сбой сервера при удалении ставки', 'error');
+    }
   };
 
   // Сохранение изменений сотрудника
@@ -637,15 +719,28 @@ export default function EmployeesPage() {
         {isEditModalOpen && selectedEmployee && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
             <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              className="w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-5"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                  <Edit3 className="w-4 h-4 text-blue-500" strokeWidth={2} />
-                  <span>Редактирование сотрудника</span>
-                </h3>
-                <span className="text-xs text-zinc-400 font-mono">@{selectedEmployee.login}</span>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <Edit3 className="w-4 h-4" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      Редактирование сотрудника
+                    </h3>
+                    <p className="text-xs text-zinc-400 font-mono">@{selectedEmployee.login}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
+                >
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
               </div>
 
               <form onSubmit={handleUpdateSubmit} className="space-y-3.5 text-xs">
@@ -712,7 +807,7 @@ export default function EmployeesPage() {
                   />
                 </div>
 
-                <div className="flex items-center justify-end gap-2.5 pt-3">
+                <div className="flex items-center justify-end gap-2.5 pt-2">
                   <button
                     type="button"
                     onClick={() => setIsEditModalOpen(false)}
@@ -725,10 +820,125 @@ export default function EmployeesPage() {
                     disabled={isUpdating}
                     className="h-9 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
                   >
-                    {isUpdating ? 'Сохранение...' : 'Сохранить изменения'}
+                    {isUpdating ? 'Сохранение...' : 'Сохранить профиль'}
                   </button>
                 </div>
               </form>
+
+              {/* ВСТРОЕННАЯ СЕКЦИЯ ПЕРСОНАЛЬНЫХ СТАВОК (МОТИВАЦИЯ) */}
+              <div className="pt-4 border-t border-zinc-200/70 dark:border-zinc-800/70 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                    <Percent className="w-4 h-4" strokeWidth={1.75} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                      Процентные ставки сотрудника (История мотивации)
+                    </h4>
+                    <p className="text-[10px] text-zinc-400">
+                      Индивидуальные ставки бонуса за подключение и сопровождение по расчетным месяцам
+                    </p>
+                  </div>
+                </div>
+
+                {/* Добавление периода ставки */}
+                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/70 dark:border-zinc-700/70 space-y-2">
+                  <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 block">
+                    Установить ставку на расчетный период
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+                    <div className="sm:col-span-4">
+                      <label className="text-[10px] text-zinc-400 block mb-1">Период (YYYY-MM)</label>
+                      <input
+                        type="month"
+                        value={newRatePeriod}
+                        onChange={(e) => setNewRatePeriod(e.target.value)}
+                        className="w-full h-8 px-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="text-[10px] text-zinc-400 block mb-1">Подключение %</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={newConnPercent || ''}
+                        onChange={(e) => setNewConnPercent(parseFloat(e.target.value) || 0)}
+                        placeholder="50"
+                        className="w-full h-8 px-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="text-[10px] text-zinc-400 block mb-1">Сопровождение %</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={newMaintPercent || ''}
+                        onChange={(e) => setNewMaintPercent(parseFloat(e.target.value) || 0)}
+                        placeholder="10"
+                        className="w-full h-8 px-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <button
+                        type="button"
+                        disabled={isAddingRate}
+                        onClick={handleAddRatePeriod}
+                        className="w-full h-8 px-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1 shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+                        <span>{isAddingRate ? '...' : 'Ок'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Список периодов ставок */}
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-0.5">
+                  {isRatesLoading ? (
+                    <div className="p-4 text-center text-xs text-zinc-400">Загрузка истории ставок...</div>
+                  ) : employeeRates.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/50 dark:border-zinc-800">
+                      Индивидуальные ставки не заданы. Применяются базовые ставки системы (30% / 10%).
+                    </div>
+                  ) : (
+                    employeeRates.map((item) => (
+                      <div
+                        key={item.rate_id}
+                        className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/60 dark:border-zinc-700/60 flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-mono text-[11px] font-bold border border-purple-500/20">
+                            {item.effective_from}
+                          </span>
+                          <div className="flex items-center gap-2 font-mono">
+                            <span className="text-zinc-800 dark:text-zinc-200">
+                              Подкл: <b>{item.connection_percent}%</b>
+                            </span>
+                            <span className="text-zinc-400">•</span>
+                            <span className="text-zinc-800 dark:text-zinc-200">
+                              Сопров: <b>{item.maintenance_percent}%</b>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRatePeriod(item.rate_id)}
+                            className="w-6 h-6 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
+                            title="Удалить период ставки"
+                          >
+                            <Trash2 className="w-3 h-3" strokeWidth={1.75} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}

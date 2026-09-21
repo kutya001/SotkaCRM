@@ -13,6 +13,9 @@ import {
   getAccrualMonthsList,
   getActivePlansList,
   updateConnectionTariffAndPrice,
+  getPlanPriceHistory,
+  getPlanPriceAndRateOnDate,
+  updateConnectionRetroactive,
   type ConnectionItem,
   type ConnectionsStats,
 } from './actions';
@@ -34,6 +37,9 @@ import {
   Banknote,
   CheckCircle2,
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Clock,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -103,6 +109,16 @@ export default function ConnectionsPage() {
   const [editPlanId, setEditPlanId] = React.useState<string>('');
   const [editPlanPrice, setEditPlanPrice] = React.useState<number>(0);
   const [isUpdatingTariff, setIsUpdatingTariff] = React.useState(false);
+
+  // Редактирование задним числом и динамический пересчет
+  const [editAssignedDate, setEditAssignedDate] = React.useState<string>('');
+  const [planPricesHistory, setPlanPricesHistory] = React.useState<
+    { price_id: string; plan_id: string; price: number; effective_from: string; created_at: string }[]
+  >([]);
+  const [showPlanPriceHistory, setShowPlanPriceHistory] = React.useState(false);
+  const [isRecalculating, setIsRecalculating] = React.useState(false);
+  const [previewRatePercent, setPreviewRatePercent] = React.useState<number>(50);
+  const [previewBonus, setPreviewBonus] = React.useState<number>(0);
 
   // Модальное окно биллинга сопровождения
   const [isBillingModalOpen, setIsBillingModalOpen] = React.useState(false);
@@ -179,41 +195,95 @@ export default function ConnectionsPage() {
   };
 
   // Открытие модального окна для просмотра
-  const handleRowClick = (connection: ConnectionItem) => {
+  const handleRowClick = async (connection: ConnectionItem) => {
     setSelectedConnection(connection);
     setStatusToUpdate(connection.client_status);
     setEditPlanId(connection.plan_id || '');
     setEditPlanPrice(Number(connection.plan_price) || 0);
+    const initialDate = connection.assigned_at
+      ? connection.assigned_at.substring(0, 10)
+      : new Date().toISOString().substring(0, 10);
+    setEditAssignedDate(initialDate);
+    setPreviewRatePercent(Number(connection.connection_fee_percent) || 50);
+    setPreviewBonus(Number(connection.connection_fee_amount) || 0);
+    setShowPlanPriceHistory(false);
+    setPlanPricesHistory([]);
+
+    if (connection.plan_id) {
+      try {
+        const prices = await getPlanPriceHistory(connection.plan_id);
+        setPlanPricesHistory(prices);
+      } catch (e) {
+        console.error(e);
+      }
+    }
   };
 
-  // Сохранение нового тарифа и стоимости (строго admin)
-  const handleSaveTariffAndPrice = async () => {
+  // Динамический пересчет цены тарифа и ставки куратора при смене даты или тарифа
+  const handleDateOrPlanChange = async (newDate: string, newPlanId: string) => {
+    setEditAssignedDate(newDate);
+    setEditPlanId(newPlanId);
+
+    if (newPlanId) {
+      getPlanPriceHistory(newPlanId).then(setPlanPricesHistory).catch(console.error);
+    } else {
+      setPlanPricesHistory([]);
+    }
+
+    if (!selectedConnection) return;
+    setIsRecalculating(true);
+    try {
+      const res = await getPlanPriceAndRateOnDate({
+        plan_id: newPlanId,
+        manager_id: selectedConnection.manager_id,
+        date: newDate,
+      });
+      setEditPlanPrice(res.price);
+      setPreviewRatePercent(res.connection_fee_percent);
+      setPreviewBonus(res.connection_fee_amount);
+    } catch (err) {
+      console.error('Ошибка пересчета цены на дату:', err);
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
+  // Сохранение подключения задним числом с полным пересчетом (строго admin)
+  const handleSaveConnectionRetroactive = async () => {
     if (!selectedConnection) return;
     setIsUpdatingTariff(true);
     try {
-      const res = await updateConnectionTariffAndPrice(selectedConnection.connection_id, {
+      const res = await updateConnectionRetroactive({
+        connection_id: selectedConnection.connection_id,
+        assigned_at: editAssignedDate,
         plan_id: editPlanId || null,
         plan_price: editPlanPrice,
       });
 
       if (res.success) {
-        showToast('Тариф и начисление бонуса успешно обновлены', 'success');
+        showToast(
+          `Подключение успешно обновлено. Месяц: ${res.accrual_month}, Бонус: +${res.recalculatedBonus?.toLocaleString('ru-RU')} сом`,
+          'success'
+        );
         setSelectedConnection((prev) =>
           prev
             ? {
                 ...prev,
+                assigned_at: `${editAssignedDate}T12:00:00.000Z`,
+                accrual_month: res.accrual_month || prev.accrual_month,
                 plan_id: editPlanId || null,
-                plan_price: editPlanPrice,
+                plan_price: res.plan_price ?? editPlanPrice,
+                connection_fee_percent: res.connection_fee_percent ?? prev.connection_fee_percent,
                 connection_fee_amount: res.recalculatedBonus ?? prev.connection_fee_amount,
               }
             : null
         );
         fetchData();
       } else {
-        showToast(res.error || 'Ошибка при обновлении тарифа', 'error');
+        showToast(res.error || 'Ошибка при сохранении подключения', 'error');
       }
     } catch {
-      showToast('Не удалось обновить тариф подключения', 'error');
+      showToast('Не удалось обновить подключение', 'error');
     } finally {
       setIsUpdatingTariff(false);
     }
@@ -644,15 +714,38 @@ export default function ConnectionsPage() {
                 </div>
 
                 <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-1">
-                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
-                    Дата привязки
-                  </span>
-                  <p className="font-semibold text-zinc-900 dark:text-zinc-100 font-mono">
-                    <FormattedDate date={selectedConnection.assigned_at} type="date" />
-                  </p>
-                  <span className="text-[10px] text-zinc-400 block font-mono">
-                    Период: {selectedConnection.accrual_month}
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
+                      Дата подключения
+                    </span>
+                    {currentUserRole === 'admin' && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium">
+                        Admin
+                      </span>
+                    )}
+                  </div>
+                  {currentUserRole === 'admin' ? (
+                    <div className="space-y-1 pt-0.5">
+                      <input
+                        type="date"
+                        value={editAssignedDate}
+                        onChange={(e) => handleDateOrPlanChange(e.target.value, editPlanId)}
+                        className="w-full px-2 py-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <span className="text-[10px] text-zinc-400 block font-mono">
+                        Период: {editAssignedDate ? editAssignedDate.substring(0, 7) : selectedConnection.accrual_month}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="font-semibold text-zinc-900 dark:text-zinc-100 font-mono">
+                        <FormattedDate date={selectedConnection.assigned_at} type="date" />
+                      </p>
+                      <span className="text-[10px] text-zinc-400 block font-mono">
+                        Период: {selectedConnection.accrual_month}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -663,7 +756,7 @@ export default function ConnectionsPage() {
                     Тариф и расчет комиссии
                   </span>
                   <span className="font-mono text-[11px] text-zinc-400">
-                    Ставка: {selectedConnection.connection_fee_percent}%
+                    Ставка: {previewRatePercent}%
                   </span>
                 </div>
 
@@ -671,19 +764,28 @@ export default function ConnectionsPage() {
                   <div className="space-y-2.5 pt-1 border-t border-emerald-500/20 text-xs">
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
-                        <label className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
-                          Вид тарифа
-                        </label>
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                            Вид тарифа
+                          </label>
+                          {editPlanId && (
+                            <button
+                              type="button"
+                              onClick={() => setShowPlanPriceHistory(!showPlanPriceHistory)}
+                              className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5"
+                            >
+                              <span>История цен</span>
+                              {showPlanPriceHistory ? (
+                                <ChevronUp className="w-3 h-3" />
+                              ) : (
+                                <ChevronDown className="w-3 h-3" />
+                              )}
+                            </button>
+                          )}
+                        </div>
                         <select
                           value={editPlanId}
-                          onChange={(e) => {
-                            const newId = e.target.value;
-                            setEditPlanId(newId);
-                            const matched = activePlans.find((p) => p.plan_id === newId);
-                            if (matched) {
-                              setEditPlanPrice(matched.price);
-                            }
-                          }}
+                          onChange={(e) => handleDateOrPlanChange(editAssignedDate, e.target.value)}
                           className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         >
                           <option value="">Без тарифа</option>
@@ -704,32 +806,77 @@ export default function ConnectionsPage() {
                           step="0.01"
                           min="0"
                           value={editPlanPrice || ''}
-                          onChange={(e) => setEditPlanPrice(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setEditPlanPrice(val);
+                            setPreviewBonus(Math.round(((val * previewRatePercent) / 100) * 100) / 100);
+                          }}
                           className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
                     </div>
 
+                    {/* Выпадающая таблица действий тарифа по датам */}
+                    {showPlanPriceHistory && editPlanId && (
+                      <div className="p-2.5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 space-y-1.5 text-xs animate-in fade-in duration-150">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                          <span>Действие тарифа по датам:</span>
+                          <span className="text-[10px] text-zinc-400">Кликните, чтобы применить</span>
+                        </div>
+                        {planPricesHistory.length === 0 ? (
+                          <div className="p-2 text-center text-[11px] text-zinc-400">
+                            Периоды цен не зафиксированы
+                          </div>
+                        ) : (
+                          <div className="space-y-1 max-h-36 overflow-y-auto">
+                            {planPricesHistory.map((pp) => (
+                              <button
+                                key={pp.price_id}
+                                type="button"
+                                onClick={() => {
+                                  setEditPlanPrice(pp.price);
+                                  setPreviewBonus(Math.round(((pp.price * previewRatePercent) / 100) * 100) / 100);
+                                }}
+                                className="w-full px-2 py-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between text-left transition-colors font-mono text-xs"
+                              >
+                                <span className="text-zinc-600 dark:text-zinc-400">
+                                  с {pp.effective_from}:
+                                </span>
+                                <span className="font-bold text-zinc-900 dark:text-zinc-100">
+                                  {pp.price.toLocaleString('ru-RU')} сом
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between pt-2 border-t border-emerald-500/20">
                       <div>
                         <span className="text-[11px] text-zinc-500 dark:text-zinc-400 block">
-                          Бонус ({selectedConnection.connection_fee_percent}%):
+                          Бонус ({previewRatePercent}%):
                         </span>
                         <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
-                          +{(Math.round((editPlanPrice * Number(selectedConnection.connection_fee_percent)) / 100 * 100) / 100).toLocaleString('ru-RU')} сом
+                          +{previewBonus.toLocaleString('ru-RU')} сом
                         </span>
+                        {isRecalculating && (
+                          <span className="text-[10px] text-zinc-400 italic block">Пересчет...</span>
+                        )}
                       </div>
                       <button
                         type="button"
-                        onClick={handleSaveTariffAndPrice}
+                        onClick={handleSaveConnectionRetroactive}
                         disabled={
                           isUpdatingTariff ||
+                          isRecalculating ||
                           (editPlanId === (selectedConnection.plan_id || '') &&
-                            editPlanPrice === Number(selectedConnection.plan_price))
+                            editPlanPrice === Number(selectedConnection.plan_price) &&
+                            editAssignedDate === selectedConnection.assigned_at.substring(0, 10))
                         }
                         className="h-8 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        {isUpdatingTariff ? 'Сохранение...' : 'Сохранить тариф'}
+                        {isUpdatingTariff ? 'Сохранение...' : 'Сохранить (задним числом)'}
                       </button>
                     </div>
                   </div>

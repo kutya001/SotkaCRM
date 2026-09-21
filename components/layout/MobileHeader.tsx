@@ -2,8 +2,9 @@
 
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
-import { Search, SlidersHorizontal, X } from 'lucide-react';
+import { Search, SlidersHorizontal, X, Menu } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { MobileMenuDrawer } from '@/components/layout/MobileMenuDrawer';
 
 interface MobileHeaderProps {
   onOpenFilter?: () => void;
@@ -15,15 +16,13 @@ interface MobileHeaderProps {
 }
 
 const MODULE_TITLES: Record<string, string> = {
-  '/': 'Дашборд',
-  '/leads': 'Лиды (Воронка)',
+  '/': 'Главная',
+  '/leads': 'Лиды',
   '/sellers': 'База продавцов',
-  '/payments': 'Транзакции и платежи',
   '/connections': 'Подключения',
   '/payouts': 'Выплаты',
-  '/plans': 'Справочники и тарифы',
-  '/rates': 'Персональные ставки',
-  '/analytics': 'KPI и аналитика',
+  '/plans': 'Тарифы',
+  '/analytics': 'Аналитика',
   '/employees': 'Сотрудники',
   '/profile': 'Мой профиль',
 };
@@ -38,6 +37,7 @@ export function MobileHeader({
   const pathname = usePathname();
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
   const [isFilterModalOpen, setIsFilterModalOpen] = React.useState(false);
+  const [isMenuDrawerOpen, setIsMenuDrawerOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const currentTitle = MODULE_TITLES[pathname] || 'SotkaCRM';
@@ -58,15 +58,30 @@ export function MobileHeader({
   React.useEffect(() => {
     setIsSearchOpen(false);
     setIsFilterModalOpen(false);
+    setIsMenuDrawerOpen(false);
   }, [pathname]);
 
   return (
     <>
-      <header className="lg:hidden fixed top-3 left-3 right-3 z-40 h-14 rounded-2xl island-glass px-2.5 flex items-center justify-between shadow-md">
+      <MobileMenuDrawer
+        isOpen={isMenuDrawerOpen}
+        onClose={() => setIsMenuDrawerOpen(false)}
+      />
+
+      <header className="lg:hidden fixed top-3 left-3 right-3 z-40 h-14 rounded-2xl island-glass px-2 flex items-center justify-between shadow-md">
         {!isSearchOpen ? (
           <>
-            <div className="flex items-center gap-2 pl-1.5">
-              <h1 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 tracking-tight truncate max-w-[170px] sm:max-w-xs">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsMenuDrawerOpen(true)}
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors active:scale-95 flex-shrink-0"
+                title="Все разделы"
+                aria-label="Все разделы"
+              >
+                <Menu className="w-5 h-5" strokeWidth={1.75} />
+              </button>
+              <h1 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 tracking-tight truncate max-w-[150px] sm:max-w-xs">
                 {currentTitle}
               </h1>
             </div>

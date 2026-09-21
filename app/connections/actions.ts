@@ -437,3 +437,233 @@ export async function updateConnectionTariffAndPrice(
     return { success: false, error: err.message || 'Ошибка обновления тарифа' };
   }
 }
+
+/**
+ * Получение истории действия цен тарифа по датам (plan_prices)
+ */
+export async function getPlanPriceHistory(planId: string): Promise<
+  { price_id: string; plan_id: string; price: number; effective_from: string; created_at: string }[]
+> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('plan_prices')
+    .select('*')
+    .eq('plan_id', planId)
+    .order('effective_from', { ascending: false });
+
+  if (error || !data) return [];
+  return data.map((d) => ({
+    price_id: d.price_id,
+    plan_id: d.plan_id,
+    price: Number(d.price),
+    effective_from: d.effective_from,
+    created_at: d.created_at,
+  }));
+}
+
+/**
+ * Получение цены тарифа и ставки сотрудника на определенную дату подключения
+ * Используется для динамического предпросмотра при смене даты задним числом
+ */
+export async function getPlanPriceAndRateOnDate(params: {
+  plan_id: string;
+  manager_id: string;
+  date: string; // YYYY-MM-DD
+}): Promise<{
+  price: number;
+  connection_fee_percent: number;
+  connection_fee_amount: number;
+  maintenance_percent: number;
+  maintenance_amount: number;
+}> {
+  const supabase = await createClient();
+  const pDate = params.date.substring(0, 10);
+  const pMonth = params.date.substring(0, 7);
+
+  let price = 0;
+  if (params.plan_id) {
+    const { data: rpcPrice } = await supabase.rpc('get_plan_price_on_date', {
+      p_plan_id: params.plan_id,
+      p_date: pDate,
+    });
+    if (rpcPrice !== null && rpcPrice !== undefined && Number(rpcPrice) > 0) {
+      price = Number(rpcPrice);
+    } else {
+      const { data: planData } = await supabase
+        .from('plans')
+        .select('price')
+        .eq('plan_id', params.plan_id)
+        .maybeSingle();
+      if (planData) price = Number(planData.price);
+    }
+  }
+
+  let connectionFeePercent = 50;
+  let maintenancePercent = 10;
+  if (params.manager_id) {
+    const { data: rpcRate } = await supabase.rpc('get_employee_rate_on_month', {
+      p_user_id: params.manager_id,
+      p_month: pMonth,
+    });
+    if (rpcRate && typeof rpcRate === 'object' && 'connection_percent' in (rpcRate as any)) {
+      connectionFeePercent = Number((rpcRate as any).connection_percent) || 50;
+      maintenancePercent = Number((rpcRate as any).maintenance_percent) || 10;
+    }
+  }
+
+  const connectionFeeAmount = Math.round(((price * connectionFeePercent) / 100) * 100) / 100;
+  const maintenanceAmount = Math.round(((price * maintenancePercent) / 100) * 100) / 100;
+
+  return {
+    price,
+    connection_fee_percent: connectionFeePercent,
+    connection_fee_amount: connectionFeeAmount,
+    maintenance_percent: maintenancePercent,
+    maintenance_amount: maintenanceAmount,
+  };
+}
+
+/**
+ * Обновление подключения задним числом с автоматическим пересчетом (строго admin)
+ * Пересчитывает: цену тарифа на дату подключения, ставку куратора на месяц подключения,
+ * начисленный бонус connection_fee_amount и запись сопровождения client_maintenance
+ */
+export async function updateConnectionRetroactive(params: {
+  connection_id: string;
+  assigned_at: string; // YYYY-MM-DD
+  plan_id: string | null;
+  plan_price?: number;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  recalculatedBonus?: number;
+  accrual_month?: string;
+  plan_price?: number;
+  connection_fee_percent?: number;
+}> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return { success: false, error: 'Пользователь не аутентифицирован' };
+    }
+
+    const { data: profile } = await supabase
+      .from('users')
+      .select('role')
+      .eq('auth_id', user.id)
+      .single();
+
+    if (!profile || profile.role !== 'admin') {
+      return {
+        success: false,
+        error: 'Редактирование параметров подключения разрешено только администратору',
+      };
+    }
+
+    const { data: conn, error: connErr } = await supabase
+      .from('connections')
+      .select('*')
+      .eq('connection_id', params.connection_id)
+      .single();
+
+    if (connErr || !conn) {
+      return { success: false, error: 'Подключение не найдено' };
+    }
+
+    const pDate = params.assigned_at.substring(0, 10);
+    const newAccrualMonth = pDate.substring(0, 7);
+    const newAssignedAt = `${pDate}T12:00:00.000Z`;
+    const targetPlanId = params.plan_id !== undefined ? params.plan_id : conn.plan_id;
+
+    // Определяем стоимость тарифа на эту дату
+    let targetPrice = Number(params.plan_price) || 0;
+    if (!targetPrice && targetPlanId) {
+      const { data: rpcPrice } = await supabase.rpc('get_plan_price_on_date', {
+        p_plan_id: targetPlanId,
+        p_date: pDate,
+      });
+      if (rpcPrice && Number(rpcPrice) > 0) {
+        targetPrice = Number(rpcPrice);
+      } else {
+        const { data: planData } = await supabase
+          .from('plans')
+          .select('price')
+          .eq('plan_id', targetPlanId)
+          .maybeSingle();
+        if (planData) targetPrice = Number(planData.price);
+      }
+    }
+
+    // Определяем ставку сотрудника на новый месяц
+    let feePercent = Number(conn.connection_fee_percent) || 50;
+    let maintPercent = 10;
+    if (conn.manager_id) {
+      const { data: rpcRate } = await supabase.rpc('get_employee_rate_on_month', {
+        p_user_id: conn.manager_id,
+        p_month: newAccrualMonth,
+      });
+      if (rpcRate && typeof rpcRate === 'object' && 'connection_percent' in (rpcRate as any)) {
+        feePercent = Number((rpcRate as any).connection_percent) || 50;
+        maintPercent = Number((rpcRate as any).maintenance_percent) || 10;
+      }
+    }
+
+    const recalculatedBonus = Math.round(((targetPrice * feePercent) / 100) * 100) / 100;
+    const recalculatedMaint = Math.round(((targetPrice * maintPercent) / 100) * 100) / 100;
+
+    const { error: updateError } = await supabase
+      .from('connections')
+      .update({
+        assigned_at: newAssignedAt,
+        accrual_month: newAccrualMonth,
+        plan_id: targetPlanId,
+        plan_price: targetPrice,
+        connection_fee_percent: feePercent,
+        connection_fee_amount: recalculatedBonus,
+      })
+      .eq('connection_id', params.connection_id);
+
+    if (updateError) {
+      return { success: false, error: updateError.message };
+    }
+
+    // Обновляем начисление сопровождения
+    const { data: existingMaint } = await supabase
+      .from('client_maintenance')
+      .select('maintenance_id')
+      .eq('connection_id', params.connection_id)
+      .eq('accrual_month', conn.accrual_month);
+
+    if (existingMaint && existingMaint.length > 0) {
+      await supabase
+        .from('client_maintenance')
+        .update({
+          accrual_month: newAccrualMonth,
+          plan_price: targetPrice,
+          maintenance_percent: maintPercent,
+          maintenance_amount: recalculatedMaint,
+        })
+        .eq('connection_id', params.connection_id)
+        .eq('accrual_month', conn.accrual_month);
+    }
+
+    revalidatePath('/connections');
+    revalidatePath('/payouts');
+    revalidatePath('/analytics');
+    revalidatePath('/');
+
+    return {
+      success: true,
+      recalculatedBonus,
+      accrual_month: newAccrualMonth,
+      plan_price: targetPrice,
+      connection_fee_percent: feePercent,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка обновления подключения' };
+  }
+}

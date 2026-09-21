@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  LayoutDashboard,
   UserCheck,
   Store,
   Link2,
@@ -39,6 +40,12 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   {
+    title: 'Главная',
+    href: '/',
+    icon: LayoutDashboard,
+    roles: ['admin', 'consultant'],
+  },
+  {
     title: 'Лиды',
     href: '/leads',
     icon: UserCheck,
@@ -69,7 +76,7 @@ const NAV_ITEMS: NavItem[] = [
     roles: ['admin'],
   },
   {
-    title: 'Справочники',
+    title: 'Тарифы',
     href: '/plans',
     icon: BookOpen,
     roles: ['admin'],

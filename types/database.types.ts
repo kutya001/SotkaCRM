@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
       client_maintenance: {
@@ -429,6 +434,48 @@ export type Database = {
         }
         Relationships: []
       }
+      plan_prices: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          plan_id: string
+          price: number
+          price_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          plan_id: string
+          price: number
+          price_id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          plan_id?: string
+          price?: number
+          price_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_prices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "plan_prices_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["plan_id"]
+          },
+        ]
+      }
       plans: {
         Row: {
           billing_period: string
@@ -458,41 +505,6 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
-      }
-      plan_prices: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          effective_from: string
-          plan_id: string
-          price: number
-          price_id: string
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          effective_from?: string
-          plan_id: string
-          price: number
-          price_id?: string
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          effective_from?: string
-          plan_id?: string
-          price?: number
-          price_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "plan_prices_plan_id_fkey"
-            columns: ["plan_id"]
-            isOneToOne: false
-            referencedRelation: "plans"
-            referencedColumns: ["plan_id"]
-          },
-        ]
       }
       plans_history: {
         Row: {
@@ -647,70 +659,65 @@ export type Database = {
     Functions: {
       create_crm_user: {
         Args: {
+          p_full_name: string
           p_login: string
           p_password: string
-          p_full_name: string
-          p_phone?: string | null
+          p_phone?: string
           p_role?: Database["public"]["Enums"]["user_role"]
         }
         Returns: string
+      }
+      get_analytics_summary: {
+        Args: { p_end_date?: string; p_start_date?: string }
+        Returns: Json
       }
       get_current_crm_user_id: { Args: never; Returns: string }
       get_current_user_role: {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]
       }
-      get_synthetic_email: {
-        Args: { p_login: string }
-        Returns: string
-      }
-      link_lead_to_seller: {
-        Args: {
-          p_lead_id: string
-          p_seller_phone: string
-          p_manager_id: string | null
-          p_assigned_by: string
-        }
-        Returns: { success: boolean; connection_id?: string; error?: string }
-      }
-      get_leads_funnel_stats: {
-        Args: Record<string, never>
-        Returns: {
-          total: number
-          open: number
-          processed: number
-          assigned: number
-          signed: number
-          cancelled: number
-        }
-      }
-      get_sellers_kpi_stats: {
-        Args: Record<string, never>
-        Returns: {
-          total: number
-          active: number
-          pendingModeration: number
-          totalBalance: number
-          assigned: number
-        }
-      }
-      get_plan_price_on_date: {
-        Args: {
-          p_plan_id: string
-          p_date: string
-        }
-        Returns: number
-      }
       get_employee_rate_on_month: {
-        Args: {
-          p_user_id: string
-          p_month: string
-        }
+        Args: { p_month?: string; p_user_id: string }
         Returns: {
           connection_percent: number
           maintenance_percent: number
-        }
+        }[]
       }
+      get_leads_funnel_stats: { Args: never; Returns: Json }
+      get_payouts_summary: {
+        Args: { p_accrual_month?: string; p_user_id?: string }
+        Returns: Json
+      }
+      get_plan_price_on_date: {
+        Args: { p_date?: string; p_plan_id: string }
+        Returns: number
+      }
+      get_sellers_kpi_stats: { Args: never; Returns: Json }
+      get_synthetic_email: { Args: { p_login: string }; Returns: string }
+      link_lead_to_seller: {
+        Args: {
+          p_assigned_by?: string
+          p_lead_id: string
+          p_manager_id?: string
+          p_seller_phone: string
+        }
+        Returns: Json
+      }
+      process_employee_payout_atomic: {
+        Args: {
+          p_accrual_month: string
+          p_amount: number
+          p_comment: string
+          p_created_by: string
+          p_payment_method: string
+          p_payout_category: Database["public"]["Enums"]["payout_category_type"]
+          p_payout_date: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       client_lifecycle_status:
@@ -876,7 +883,7 @@ export const Constants = {
       user_role: ["admin", "consultant", "smm"],
     },
   },
-} as const;
+} as const
 
 export type UserRole = Database['public']['Enums']['user_role'];
 export type LeadStatus = Database['public']['Enums']['lead_status'];
@@ -884,4 +891,3 @@ export type ClientLifecycleStatus = Database['public']['Enums']['client_lifecycl
 export type MaintenanceStatus = Database['public']['Enums']['maintenance_status'];
 export type PayoutCategoryType = Database['public']['Enums']['payout_category_type'];
 export type SellerModerationStatus = Database['public']['Enums']['seller_moderation_status'];
-

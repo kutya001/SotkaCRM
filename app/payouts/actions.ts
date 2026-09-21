@@ -87,7 +87,7 @@ export async function getPayouts(
 
   const {
     page = 1,
-    pageSize = 1000,
+    pageSize = 50,
     search = '',
     accrualMonth,
     category,
@@ -169,7 +169,7 @@ export async function getPayouts(
 }
 
 /**
- * Расчет финансовых показателей фонда выплат
+ * Расчет финансовых показателей фонда выплат через оптимизированный PostgreSQL RPC get_payouts_summary
  */
 export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsStats> {
   const supabase = await createClient();
@@ -192,43 +192,22 @@ export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsSta
     return { totalPaid: 0, totalAdvances: 0, totalDeductions: 0, transactionsCount: 0 };
   }
 
-  let query = supabase.from('employee_payouts').select('amount, payout_category, accrual_month');
+  const { data: summary, error } = await supabase.rpc('get_payouts_summary', {
+    p_accrual_month: accrualMonth && accrualMonth !== 'all' ? accrualMonth : undefined,
+    p_user_id: profile.role !== 'admin' ? profile.user_id : undefined,
+  });
 
-  if (profile.role !== 'admin') {
-    query = query.eq('user_id', profile.user_id);
-  }
-
-  if (accrualMonth && accrualMonth !== 'all') {
-    query = query.eq('accrual_month', accrualMonth);
-  }
-
-  const { data, error } = await query;
-
-  if (error || !data) {
+  if (error || !summary) {
+    console.error('Error in get_payouts_summary RPC:', error);
     return { totalPaid: 0, totalAdvances: 0, totalDeductions: 0, transactionsCount: 0 };
   }
 
-  let totalPaid = 0;
-  let totalAdvances = 0;
-  let totalDeductions = 0;
-
-  for (const row of data) {
-    const amt = Number(row.amount) || 0;
-    if (row.payout_category === 'удержание') {
-      totalDeductions += amt;
-    } else if (row.payout_category === 'аванс') {
-      totalAdvances += amt;
-      totalPaid += amt;
-    } else {
-      totalPaid += amt;
-    }
-  }
-
+  const res = summary as any;
   return {
-    totalPaid: Math.round(totalPaid * 100) / 100,
-    totalAdvances: Math.round(totalAdvances * 100) / 100,
-    totalDeductions: Math.round(totalDeductions * 100) / 100,
-    transactionsCount: data.length,
+    totalPaid: Number(res.totalPaid) || 0,
+    totalAdvances: Number(res.totalAdvances) || 0,
+    totalDeductions: Number(res.totalDeductions) || 0,
+    transactionsCount: Number(res.transactionsCount) || 0,
   };
 }
 
@@ -244,6 +223,7 @@ export interface CreatePayoutInput {
 
 /**
  * Создание записи о выплате сотруднику (строго роль admin)
+ * Выполняется через атомарную функцию process_employee_payout_atomic с блокировкой FOR UPDATE
  */
 export async function createPayout(
   input: CreatePayoutInput
@@ -258,19 +238,22 @@ export async function createPayout(
 
     const valid = parsed.data;
 
-    const { error } = await supabase.from('employee_payouts').insert({
-      user_id: valid.user_id,
-      accrual_month: valid.accrual_month,
-      payout_date: valid.payout_date,
-      amount: roundMoney(valid.amount),
-      payout_category: valid.payout_category,
-      payment_method: valid.payment_method.trim(),
-      comment: valid.comment?.trim() || null,
-      created_by: profile.user_id,
+    const { data, error } = await supabase.rpc('process_employee_payout_atomic', {
+      p_user_id: valid.user_id,
+      p_accrual_month: valid.accrual_month,
+      p_payout_date: valid.payout_date,
+      p_amount: roundMoney(valid.amount),
+      p_payout_category: valid.payout_category,
+      p_payment_method: valid.payment_method.trim(),
+      p_comment: valid.comment?.trim() || '',
+      p_created_by: profile.user_id,
     });
 
     if (error) {
-      console.error('Error creating payout:', error);
+      console.error('Error creating payout atomically:', error);
+      if (error.code === '23505' || error.message.includes('unique') || error.message.includes('idx_payouts_unique_salary_period')) {
+        return { success: false, error: 'За данный расчетный месяц сотруднику уже оформлена выплата зарплаты' };
+      }
       return { success: false, error: error.message };
     }
 

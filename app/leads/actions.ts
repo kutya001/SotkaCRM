@@ -73,7 +73,7 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
 
   const {
     page = 1,
-    pageSize = 1000,
+    pageSize = 50,
     search = '',
     status,
     sortBy = 'created_at',
@@ -84,7 +84,19 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
       .from('leads')
       .select(
         `
-          *,
+          lead_id,
+          client_name,
+          phone,
+          country_code,
+          status,
+          instagram,
+          comment,
+          created_by,
+          assigned_to,
+          seller_phone,
+          linked_at,
+          created_at,
+          updated_at,
           assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
           created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
         `,
@@ -419,7 +431,6 @@ export async function updateLeadStatus(
       return { success: false, error: error.message };
     }
 
-    revalidatePath('/leads');
     return { success: true };
   } catch (err: any) {
     console.error('Unhandled error in updateLeadStatus:', err);
@@ -522,13 +533,14 @@ export async function getLeadsStats() {
   try {
     const { data: rpcStats, error: rpcError } = await supabase.rpc('get_leads_funnel_stats');
     if (!rpcError && rpcStats) {
+      const stats = rpcStats as Record<string, any>;
       return {
-        total: Number(rpcStats.total) || 0,
-        open: Number(rpcStats.open) || 0,
-        processed: Number(rpcStats.processed) || 0,
-        assigned: Number(rpcStats.assigned) || 0,
-        signed: Number(rpcStats.signed) || 0,
-        cancelled: Number(rpcStats.cancelled) || 0,
+        total: Number(stats.total) || 0,
+        open: Number(stats.open) || 0,
+        processed: Number(stats.processed) || 0,
+        assigned: Number(stats.assigned) || 0,
+        signed: Number(stats.signed) || 0,
+        cancelled: Number(stats.cancelled) || 0,
       };
     }
   } catch (rpcErr) {

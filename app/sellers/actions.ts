@@ -104,7 +104,7 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
 
   const {
     page = 1,
-    pageSize = 1000,
+    pageSize = 50,
     search,
     moderation,
     isActive,
@@ -113,7 +113,27 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     sortOrder = 'desc',
   } = params;
 
-  let query = supabase.from('sellers').select('*', { count: 'exact' });
+  let query = supabase.from('sellers').select(
+    `
+      seller_phone,
+      seller_name,
+      store,
+      balance,
+      plan_name,
+      plan_id,
+      moderation,
+      is_active,
+      outlets_count,
+      employees_count,
+      brands,
+      organization_id,
+      registered_at,
+      last_activity,
+      manager_id,
+      synced_at
+    `,
+    { count: 'exact' }
+  );
 
   // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только закрепленных за ним продавцов
   if (profile.role === 'consultant') {
@@ -141,10 +161,8 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
   }
 
   // Фильтр по активности
-  if (isActive === 'true') {
-    query = query.eq('is_active', true);
-  } else if (isActive === 'false') {
-    query = query.eq('is_active', false);
+  if (isActive && isActive !== 'all') {
+    query = query.eq('is_active', isActive === 'true');
   }
 
   // Сортировка
@@ -171,46 +189,44 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     };
   }
 
-  // Обогащение данными менеджеров
+  // Параллельное обогащение данными менеджеров и связанных лидов
   const managerIds = Array.from(
     new Set((sellersData || []).map((s) => s.manager_id).filter((id): id is string => Boolean(id)))
   );
+  const sellerPhones = (sellersData || []).map((s) => s.seller_phone);
+
+  const [managersResult, leadsResult] = await Promise.all([
+    managerIds.length > 0
+      ? supabase
+          .from('users')
+          .select('user_id, full_name, role, login, color')
+          .in('user_id', managerIds)
+      : Promise.resolve({ data: null }),
+    sellerPhones.length > 0
+      ? supabase
+          .from('leads')
+          .select('lead_id, client_name, status, created_at, seller_phone')
+          .in('seller_phone', sellerPhones)
+      : Promise.resolve({ data: null }),
+  ]);
 
   const managersMap = new Map<string, { user_id: string; full_name: string; role: string; login: string; color?: string }>();
-
-  if (managerIds.length > 0) {
-    const { data: managers } = await supabase
-      .from('users')
-      .select('user_id, full_name, role, login, color')
-      .in('user_id', managerIds);
-
-    if (managers) {
-      managers.forEach((m) => managersMap.set(m.user_id, m));
-    }
+  if (managersResult.data) {
+    managersResult.data.forEach((m) => managersMap.set(m.user_id, m));
   }
 
-  // Обогащение данными связанных лидов по seller_phone
-  const sellerPhones = (sellersData || []).map((s) => s.seller_phone);
   const leadsMap = new Map<string, LinkedLeadInfo>();
-
-  if (sellerPhones.length > 0) {
-    const { data: leadsData } = await supabase
-      .from('leads')
-      .select('lead_id, client_name, status, created_at, seller_phone')
-      .in('seller_phone', sellerPhones);
-
-    if (leadsData) {
-      leadsData.forEach((l) => {
-        if (l.seller_phone) {
-          leadsMap.set(l.seller_phone, {
-            lead_id: l.lead_id,
-            client_name: l.client_name,
-            status: l.status,
-            created_at: l.created_at,
-          });
-        }
-      });
-    }
+  if (leadsResult.data) {
+    leadsResult.data.forEach((l) => {
+      if (l.seller_phone) {
+        leadsMap.set(l.seller_phone, {
+          lead_id: l.lead_id,
+          client_name: l.client_name,
+          status: l.status,
+          created_at: l.created_at,
+        });
+      }
+    });
   }
 
   const enrichedSellers: SellerItem[] = (sellersData || []).map((seller) => ({
@@ -237,12 +253,13 @@ export async function getSellersStats(): Promise<SellersStats> {
   try {
     const { data: rpcStats, error: rpcError } = await supabase.rpc('get_sellers_kpi_stats');
     if (!rpcError && rpcStats) {
+      const stats = rpcStats as Record<string, any>;
       return {
-        total: Number(rpcStats.total) || 0,
-        active: Number(rpcStats.active) || 0,
-        pendingModeration: Number(rpcStats.pendingModeration) || 0,
-        totalBalance: Number(rpcStats.totalBalance) || 0,
-        assigned: Number(rpcStats.assigned) || 0,
+        total: Number(stats.total) || 0,
+        active: Number(stats.active) || 0,
+        pendingModeration: Number(stats.pendingModeration) || 0,
+        totalBalance: Number(stats.totalBalance) || 0,
+        assigned: Number(stats.assigned) || 0,
       };
     }
   } catch (rpcErr) {
@@ -513,7 +530,7 @@ export async function linkSellerToLeadAction(
     const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
       p_lead_id: leadId,
       p_seller_phone: sellerPhone,
-      p_manager_id: null,
+      p_manager_id: undefined,
       p_assigned_by: profile.user_id,
     });
 

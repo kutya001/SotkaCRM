@@ -176,7 +176,7 @@ export async function createCrmUser(
     p_login: input.login.trim(),
     p_password: input.password,
     p_full_name: input.full_name.trim(),
-    p_phone: input.phone?.trim() || null,
+    p_phone: input.phone?.trim() || undefined,
     p_role: input.role,
   });
 

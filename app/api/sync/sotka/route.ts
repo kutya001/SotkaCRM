@@ -125,8 +125,15 @@ async function handleSync(request: Request) {
     let sellerOffset = 0;
     const sellerLimit = 100;
     let hasMoreSellers = true;
+    const CHUNK_SIZE = 200;
+    const MAX_EXECUTION_MS = 12000; // 12 секундный защитный барьер для Serverless (Vercel)
 
     while (hasMoreSellers) {
+      if (Date.now() - startTime > MAX_EXECUTION_MS) {
+        warnings.push('Лимит времени Serverless (12 сек): синхронизация продавцов приостановлена.');
+        break;
+      }
+
       const { items, total } = await fetchSellersOverview(token, sellerOffset, sellerLimit);
 
       if (items.length === 0) {
@@ -134,7 +141,8 @@ async function handleSync(request: Request) {
         break;
       }
 
-      // Предварительная регистрация новых/неизвестных тарифов для гарантии целостности внешнего ключа
+      // 3.1. Пакетная предварительная регистрация новых/неизвестных тарифов
+      const plansToUpsertMap = new Map<string, Database['public']['Tables']['plans']['Insert']>();
       for (const item of items) {
         const rawPlan = item.plans?.[0];
         if (
@@ -151,26 +159,28 @@ async function handleSync(request: Request) {
               .replace(/[^A-Z0-9А-ЯЁ]/gi, '')
               .slice(0, 16);
             const newPlanId = `PLN-${cleanSlug || 'CUSTOM'}`;
-            try {
-              await adminSupabase.from('plans').upsert(
-                {
-                  plan_id: newPlanId,
-                  plan_name: cleanName,
-                  price: 2500.0,
-                  billing_period: 'Месяц',
-                  description: 'Автоматически зарегистрирован при синхронизации Sotka API',
-                  is_active: true,
-                  updated_at: new Date().toISOString(),
-                },
-                { onConflict: 'plan_id' }
-              );
-              validPlanIds.add(newPlanId);
-              dbPlansMap.set(newPlanId.toLowerCase(), newPlanId);
-              dbPlansMap.set(cleanName.toLowerCase(), newPlanId);
-            } catch (planErr) {
-              console.warn('[Sotka Sync] Не удалось автоматически создать тариф:', planErr);
-            }
+            plansToUpsertMap.set(newPlanId, {
+              plan_id: newPlanId,
+              plan_name: cleanName,
+              price: 2500.0,
+              billing_period: 'Месяц',
+              description: 'Автоматически зарегистрирован при синхронизации Sotka API',
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            });
+            validPlanIds.add(newPlanId);
+            dbPlansMap.set(newPlanId.toLowerCase(), newPlanId);
+            dbPlansMap.set(cleanName.toLowerCase(), newPlanId);
           }
+        }
+      }
+
+      if (plansToUpsertMap.size > 0) {
+        try {
+          const batchPlans = Array.from(plansToUpsertMap.values());
+          await adminSupabase.from('plans').upsert(batchPlans, { onConflict: 'plan_id' });
+        } catch (planErr) {
+          console.warn('[Sotka Sync] Не удалось пакетно создать тарифы:', planErr);
         }
       }
 
@@ -229,13 +239,17 @@ async function handleSync(request: Request) {
       }
       const uniqueSellers = Array.from(sellersMap.values());
 
-      const { error: sellersUpsertError } = await adminSupabase
-        .from('sellers')
-        .upsert(uniqueSellers, { onConflict: 'seller_phone' });
+      // 3.2. Чанкинг вставки продавцов порциями по CHUNK_SIZE записей
+      for (let i = 0; i < uniqueSellers.length; i += CHUNK_SIZE) {
+        const chunk = uniqueSellers.slice(i, i + CHUNK_SIZE);
+        const { error: sellersUpsertError } = await adminSupabase
+          .from('sellers')
+          .upsert(chunk, { onConflict: 'seller_phone' });
 
-      if (sellersUpsertError) {
-        console.error('[Sotka Sync] Ошибка upsert продавцов:', sellersUpsertError);
-        throw new Error(`Ошибка сохранения продавцов: ${sellersUpsertError.message}`);
+        if (sellersUpsertError) {
+          console.error('[Sotka Sync] Ошибка upsert продавцов:', sellersUpsertError);
+          throw new Error(`Ошибка сохранения продавцов: ${sellersUpsertError.message}`);
+        }
       }
 
       syncedSellersCount += uniqueSellers.length;
@@ -253,6 +267,11 @@ async function handleSync(request: Request) {
       let hasMoreTx = true;
 
       while (hasMoreTx) {
+        if (Date.now() - startTime > MAX_EXECUTION_MS) {
+          warnings.push('Лимит времени Serverless (12 сек): синхронизация транзакций приостановлена.');
+          break;
+        }
+
         const { items, total } = await fetchTransactions(token, txOffset, txLimit);
 
         if (items.length === 0) {
@@ -281,20 +300,29 @@ async function handleSync(request: Request) {
         });
 
         // Дедупликация платежей по payment_id в рамках текущего батча
-        // Исключает ошибку PostgreSQL 21000 ("ON CONFLICT DO UPDATE command cannot affect row a second time")
         const paymentsMap = new Map<string, Database['public']['Tables']['payments']['Insert']>();
         for (const p of paymentsToUpsert) {
           paymentsMap.set(p.payment_id, p);
         }
         const uniquePayments = Array.from(paymentsMap.values());
 
-        const { error: paymentsUpsertError } = await adminSupabase
-          .from('payments')
-          .upsert(uniquePayments, { onConflict: 'payment_id' });
+        // Чанкинг вставки платежей порциями по CHUNK_SIZE
+        let hasChunkError = false;
+        for (let i = 0; i < uniquePayments.length; i += CHUNK_SIZE) {
+          const chunk = uniquePayments.slice(i, i + CHUNK_SIZE);
+          const { error: paymentsUpsertError } = await adminSupabase
+            .from('payments')
+            .upsert(chunk, { onConflict: 'payment_id' });
 
-        if (paymentsUpsertError) {
-          console.error('[Sotka Sync] Ошибка upsert платежей:', paymentsUpsertError);
-          warnings.push(`Ошибка сохранения порции платежей: ${paymentsUpsertError.message}`);
+          if (paymentsUpsertError) {
+            console.error('[Sotka Sync] Ошибка upsert платежей:', paymentsUpsertError);
+            warnings.push(`Ошибка сохранения порции платежей: ${paymentsUpsertError.message}`);
+            hasChunkError = true;
+            break;
+          }
+        }
+
+        if (hasChunkError) {
           break;
         }
 
@@ -309,6 +337,7 @@ async function handleSync(request: Request) {
       console.warn('[Sotka Sync] Выгрузка транзакций завершилась с предупреждением:', txErr?.message);
       warnings.push(`Транзакции не синхронизированы: ${txErr?.message || 'Маршрут недоступен'}`);
     }
+
 
     const durationMs = Date.now() - startTime;
     console.info(

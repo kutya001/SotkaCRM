@@ -22,7 +22,8 @@ import {
   Phone,
   GripVertical,
 } from 'lucide-react';
-import { useToast } from '@/components/ui/Toast';
+import { useToast, type ToastType } from '@/components/ui/Toast';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export type FilterOperator = 'equals' | 'contains' | 'gt' | 'lt' | 'neq';
 
@@ -105,6 +106,415 @@ export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
     dotColor: 'bg-rose-500',
   },
 ];
+
+interface DataJournalTableRowProps<T extends Record<string, any>> {
+  row: T;
+  rowKey: string;
+  orderedColumns: ColumnDef<T>[];
+  initialColumns: ColumnDef<T>[];
+  onRowClick?: (row: T) => void;
+  onStatusChange?: (row: T, newStatus: string) => void;
+  customRowActions?: (row: T) => React.ReactNode;
+  handleCopy: (text: string, rowKey: string) => void;
+  copiedKey: string | null;
+  activeStatusDropdownRowKey: string | null;
+  setActiveStatusDropdownRowKey: (key: string | null) => void;
+  statusDropdownRef: React.RefObject<HTMLDivElement | null>;
+  showToast: (msg: string, type?: ToastType) => void;
+}
+
+const DataJournalTableRowInner = <T extends Record<string, any>>({
+  row,
+  rowKey,
+  orderedColumns,
+  initialColumns,
+  onRowClick,
+  onStatusChange,
+  customRowActions,
+  handleCopy,
+  copiedKey,
+  activeStatusDropdownRowKey,
+  setActiveStatusDropdownRowKey,
+  statusDropdownRef,
+  showToast,
+}: DataJournalTableRowProps<T>) => {
+  return (
+    <tr
+      key={rowKey}
+      className="group hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 transition-colors"
+    >
+      {orderedColumns.map((col) => {
+        const val = row[col.key];
+
+        if (col.renderCell) {
+          return (
+            <td
+              key={col.key}
+              onClick={() => onRowClick && onRowClick(row)}
+              className="px-4 py-3 truncate cursor-pointer"
+            >
+              {col.renderCell(row, val)}
+            </td>
+          );
+        }
+
+        if (col.type === 'status') {
+          const currentOption =
+            (col.statusOptions || PIPELINE_STATUS_OPTIONS).find(
+              (o) => o.value === val
+            ) || {
+              value: String(val),
+              label: String(val),
+              colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
+            };
+
+          if (!onStatusChange) {
+            return (
+              <td key={col.key} className="px-4 py-3">
+                <span
+                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass}`}
+                >
+                  {currentOption.label}
+                </span>
+              </td>
+            );
+          }
+
+          const isDropdownOpen =
+            activeStatusDropdownRowKey === `${rowKey}_${col.key}`;
+
+          return (
+            <td key={col.key} className="px-4 py-3 relative">
+              <div className="inline-block relative">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveStatusDropdownRowKey(
+                      isDropdownOpen ? null : `${rowKey}_${col.key}`
+                    );
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass} hover:opacity-90 transition-all`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      currentOption.dotColor || 'bg-current'
+                    }`}
+                  />
+                  <span>{currentOption.label}</span>
+                  <ChevronDown className="w-3 h-3" strokeWidth={2} />
+                </button>
+
+                {isDropdownOpen && (
+                  <div
+                    ref={statusDropdownRef}
+                    className="absolute left-0 top-8 z-50 min-w-[140px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
+                  >
+                    {(col.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveStatusDropdownRowKey(null);
+                          onStatusChange && onStatusChange(row, opt.value);
+                          showToast(`Статус изменен на «${opt.label}»`, 'success');
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
+                          opt.value === val
+                            ? 'bg-zinc-100 dark:bg-zinc-800 font-bold'
+                            : 'hover:bg-zinc-100/70 dark:hover:bg-zinc-800/50'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              opt.dotColor || 'bg-zinc-400'
+                            }`}
+                          />
+                          <span>{opt.label}</span>
+                        </span>
+                        {opt.value === val && (
+                          <Check
+                            className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"
+                            strokeWidth={2}
+                          />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </td>
+          );
+        }
+
+        if (col.type === 'phone') {
+          const phoneStr = String(val || '');
+          return (
+            <td key={col.key} className="px-4 py-3 truncate">
+              <span
+                onClick={() => handleCopy(phoneStr, `${rowKey}_${col.key}`)}
+                className="inline-flex items-center gap-1.5 cursor-pointer font-mono hover:text-zinc-900 dark:hover:text-white"
+                title="Нажмите для копирования"
+              >
+                <span>{phoneStr || '—'}</span>
+                {copiedKey === `${rowKey}_${col.key}` ? (
+                  <Check className="w-3 h-3 text-emerald-500" strokeWidth={2} />
+                ) : (
+                  <Copy
+                    className="w-3 h-3 text-zinc-400 group-hover:opacity-100 opacity-0 transition-opacity"
+                    strokeWidth={1.5}
+                  />
+                )}
+              </span>
+            </td>
+          );
+        }
+
+        if (col.type === 'currency') {
+          const num = Number(val) || 0;
+          return (
+            <td
+              key={col.key}
+              onClick={() => onRowClick && onRowClick(row)}
+              className="px-4 py-3 font-semibold truncate cursor-pointer"
+            >
+              {num.toLocaleString('ru-RU')} сом
+            </td>
+          );
+        }
+
+        return (
+          <td
+            key={col.key}
+            onClick={() => onRowClick && onRowClick(row)}
+            className="px-4 py-3 truncate cursor-pointer max-w-xs"
+          >
+            {String(val ?? '—')}
+          </td>
+        );
+      })}
+
+      {/* Закрепленные действия */}
+      <td className="sticky right-0 z-10 px-4 py-3 text-right backdrop-blur-2xl bg-white/90 dark:bg-zinc-900/90 shadow-[-4px_0_12px_rgba(0,0,0,0.03)] dark:shadow-[-4px_0_12px_rgba(0,0,0,0.2)]">
+        <div className="flex items-center justify-end gap-1.5">
+          {customRowActions && customRowActions(row)}
+
+          {onRowClick && (
+            <button
+              onClick={() => onRowClick(row)}
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors"
+              title="Просмотр записи"
+            >
+              <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
+            </button>
+          )}
+
+          {(() => {
+            const phoneCol = initialColumns.find((c) => c.type === 'phone');
+            const rawPhone = phoneCol?.phoneAccessor
+              ? phoneCol.phoneAccessor(row)
+              : phoneCol
+              ? String(row[phoneCol.key] || '')
+              : '';
+            const cleanDigits = rawPhone.replace(/\D/g, '');
+            if (!cleanDigits) return null;
+            return (
+              <a
+                href={`https://wa.me/${cleanDigits}`}
+                target="_blank"
+                rel="noreferrer"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors"
+                title="Написать в WhatsApp"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </a>
+            );
+          })()}
+
+          <button
+            onClick={() => handleCopy(rowKey, rowKey)}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors"
+            title="Скопировать ID записи"
+          >
+            {copiedKey === rowKey ? (
+              <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
+            ) : (
+              <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
+            )}
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+};
+
+export const DataJournalTableRow = React.memo(
+  DataJournalTableRowInner
+) as typeof DataJournalTableRowInner;
+
+interface DataJournalCardProps<T extends Record<string, any>> {
+  row: T;
+  rowKey: string;
+  orderedColumns: ColumnDef<T>[];
+  initialColumns: ColumnDef<T>[];
+  onRowClick?: (row: T) => void;
+  onStatusChange?: (row: T, newStatus: string) => void;
+  customRowActions?: (row: T) => React.ReactNode;
+  handleCopy: (text: string, rowKey: string) => void;
+  copiedKey: string | null;
+  showToast: (msg: string, type?: ToastType) => void;
+}
+
+const DataJournalCardInner = <T extends Record<string, any>>({
+  row,
+  rowKey,
+  orderedColumns,
+  initialColumns,
+  onRowClick,
+  onStatusChange,
+  customRowActions,
+  handleCopy,
+  copiedKey,
+  showToast,
+}: DataJournalCardProps<T>) => {
+  const phoneCol = initialColumns.find((c) => c.type === 'phone');
+  const rawPhone = phoneCol?.phoneAccessor
+    ? phoneCol.phoneAccessor(row)
+    : phoneCol
+    ? String(row[phoneCol.key] || '')
+    : '';
+  const cleanDigits = rawPhone.replace(/\D/g, '');
+
+  const statusCol = initialColumns.find((c) => c.type === 'status');
+  const statusVal = statusCol ? row[statusCol.key] : null;
+  const currentStatusOpt =
+    statusCol &&
+    ((statusCol.statusOptions || PIPELINE_STATUS_OPTIONS).find(
+      (o) => o.value === statusVal
+    ) || {
+      value: String(statusVal),
+      label: String(statusVal),
+      colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
+    });
+
+  const titleCol = orderedColumns.find(
+    (c) => c.type !== 'status' && c.type !== 'phone' && c.key !== 'id'
+  );
+  const cardTitle = titleCol ? String(row[titleCol.key] || 'Без названия') : rowKey;
+
+  return (
+    <div
+      key={rowKey}
+      onClick={() => onRowClick && onRowClick(row)}
+      className="rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 line-clamp-1">
+            {cardTitle}
+          </h3>
+          <p className="text-[10px] font-mono text-zinc-400 mt-0.5">
+            ID: {rowKey.substring(0, 8)}...
+          </p>
+        </div>
+
+        {currentStatusOpt && (
+          <span
+            className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${currentStatusOpt.colorClass}`}
+          >
+            {currentStatusOpt.label}
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-300 border-t border-b border-zinc-100 dark:border-zinc-800/60 py-2.5">
+        {orderedColumns
+          .filter((c) => c !== titleCol && c.type !== 'status')
+          .slice(0, 4)
+          .map((col) => {
+            const val = row[col.key];
+            return (
+              <div key={col.key} className="flex items-center justify-between text-xs">
+                <span className="text-zinc-400 text-[11px]">{col.label}:</span>
+                <span className="font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[60%]">
+                  {col.renderCell
+                    ? col.renderCell(row, val)
+                    : col.type === 'currency'
+                    ? `${Number(val || 0).toLocaleString('ru-RU')} сом`
+                    : String(val ?? '—')}
+                </span>
+              </div>
+            );
+          })}
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-1.5 pt-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {cleanDigits && (
+            <>
+              <a
+                href={`tel:${cleanDigits}`}
+                className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
+                title="Позвонить"
+              >
+                <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </a>
+
+              <a
+                href={`https://wa.me/${cleanDigits}`}
+                target="_blank"
+                rel="noreferrer"
+                className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                title="WhatsApp"
+              >
+                <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </a>
+            </>
+          )}
+
+          <button
+            onClick={() => handleCopy(rowKey, rowKey)}
+            className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+            title="Скопировать ID"
+          >
+            {copiedKey === rowKey ? (
+              <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
+            ) : (
+              <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
+            )}
+          </button>
+
+          {customRowActions && customRowActions(row)}
+        </div>
+
+        {statusCol && onStatusChange && (
+          <select
+            value={String(statusVal || '')}
+            onChange={(e) => {
+              onStatusChange(row, e.target.value);
+              showToast(`Статус изменен на «${e.target.value}»`, 'success');
+            }}
+            className="h-8 px-2 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+          >
+            {(statusCol.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const DataJournalCard = React.memo(
+  DataJournalCardInner
+) as typeof DataJournalCardInner;
 
 export function DataJournal<T extends Record<string, any>>({
   data,
@@ -417,19 +827,34 @@ export function DataJournal<T extends Record<string, any>>({
       .filter((col) => col && visibleColumns[col.key] !== false);
   }, [columnsOrder, initialColumns, visibleColumns]);
 
+  const tableContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: paginatedData.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 48,
+    overscan: 10,
+  });
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalVirtualSize = rowVirtualizer.getTotalSize();
+
   // Копирование в буфер
   const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
-  const handleCopy = (text: string, rowKey: string) => {
-    navigator.clipboard.writeText(text);
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(30);
-    }
-    setCopiedKey(rowKey);
-    showToast('Скопировано в буфер', 'success');
-    setTimeout(() => {
-      setCopiedKey(null);
-    }, 1500);
-  };
+  const handleCopy = React.useCallback(
+    (text: string, rowKey: string) => {
+      navigator.clipboard.writeText(text);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(30);
+      }
+      setCopiedKey(rowKey);
+      showToast('Скопировано в буфер', 'success');
+      setTimeout(() => {
+        setCopiedKey(null);
+      }, 1500);
+    },
+    [showToast]
+  );
 
   // In-cell смена статуса
   const [activeStatusDropdownRowKey, setActiveStatusDropdownRowKey] = React.useState<
@@ -597,7 +1022,7 @@ export function DataJournal<T extends Record<string, any>>({
       {isClient && viewMode === 'table' ? (
         /* ТАБЛИЧНЫЙ ВИД (TABLE VIEW) */
         <div className="relative z-10 w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm">
-          <div className="overflow-x-auto max-h-[680px]">
+          <div ref={tableContainerRef} className="overflow-x-auto overflow-y-auto max-h-[680px]">
             <table className="w-full text-left border-collapse">
               {/* Sticky-шапка */}
               <thead className="sticky top-0 z-20 backdrop-blur-2xl bg-zinc-100/90 dark:bg-zinc-900/95 border-b border-zinc-200/80 dark:border-zinc-800">
@@ -675,204 +1100,56 @@ export function DataJournal<T extends Record<string, any>>({
                     </td>
                   </tr>
                 ) : (
-                  paginatedData.map((row) => {
-                    const rowKey = String(row[keyField]);
-                    return (
-                      <tr
-                        key={rowKey}
-                        className="group hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 transition-colors"
-                      >
-                        {orderedColumns.map((col) => {
-                          const val = row[col.key];
-
-                          if (col.renderCell) {
-                            return (
-                              <td
-                                key={col.key}
-                                onClick={() => onRowClick && onRowClick(row)}
-                                className="px-4 py-3 truncate cursor-pointer"
-                              >
-                                {col.renderCell(row, val)}
-                              </td>
-                            );
-                          }
-
-                          if (col.type === 'status') {
-                            const currentOption =
-                              (col.statusOptions || PIPELINE_STATUS_OPTIONS).find(
-                                (o) => o.value === val
-                              ) || {
-                                value: String(val),
-                                label: String(val),
-                                colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
-                              };
-
-                            if (!onStatusChange) {
-                              return (
-                                <td key={col.key} className="px-4 py-3">
-                                  <span
-                                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass}`}
-                                  >
-                                    {currentOption.label}
-                                  </span>
-                                </td>
-                              );
-                            }
-
-                            const isDropdownOpen =
-                              activeStatusDropdownRowKey === `${rowKey}_${col.key}`;
-
-                            return (
-                              <td key={col.key} className="px-4 py-3 relative">
-                                  <div className="inline-block relative">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setActiveStatusDropdownRowKey(
-                                          isDropdownOpen ? null : `${rowKey}_${col.key}`
-                                        );
-                                      }}
-                                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass} hover:opacity-90 transition-all`}
-                                    >
-                                      <span className={`w-1.5 h-1.5 rounded-full ${currentOption.dotColor || 'bg-current'}`} />
-                                      <span>{currentOption.label}</span>
-                                      <ChevronDown className="w-3 h-3" strokeWidth={2} />
-                                    </button>
-
-                                    {isDropdownOpen && (
-                                      <div
-                                        ref={statusDropdownRef}
-                                        className="absolute left-0 top-8 z-50 min-w-[140px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
-                                      >
-                                        {(col.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
-                                          <button
-                                            key={opt.value}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setActiveStatusDropdownRowKey(null);
-                                              onStatusChange && onStatusChange(row, opt.value);
-                                              showToast(`Статус изменен на «${opt.label}»`, 'success');
-                                            }}
-                                            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
-                                              opt.value === val
-                                                ? 'bg-zinc-100 dark:bg-zinc-800 font-bold'
-                                                : 'hover:bg-zinc-100/70 dark:hover:bg-zinc-800/50'
-                                            }`}
-                                          >
-                                            <span className="flex items-center gap-2">
-                                              <span className={`w-2 h-2 rounded-full ${opt.dotColor || 'bg-zinc-400'}`} />
-                                              <span>{opt.label}</span>
-                                            </span>
-                                            {opt.value === val && (
-                                              <Check className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" strokeWidth={2} />
-                                            )}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                              </td>
-                            );
-                          }
-
-                          if (col.type === 'phone') {
-                            const phoneStr = String(val || '');
-                            return (
-                              <td key={col.key} className="px-4 py-3 truncate">
-                                <span
-                                  onClick={() => handleCopy(phoneStr, `${rowKey}_${col.key}`)}
-                                  className="inline-flex items-center gap-1.5 cursor-pointer font-mono hover:text-zinc-900 dark:hover:text-white"
-                                  title="Нажмите для копирования"
-                                >
-                                  <span>{phoneStr || '—'}</span>
-                                  {copiedKey === `${rowKey}_${col.key}` ? (
-                                    <Check className="w-3 h-3 text-emerald-500" strokeWidth={2} />
-                                  ) : (
-                                    <Copy className="w-3 h-3 text-zinc-400 group-hover:opacity-100 opacity-0 transition-opacity" strokeWidth={1.5} />
-                                  )}
-                                </span>
-                              </td>
-                            );
-                          }
-
-                          if (col.type === 'currency') {
-                            const num = Number(val) || 0;
-                            return (
-                              <td
-                                key={col.key}
-                                onClick={() => onRowClick && onRowClick(row)}
-                                className="px-4 py-3 font-semibold truncate cursor-pointer"
-                              >
-                                {num.toLocaleString('ru-RU')} сом
-                              </td>
-                            );
-                          }
-
-                          return (
-                            <td
-                              key={col.key}
-                              onClick={() => onRowClick && onRowClick(row)}
-                              className="px-4 py-3 truncate cursor-pointer max-w-xs"
-                            >
-                              {String(val ?? '—')}
-                            </td>
-                          );
-                        })}
-
-                        {/* Закрепленные действия */}
-                        <td className="sticky right-0 z-10 px-4 py-3 text-right backdrop-blur-2xl bg-white/90 dark:bg-zinc-900/90 shadow-[-4px_0_12px_rgba(0,0,0,0.03)] dark:shadow-[-4px_0_12px_rgba(0,0,0,0.2)]">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {customRowActions && customRowActions(row)}
-
-                            {onRowClick && (
-                              <button
-                                onClick={() => onRowClick(row)}
-                                className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors"
-                                title="Просмотр записи"
-                              >
-                                <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
-                              </button>
-                            )}
-
-                            {(() => {
-                              const phoneCol = initialColumns.find((c) => c.type === 'phone');
-                              const rawPhone = phoneCol?.phoneAccessor
-                                ? phoneCol.phoneAccessor(row)
-                                : phoneCol
-                                ? String(row[phoneCol.key] || '')
-                                : '';
-                              const cleanDigits = rawPhone.replace(/\D/g, '');
-                              if (!cleanDigits) return null;
-                              return (
-                                <a
-                                  href={`https://wa.me/${cleanDigits}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="p-1.5 rounded-lg text-zinc-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors"
-                                  title="Написать в WhatsApp"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-                                </a>
-                              );
-                            })()}
-
-                            <button
-                              onClick={() => handleCopy(rowKey, rowKey)}
-                              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors"
-                              title="Скопировать ID записи"
-                            >
-                              {copiedKey === rowKey ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
-                              )}
-                            </button>
-                          </div>
-                        </td>
+                  <>
+                    {virtualRows.length > 0 && virtualRows[0].start > 0 && (
+                      <tr>
+                        <td
+                          colSpan={orderedColumns.length + 1}
+                          style={{
+                            height: `${virtualRows[0].start}px`,
+                            padding: 0,
+                            border: 0,
+                          }}
+                        />
                       </tr>
-                    );
-                  })
+                    )}
+                    {virtualRows.map((virtualRow) => {
+                      const row = paginatedData[virtualRow.index];
+                      if (!row) return null;
+                      const rowKey = String(row[keyField]);
+                      return (
+                        <DataJournalTableRow
+                          key={rowKey}
+                          row={row}
+                          rowKey={rowKey}
+                          orderedColumns={orderedColumns}
+                          initialColumns={initialColumns}
+                          onRowClick={onRowClick}
+                          onStatusChange={onStatusChange}
+                          customRowActions={customRowActions}
+                          handleCopy={handleCopy}
+                          copiedKey={copiedKey}
+                          activeStatusDropdownRowKey={activeStatusDropdownRowKey}
+                          setActiveStatusDropdownRowKey={setActiveStatusDropdownRowKey}
+                          statusDropdownRef={statusDropdownRef}
+                          showToast={showToast}
+                        />
+                      );
+                    })}
+                    {virtualRows.length > 0 &&
+                      totalVirtualSize - virtualRows[virtualRows.length - 1].end > 0 && (
+                        <tr>
+                          <td
+                            colSpan={orderedColumns.length + 1}
+                            style={{
+                              height: `${totalVirtualSize - virtualRows[virtualRows.length - 1].end}px`,
+                              padding: 0,
+                              border: 0,
+                            }}
+                          />
+                        </tr>
+                      )}
+                  </>
                 )}
               </tbody>
             </table>
@@ -894,137 +1171,20 @@ export function DataJournal<T extends Record<string, any>>({
           ) : (
             paginatedData.map((row) => {
               const rowKey = String(row[keyField]);
-              const phoneCol = initialColumns.find((c) => c.type === 'phone');
-              const rawPhone = phoneCol?.phoneAccessor
-                ? phoneCol.phoneAccessor(row)
-                : phoneCol
-                ? String(row[phoneCol.key] || '')
-                : '';
-              const cleanDigits = rawPhone.replace(/\D/g, '');
-
-              const statusCol = initialColumns.find((c) => c.type === 'status');
-              const statusVal = statusCol ? row[statusCol.key] : null;
-              const currentStatusOpt =
-                statusCol &&
-                ((statusCol.statusOptions || PIPELINE_STATUS_OPTIONS).find(
-                  (o) => o.value === statusVal
-                ) || {
-                  value: String(statusVal),
-                  label: String(statusVal),
-                  colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
-                });
-
-              const titleCol = orderedColumns.find(
-                (c) => c.type !== 'status' && c.type !== 'phone' && c.key !== 'id'
-              );
-              const cardTitle = titleCol ? String(row[titleCol.key] || 'Без названия') : rowKey;
-
               return (
-                <div
+                <DataJournalCard
                   key={rowKey}
-                  onClick={() => onRowClick && onRowClick(row)}
-                  className="rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 line-clamp-1">
-                        {cardTitle}
-                      </h3>
-                      <p className="text-[10px] font-mono text-zinc-400 mt-0.5">
-                        ID: {rowKey.substring(0, 8)}...
-                      </p>
-                    </div>
-
-                    {currentStatusOpt && (
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${currentStatusOpt.colorClass}`}
-                      >
-                        {currentStatusOpt.label}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-300 border-t border-b border-zinc-100 dark:border-zinc-800/60 py-2.5">
-                    {orderedColumns
-                      .filter((c) => c !== titleCol && c.type !== 'status')
-                      .slice(0, 4)
-                      .map((col) => {
-                        const val = row[col.key];
-                        return (
-                          <div key={col.key} className="flex items-center justify-between text-xs">
-                            <span className="text-zinc-400 text-[11px]">{col.label}:</span>
-                            <span className="font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[60%]">
-                              {col.renderCell
-                                ? col.renderCell(row, val)
-                                : col.type === 'currency'
-                                ? `${Number(val || 0).toLocaleString('ru-RU')} сом`
-                                : String(val ?? '—')}
-                            </span>
-                          </div>
-                        );
-                      })}
-                  </div>
-
-                  <div
-                    className="flex items-center justify-between gap-1.5 pt-1"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {cleanDigits && (
-                        <>
-                          <a
-                            href={`tel:${cleanDigits}`}
-                            className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
-                            title="Позвонить"
-                          >
-                            <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
-                          </a>
-
-                          <a
-                            href={`https://wa.me/${cleanDigits}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                            title="WhatsApp"
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-                          </a>
-                        </>
-                      )}
-
-                      <button
-                        onClick={() => handleCopy(rowKey, rowKey)}
-                        className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-                        title="Скопировать ID"
-                      >
-                        {copiedKey === rowKey ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
-                        )}
-                      </button>
-
-                      {customRowActions && customRowActions(row)}
-                    </div>
-
-                    {statusCol && onStatusChange && (
-                      <select
-                        value={String(statusVal || '')}
-                        onChange={(e) => {
-                          onStatusChange(row, e.target.value);
-                          showToast(`Статус изменен на «${e.target.value}»`, 'success');
-                        }}
-                        className="h-8 px-2 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
-                      >
-                        {(statusCol.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </div>
+                  row={row}
+                  rowKey={rowKey}
+                  orderedColumns={orderedColumns}
+                  initialColumns={initialColumns}
+                  onRowClick={onRowClick}
+                  onStatusChange={onStatusChange}
+                  customRowActions={customRowActions}
+                  handleCopy={handleCopy}
+                  copiedKey={copiedKey}
+                  showToast={showToast}
+                />
               );
             })
           )}

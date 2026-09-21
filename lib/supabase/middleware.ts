@@ -23,6 +23,30 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse;
   }
 
+  const pathname = request.nextUrl.pathname;
+  const isAuthPage = pathname.startsWith('/login');
+  const isApiRoute = pathname.startsWith('/api');
+
+  // Fast-path: проверка наличия токена сессии Supabase Auth в cookie заголовках
+  const allCookies = request.cookies.getAll();
+  const hasAuthCookie = allCookies.some(
+    (c) =>
+      c.name.startsWith('sb-') &&
+      (c.name.includes('-auth-token') || c.name.includes('access-token') || c.name.includes('token'))
+  );
+
+  // Если авторизационных кук нет вообще:
+  if (!hasAuthCookie) {
+    if (isAuthPage || isApiRoute) {
+      // На странице входа или в API сразу пропускаем без сетевого запроса к Supabase Auth
+      return supabaseResponse;
+    }
+    // На защищенных страницах моментально редиректим на /login без внешнего сетевого вызова
+    const url = request.nextUrl.clone();
+    url.pathname = '/login';
+    return NextResponse.redirect(url);
+  }
+
   const supabase = createServerClient(supabaseUrl, supabaseKey, {
     cookies: {
       getAll() {
@@ -47,11 +71,7 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const pathname = request.nextUrl.pathname;
-  const isAuthPage = pathname.startsWith('/login');
-  const isApiRoute = pathname.startsWith('/api');
-
-  // 2. Редирект неавторизованных пользователей
+  // 2. Редирект неавторизованных пользователей (если токен был невалиден/просрочен)
   if (!user && !isAuthPage && !isApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
@@ -70,7 +90,15 @@ export async function updateSession(request: NextRequest) {
     let role = request.cookies.get('crm_role')?.value;
     let isActive = request.cookies.get('crm_active')?.value;
 
-    // Быстрый fallback, если куки еще не инициализированы
+    // Быстрый fallback: проверяем app_metadata из JWT (без дискового I/O к СУБД)
+    if (!role && user.app_metadata?.role) {
+      role = user.app_metadata.role as string;
+      isActive = 'true';
+      supabaseResponse.cookies.set('crm_role', role, { path: '/', httpOnly: false, sameSite: 'lax' });
+      supabaseResponse.cookies.set('crm_active', isActive, { path: '/', httpOnly: false, sameSite: 'lax' });
+    }
+
+    // Резервный запрос в таблицу users только если роль отсутствует в куках и в app_metadata
     if (!role) {
       const { data: profile } = await supabase
         .from('users')

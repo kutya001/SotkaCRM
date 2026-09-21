@@ -104,7 +104,7 @@ export async function getConnections(
 
   const {
     page = 1,
-    pageSize = 1000,
+    pageSize = 50,
     search,
     accrualMonth,
     clientStatus,
@@ -113,7 +113,27 @@ export async function getConnections(
     sortOrder = 'desc',
   } = params;
 
-  let query = supabase.from('connections').select('*', { count: 'exact' });
+  let query = supabase.from('connections').select(
+    `
+      connection_id,
+      seller_phone,
+      seller_name,
+      store,
+      manager_id,
+      assigned_by,
+      assigned_at,
+      status,
+      plan_id,
+      plan_price,
+      connection_fee_percent,
+      connection_fee_amount,
+      accrual_month,
+      maintenance_months_limit,
+      maintenance_months_accrued,
+      client_status
+    `,
+    { count: 'exact' }
+  );
 
   // Ограничение видимости для консультанта (строго свои)
   if (profile.role === 'consultant') {

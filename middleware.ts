@@ -10,10 +10,11 @@ export const config = {
     /*
      * Match all request paths except:
      * - _next/static, _next/image
-     * - favicon.ico, sitemap.xml, robots.txt
+     * - favicon.ico, icon.svg, sitemap.xml, robots.txt
      * - manifest.webmanifest, manifest.json
-     * - static assets (.svg, .png, .jpg, .jpeg, .gif, .webp, .ico)
+     * - static assets (.svg, .png, .jpg, .jpeg, .gif, .webp, .ico, .woff, .woff2, .css, .js)
      */
-    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|manifest.json|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest|manifest.json|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|css|js)$).*)',
   ],
 };
+

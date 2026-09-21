@@ -185,20 +185,21 @@ export async function linkLeadToSeller(params: {
     const { data: rpcResult, error: rpcError } = await supabase.rpc('link_lead_to_seller', {
       p_lead_id: params.leadId,
       p_seller_phone: params.sellerPhone,
-      p_manager_id: params.managerId || null,
+      p_manager_id: params.managerId || undefined,
       p_assigned_by: currentProfile.user_id,
     });
 
     if (!rpcError && rpcResult) {
-      if (!rpcResult.success) {
-        return { success: false, error: rpcResult.error || 'Ошибка связывания лида с продавцом' };
+      const res = rpcResult as Record<string, any>;
+      if (!res.success) {
+        return { success: false, error: res.error || 'Ошибка связывания лида с продавцом' };
       }
       revalidatePath('/leads');
       revalidatePath('/sellers');
       revalidatePath('/connections');
       return {
         success: true,
-        connectionId: rpcResult.connection_id,
+        connectionId: res.connection_id,
       };
     }
   } catch (rpcErr) {

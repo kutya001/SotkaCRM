@@ -1110,4 +1110,31 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
   * Для роли `admin` возвращаются сквозные агрегаты по всей платформе.
 * В RLS-политике `sellers_select_policy`:
   * `consultant` имеет доступ к закрепленным за ним продавцам (`manager_id = (SELECT get_current_crm_user_id())`), а также к незакрепленным (`manager_id IS NULL`) для обеспечения возможности ручной привязки через `getAvailableSellersForMapping`.
-  * `admin` имеет доступ ко всем продавцам.
+  * `admin` имеет доступ ко всем продавцам.
+
+---
+
+### 11. Оптимизация производительности, индексов и СУБД (Миграция `009_performance_and_isolation_optimization.sql`)
+
+**11.1. Мемоизация ролевого контекста (Zero-IO RLS):**
+* Функция `get_current_user_role()`: считывает роль пользователя напрямую из JWT-токена (`auth.jwt() -> 'app_metadata' ->> 'role'`), предотвращая дисковые операции ввода-вывода к таблице `users`. При отсутствии клейма выполняет fallback к `users` с кэшированием `STABLE SECURITY DEFINER`.
+* Функция `get_current_crm_user_id()`: аналогично считывает UUID сотрудника из `auth.jwt() -> 'app_metadata' ->> 'user_id'`.
+* Триггер `trg_sync_user_app_metadata`: синхронизирует изменения роли и user_id в `auth.users.raw_app_meta_data` при вставке и обновлении пользователей.
+* Все RLS-политики на `leads`, `sellers`, `connections`, `employee_payouts` оборачивают вызовы функций в скалярные подзапросы `(SELECT public.get_current_user_role())`, позволяя планировщику PostgreSQL выполнять оценку один раз на запрос (InitPlan) вместо сканирования $O(N \times M)$.
+
+**11.2. Композитные индексы для многофакторной фильтрации:**
+* `idx_leads_assigned_status_created` на `leads(assigned_to, status, created_at DESC)`
+* `idx_leads_created_by_status_created` на `leads(created_by, status, created_at DESC)`
+* `idx_connections_seller_phone_assigned` на `connections(seller_phone, assigned_at DESC)`
+* `idx_connections_manager_assigned` на `connections(manager_id, assigned_at DESC)`
+* `idx_employee_payouts_user_month` на `employee_payouts(user_id, accrual_month, payout_date DESC)`
+* `idx_payments_user_phone_date` на `payments(user_phone, date_time DESC)`
+
+**11.3. Серверные аналитические RPC-функции:**
+* `get_payouts_summary(p_accrual_month text, p_user_id uuid)` — расчет сводки фонда выплат (`totalPaid`, `totalAdvances`, `totalDeductions`, `transactionsCount`) на стороне PostgreSQL через `FILTER (WHERE ...)`.
+* `get_analytics_summary(p_start_date timestamptz, p_end_date timestamptz)` — комплексная агрегация показателей воронки лидов, выплат и базы продавцов в одном запросе с соблюдением ролевой изоляции.
+
+**11.4. Исключение Race Conditions и транзакционные блокировки:**
+* Уникальный индекс `idx_payouts_unique_salary_period` на `employee_payouts (user_id, accrual_month) WHERE payout_category = 'выплата зп'` исключает повторное начисление зарплаты сотруднику за один и тот же период.
+* Функция `process_employee_payout_atomic(...)` выполняет блокировку `SELECT ... FOR UPDATE` по строке сотрудника в таблице `users`, гарантируя строгую сериализацию финансовых проводок.
+

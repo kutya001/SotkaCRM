@@ -16,9 +16,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import { getLeadsStats } from '@/app/leads/actions';
-import { getPayoutsStats } from '@/app/payouts/actions';
-import { getSellersStats } from '@/app/sellers/actions';
+import { getAnalyticsSummaryAction } from '@/app/analytics/actions';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
 import { formatMoney } from '@/lib/utils/money';
 import type { UserRole } from '@/types/database.types';
@@ -56,11 +54,9 @@ export default function AnalyticsPage() {
     async function loadData() {
       setIsLoading(true);
       try {
-        const [profileRes, leadsRes, payoutsRes, sellersStatsRes] = await Promise.all([
+        const [profileRes, summaryRes] = await Promise.all([
           getUserProfileAndKpi(),
-          getLeadsStats(),
-          getPayoutsStats(),
-          getSellersStats(),
+          getAnalyticsSummaryAction(),
         ]);
 
         if (profileRes.profile) {
@@ -69,16 +65,10 @@ export default function AnalyticsPage() {
           setUserLogin(profileRes.profile.login);
         }
 
-        setLeadsStats(leadsRes);
-        setPayoutsStats(payoutsRes);
-
-        if (sellersStatsRes) {
-          setSellersStats({
-            total: sellersStatsRes.total,
-            active: sellersStatsRes.active,
-            pending: sellersStatsRes.pendingModeration,
-            totalBalance: sellersStatsRes.totalBalance,
-          });
+        if (summaryRes.success && summaryRes.data) {
+          setLeadsStats(summaryRes.data.leads);
+          setPayoutsStats(summaryRes.data.payouts);
+          setSellersStats(summaryRes.data.sellers);
         }
       } catch (err) {
         console.error('Ошибка загрузки аналитики:', err);

@@ -307,13 +307,14 @@ export function EntityModal<T extends Record<string, any>>({
                       key={opt.value}
                       onClick={() => handleQuickStatusChange(opt.value)}
                       disabled={isSubmitting || isActive}
-                      className={`h-7 px-2.5 rounded-full text-[11px] font-semibold border transition-all ${
+                      className={`h-7 px-2.5 rounded-full text-[11px] font-semibold border transition-all flex items-center gap-1.5 ${
                         isActive
                           ? `${opt.colorClass} ring-2 ring-zinc-400/40 font-bold`
                           : 'bg-white/50 dark:bg-zinc-900/50 text-zinc-500 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200/60 dark:hover:bg-zinc-800'
                       }`}
                     >
-                      {opt.label}
+                      <span className={`w-1.5 h-1.5 rounded-full ${opt.dotColor || 'bg-current'}`} />
+                      <span>{opt.label}</span>
                     </button>
                   );
                 })}
@@ -460,7 +461,9 @@ export function EntityModal<T extends Record<string, any>>({
                           >
                             {(field.options || statusOptions).map((opt) => (
                               <option key={opt.value} value={opt.value}>
-                                {opt.label}
+                                {field.type === 'status' && !opt.label.startsWith('●')
+                                  ? `● ${opt.label}`
+                                  : opt.label}
                               </option>
                             ))}
                           </select>

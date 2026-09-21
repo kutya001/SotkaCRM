@@ -12,6 +12,7 @@ export interface UserProfileData {
   phone: string | null;
   role: UserRole;
   is_active: boolean;
+  color: string;
   created_at: string;
 }
 
@@ -78,7 +79,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
 
   const { data: callerProfile } = await supabase
     .from('users')
-    .select('user_id, login, full_name, phone, role, is_active, created_at')
+    .select('user_id, login, full_name, phone, role, is_active, color, created_at')
     .eq('auth_id', user.id)
     .single();
 
@@ -102,7 +103,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
 
     const { data: requestedUser, error: targetError } = await supabase
       .from('users')
-      .select('user_id, login, full_name, phone, role, is_active, created_at')
+      .select('user_id, login, full_name, phone, role, is_active, color, created_at')
       .eq('user_id', targetUserId)
       .single();
 
@@ -348,7 +349,7 @@ export async function getAllUsersForAdmin(): Promise<{
 
   const { data: allUsers, error } = await supabase
     .from('users')
-    .select('user_id, login, full_name, phone, role, is_active, created_at')
+    .select('user_id, login, full_name, phone, role, is_active, color, created_at')
     .order('full_name', { ascending: true });
 
   if (error) {
@@ -361,11 +362,12 @@ export async function getAllUsersForAdmin(): Promise<{
 /**
  * Редактирование профиля (ФИО, телефон, и если администратор — роль и активность)
  */
-export async function updateUserProfile(input: {
+export async function updateProfileData(input: {
   full_name?: string;
   phone?: string | null;
   role?: UserRole;
   is_active?: boolean;
+  color?: string;
   targetUserId?: string;
 }): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient();
@@ -407,6 +409,10 @@ export async function updateUserProfile(input: {
     updates.phone = input.phone?.trim() || null;
   }
 
+  if (input.color !== undefined) {
+    updates.color = input.color;
+  }
+
   // Только администратор может менять роль и статус активности
   if (callerProfile.role === 'admin') {
     if (input.role !== undefined) {
@@ -445,6 +451,8 @@ export async function updateUserProfile(input: {
 
   revalidatePath('/profile');
   revalidatePath('/employees');
+  revalidatePath('/leads');
+  revalidatePath('/sellers');
   return { success: true };
 }
 

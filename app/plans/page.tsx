@@ -12,8 +12,12 @@ import {
   createPlan,
   deletePlan,
   getPlanHistory,
+  getPlanPrices,
+  upsertPlanPrice,
+  deletePlanPrice,
   type PlanItem,
   type PlanHistoryItem,
+  type PlanPriceItem,
 } from './actions';
 import {
   BookOpen,
@@ -28,6 +32,8 @@ import {
   Clock,
   ArrowRight,
   Trash2,
+  Calendar,
+  Coins,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -62,9 +68,26 @@ export default function PlansPage() {
     billing_period: 'Месяц',
     description: '',
     is_active: true,
+    effective_from: new Date().toISOString().substring(0, 10),
   });
 
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  // Модалка периодов цен по датам (plan_prices)
+  const [pricePeriodsModal, setPricePeriodsModal] = React.useState<{
+    isOpen: boolean;
+    plan: PlanItem | null;
+    items: PlanPriceItem[];
+    loading: boolean;
+  }>({
+    isOpen: false,
+    plan: null,
+    items: [],
+    loading: false,
+  });
+  const [newPeriodDate, setNewPeriodDate] = React.useState(new Date().toISOString().substring(0, 10));
+  const [newPeriodPrice, setNewPeriodPrice] = React.useState<number>(0);
+  const [isAddingPeriod, setIsAddingPeriod] = React.useState(false);
 
   // Модалка истории изменений цен (триггер audit_plan_price_trigger)
   const [historyModal, setHistoryModal] = React.useState<{
@@ -124,6 +147,7 @@ export default function PlansPage() {
       billing_period: plan.billing_period,
       description: plan.description || '',
       is_active: plan.is_active,
+      effective_from: new Date().toISOString().substring(0, 10),
     });
     setEditModal({ isOpen: true, isNew: false, plan });
   };
@@ -136,8 +160,60 @@ export default function PlansPage() {
       billing_period: 'Месяц',
       description: '',
       is_active: true,
+      effective_from: new Date().toISOString().substring(0, 10),
     });
     setEditModal({ isOpen: true, isNew: true, plan: null });
+  };
+
+  const handleOpenPricePeriods = async (plan: PlanItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPricePeriodsModal({ isOpen: true, plan, items: [], loading: true });
+    setNewPeriodDate(new Date().toISOString().substring(0, 10));
+    setNewPeriodPrice(Number(plan.price));
+    try {
+      const items = await getPlanPrices(plan.plan_id);
+      setPricePeriodsModal((p) => ({ ...p, items, loading: false }));
+    } catch {
+      showToast('Не удалось загрузить периоды цен', 'error');
+      setPricePeriodsModal((p) => ({ ...p, loading: false }));
+    }
+  };
+
+  const handleAddPricePeriod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pricePeriodsModal.plan) return;
+    setIsAddingPeriod(true);
+    try {
+      const res = await upsertPlanPrice(pricePeriodsModal.plan.plan_id, newPeriodPrice, newPeriodDate);
+      if (res.success) {
+        showToast('Период цены успешно сохранен', 'success');
+        const items = await getPlanPrices(pricePeriodsModal.plan.plan_id);
+        setPricePeriodsModal((p) => ({ ...p, items }));
+        fetchData();
+      } else {
+        showToast(res.error || 'Ошибка при сохранении периода', 'error');
+      }
+    } catch {
+      showToast('Сбой сервера при сохранении периода', 'error');
+    } finally {
+      setIsAddingPeriod(false);
+    }
+  };
+
+  const handleDeletePricePeriod = async (priceId: string) => {
+    if (!pricePeriodsModal.plan) return;
+    try {
+      const res = await deletePlanPrice(priceId, pricePeriodsModal.plan.plan_id);
+      if (res.success) {
+        showToast('Период цены удален', 'success');
+        const items = await getPlanPrices(pricePeriodsModal.plan.plan_id);
+        setPricePeriodsModal((p) => ({ ...p, items }));
+      } else {
+        showToast(res.error || 'Ошибка удаления периода', 'error');
+      }
+    } catch {
+      showToast('Сбой сервера при удалении периода', 'error');
+    }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -274,12 +350,20 @@ export default function PlansPage() {
     {
       key: 'actions',
       label: 'Действия',
-      width: 150,
-      minWidth: 120,
+      width: 230,
+      minWidth: 190,
       sortable: false,
       filterable: false,
       renderCell: (row) => (
         <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={(e) => handleOpenPricePeriods(row, e)}
+            className="h-7 px-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-[11px] font-medium flex items-center gap-1 transition-colors"
+            title="Цены по датам и периодам"
+          >
+            <Calendar className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span>Периоды</span>
+          </button>
           <button
             onClick={(e) => handleOpenHistory(row, e)}
             className="h-7 px-2 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[11px] font-medium flex items-center gap-1 transition-colors"
@@ -459,6 +543,22 @@ export default function PlansPage() {
 
                 <div className="space-y-1">
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
+                    Действует с даты *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.effective_from}
+                    onChange={(e) => setFormData((p) => ({ ...p, effective_from: e.target.value }))}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-[10px] text-zinc-400">
+                    Дата начала действия этой стоимости для расчета комиссий подключений
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                     Описание тарифа
                   </label>
                   <textarea
@@ -521,6 +621,141 @@ export default function PlansPage() {
                 </div>
               </div>
             </form>
+          </div>
+        )}
+
+        {/* Модальное окно периодов цен по датам (plan_prices) */}
+        {pricePeriodsModal.isOpen && pricePeriodsModal.plan && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <Calendar className="w-5 h-5" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      Цены по датам и периодам
+                    </h3>
+                    <p className="text-xs text-zinc-400 font-mono">
+                      {pricePeriodsModal.plan.plan_id} • {pricePeriodsModal.plan.plan_name}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPricePeriodsModal((p) => ({ ...p, isOpen: false, plan: null }))}
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500"
+                >
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-blue-500/5 dark:bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-700 dark:text-blue-300">
+                При создании подключения комиссия сотрудника рассчитывается по цене тарифа, действующей на дату подключения (наиболее поздняя цена с датой &le; даты подключения).
+              </div>
+
+              {currentUserRole === 'admin' && (
+                <form onSubmit={handleAddPricePeriod} className="p-3.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 space-y-3">
+                  <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 block">
+                    Добавить / изменить цену на дату
+                  </span>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[11px] text-zinc-500 dark:text-zinc-400 block mb-1">
+                        Действует с даты *
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={newPeriodDate}
+                        onChange={(e) => setNewPeriodDate(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-zinc-500 dark:text-zinc-400 block mb-1">
+                        Стоимость (сом) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        value={newPeriodPrice || ''}
+                        onChange={(e) => setNewPeriodPrice(parseFloat(e.target.value) || 0)}
+                        placeholder="1500"
+                        className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={isAddingPeriod}
+                      className="h-8 px-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+                      <span>{isAddingPeriod ? 'Сохранение...' : 'Зафиксировать цену'}</span>
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="max-h-60 overflow-y-auto space-y-2">
+                {pricePeriodsModal.loading ? (
+                  <div className="p-6 text-center text-xs text-zinc-400">Загрузка периодов...</div>
+                ) : pricePeriodsModal.items.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200/50 dark:border-zinc-800">
+                    Периоды цен еще не зафиксированы. Используется базовая цена тарифа ({Number(pricePeriodsModal.plan.price).toLocaleString('ru-RU')} сом).
+                  </div>
+                ) : (
+                  pricePeriodsModal.items.map((item) => (
+                    <div
+                      key={item.price_id}
+                      className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 flex items-center justify-between text-xs"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">
+                            {Number(item.price).toLocaleString('ru-RU')} сом
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono text-[10px] font-semibold border border-blue-500/20">
+                            с {item.effective_from}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-zinc-400 font-mono">
+                          Запись создана: <FormattedDate date={item.created_at} type="shortDate" />
+                        </span>
+                      </div>
+
+                      {currentUserRole === 'admin' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePricePeriod(item.price_id)}
+                          className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
+                          title="Удалить период цены"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setPricePeriodsModal((p) => ({ ...p, isOpen: false, plan: null }))}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  Закрыть
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

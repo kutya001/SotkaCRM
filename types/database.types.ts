@@ -459,6 +459,41 @@ export type Database = {
         }
         Relationships: []
       }
+      plan_prices: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          plan_id: string
+          price: number
+          price_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          plan_id: string
+          price: number
+          price_id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          plan_id?: string
+          price?: number
+          price_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_prices_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["plan_id"]
+          },
+        ]
+      }
       plans_history: {
         Row: {
           changed_at: string
@@ -572,6 +607,7 @@ export type Database = {
       users: {
         Row: {
           auth_id: string | null
+          color: string
           created_at: string
           full_name: string
           is_active: boolean
@@ -582,6 +618,7 @@ export type Database = {
         }
         Insert: {
           auth_id?: string | null
+          color?: string
           created_at?: string
           full_name: string
           is_active?: boolean
@@ -592,6 +629,7 @@ export type Database = {
         }
         Update: {
           auth_id?: string | null
+          color?: string
           created_at?: string
           full_name?: string
           is_active?: boolean
@@ -654,6 +692,23 @@ export type Database = {
           pendingModeration: number
           totalBalance: number
           assigned: number
+        }
+      }
+      get_plan_price_on_date: {
+        Args: {
+          p_plan_id: string
+          p_date: string
+        }
+        Returns: number
+      }
+      get_employee_rate_on_month: {
+        Args: {
+          p_user_id: string
+          p_month: string
+        }
+        Returns: {
+          connection_percent: number
+          maintenance_percent: number
         }
       }
     }

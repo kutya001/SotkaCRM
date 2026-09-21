@@ -29,8 +29,12 @@ import {
   Lock,
   Unlock,
   ShieldAlert,
+  Palette,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
+import { ColorPicker } from '@/components/ui/ColorPicker';
+import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
+import { DEFAULT_EMPLOYEE_COLOR } from '@/lib/constants/colors';
 
 export default function EmployeesPage() {
   const router = useRouter();
@@ -56,6 +60,7 @@ export default function EmployeesPage() {
   const [newFullName, setNewFullName] = React.useState('');
   const [newPhone, setNewPhone] = React.useState('');
   const [newRole, setNewRole] = React.useState<UserRole>('consultant');
+  const [newColor, setNewColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [isCreating, setIsCreating] = React.useState(false);
 
   // Модальное окно редактирования сотрудника
@@ -64,6 +69,7 @@ export default function EmployeesPage() {
   const [editFullName, setEditFullName] = React.useState('');
   const [editPhone, setEditPhone] = React.useState('');
   const [editRole, setEditRole] = React.useState<UserRole>('consultant');
+  const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
   const [isUpdating, setIsUpdating] = React.useState(false);
 
@@ -135,6 +141,7 @@ export default function EmployeesPage() {
         full_name: newFullName.trim(),
         phone: newPhone.trim() || undefined,
         role: newRole,
+        color: newColor,
       });
 
       if (res.success) {
@@ -145,6 +152,7 @@ export default function EmployeesPage() {
         setNewFullName('');
         setNewPhone('');
         setNewRole('consultant');
+        setNewColor(DEFAULT_EMPLOYEE_COLOR);
         fetchEmployeesData();
       } else {
         showToast(res.error || 'Ошибка при создании сотрудника', 'error');
@@ -162,6 +170,7 @@ export default function EmployeesPage() {
     setEditFullName(emp.full_name);
     setEditPhone(emp.phone || '');
     setEditRole(emp.role);
+    setEditColor(emp.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(emp.is_active);
     setIsEditModalOpen(true);
   };
@@ -183,6 +192,7 @@ export default function EmployeesPage() {
         phone: editPhone.trim() || null,
         role: editRole,
         is_active: editIsActive,
+        color: editColor,
       });
 
       if (res.success) {
@@ -212,12 +222,12 @@ export default function EmployeesPage() {
     e.preventDefault();
     if (!resetTargetEmployee) return;
 
-    if (resetNewPassword.length < 6) {
+    if (!resetNewPassword || resetNewPassword.length < 6) {
       showToast('Пароль должен содержать минимум 6 символов', 'error');
       return;
     }
     if (resetNewPassword !== resetConfirmPassword) {
-      showToast('Пароли не совпадают', 'error');
+      showToast('Введенные пароли не совпадают', 'error');
       return;
     }
 
@@ -229,13 +239,13 @@ export default function EmployeesPage() {
       );
 
       if (res.success) {
-        showToast(`Пароль для @${resetTargetEmployee.login} успешно обновлен`, 'success');
+        showToast(`Пароль для @${resetTargetEmployee.login} успешно изменен`, 'success');
         setIsPasswordModalOpen(false);
       } else {
-        showToast(res.error || 'Ошибка при сбросе пароля', 'error');
+        showToast(res.error || 'Ошибка сброса пароля', 'error');
       }
     } catch {
-      showToast('Ошибка сброса пароля', 'error');
+      showToast('Непредвиденная ошибка при сбросе пароля', 'error');
     } finally {
       setIsResetting(false);
     }
@@ -267,16 +277,9 @@ export default function EmployeesPage() {
       label: 'Сотрудник',
       sortable: true,
       renderCell: (item: EmployeeItem) => (
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-zinc-800 to-zinc-950 text-white dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900 flex items-center justify-center text-xs font-bold shadow-sm flex-shrink-0">
-            {item.full_name.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <p className="font-bold text-zinc-900 dark:text-zinc-100 truncate">
-              {item.full_name}
-            </p>
-            <p className="text-[11px] text-zinc-400 font-mono">@{item.login}</p>
-          </div>
+        <div className="flex items-center gap-2.5">
+          <EmployeeBadge name={item.full_name} color={item.color} size="md" />
+          <span className="text-[11px] text-zinc-400 font-mono">@{item.login}</span>
         </div>
       ),
     },
@@ -308,6 +311,16 @@ export default function EmployeesPage() {
           </span>
         );
       },
+    },
+    {
+      key: 'color',
+      label: 'Цвет метки',
+      renderCell: (item: EmployeeItem) => (
+        <div className="flex items-center gap-2">
+          <EmployeeColorDot color={item.color} className="w-3.5 h-3.5" />
+          <span className="text-xs font-mono text-zinc-500 uppercase">{item.color || DEFAULT_EMPLOYEE_COLOR}</span>
+        </div>
+      ),
     },
     {
       key: 'phone',
@@ -593,6 +606,12 @@ export default function EmployeesPage() {
                   </select>
                 </div>
 
+                <ColorPicker
+                  value={newColor}
+                  onChange={setNewColor}
+                  label="Цвет индикатора сотрудника"
+                />
+
                 <div className="flex items-center justify-end gap-2.5 pt-3">
                   <button
                     type="button"
@@ -669,6 +688,12 @@ export default function EmployeesPage() {
                     <option value="smm">SMM-специалист</option>
                   </select>
                 </div>
+
+                <ColorPicker
+                  value={editColor}
+                  onChange={setEditColor}
+                  label="Цвет индикатора сотрудника"
+                />
 
                 <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
                   <div>

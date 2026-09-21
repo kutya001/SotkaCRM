@@ -26,12 +26,14 @@ export interface ConnectionItem {
     full_name: string;
     role: string;
     login: string;
+    color?: string;
   } | null;
   assigned_user?: {
     user_id: string;
     full_name: string;
     role: string;
     login: string;
+    color?: string;
   } | null;
 }
 
@@ -178,12 +180,12 @@ export async function getConnections(
     )
   );
 
-  const usersMap = new Map<string, { user_id: string; full_name: string; role: string; login: string }>();
+  const usersMap = new Map<string, { user_id: string; full_name: string; role: string; login: string; color?: string }>();
 
   if (userIds.length > 0) {
     const { data: usersData } = await supabase
       .from('users')
-      .select('user_id, full_name, role, login')
+      .select('user_id, full_name, role, login, color')
       .in('user_id', userIds);
 
     if (usersData) {
@@ -333,4 +335,105 @@ export async function getAccrualMonthsList(): Promise<string[]> {
   }
 
   return Array.from(months).sort().reverse();
+}
+
+/**
+ * Получение активных тарифов для выбора в подключении
+ */
+export async function getActivePlansList(): Promise<
+  { plan_id: string; plan_name: string; price: number }[]
+> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('plans')
+    .select('plan_id, plan_name, price')
+    .eq('is_active', true)
+    .order('price', { ascending: true });
+
+  return (data || []).map((d) => ({
+    plan_id: d.plan_id,
+    plan_name: d.plan_name,
+    price: Number(d.price),
+  }));
+}
+
+/**
+ * Изменение тарифа и стоимости на подключении (строго admin)
+ * Не изменяет самого продавца в sellers, пересчитывает connection_fee_amount
+ */
+export async function updateConnectionTariffAndPrice(
+  connectionId: string,
+  params: {
+    plan_id: string | null;
+    plan_price: number;
+  }
+): Promise<{ success: boolean; error?: string; recalculatedBonus?: number }> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return { success: false, error: 'Пользователь не аутентифицирован' };
+    }
+
+    const { data: profile } = await supabase
+      .from('users')
+      .select('role')
+      .eq('auth_id', user.id)
+      .single();
+
+    if (!profile || profile.role !== 'admin') {
+      return {
+        success: false,
+        error: 'Редактирование тарифа подключения разрешено только администратору',
+      };
+    }
+
+    const { data: conn, error: connErr } = await supabase
+      .from('connections')
+      .select('*')
+      .eq('connection_id', connectionId)
+      .single();
+
+    if (connErr || !conn) {
+      return { success: false, error: 'Подключение не найдено' };
+    }
+
+    const roundedPrice = Math.round(Number(params.plan_price) * 100) / 100;
+    const feePercent = Number(conn.connection_fee_percent) || 0;
+    const recalculatedBonus = Math.round(((roundedPrice * feePercent) / 100) * 100) / 100;
+
+    const { error: updateError } = await supabase
+      .from('connections')
+      .update({
+        plan_id: params.plan_id || null,
+        plan_price: roundedPrice,
+        connection_fee_amount: recalculatedBonus,
+      })
+      .eq('connection_id', connectionId);
+
+    if (updateError) {
+      return { success: false, error: updateError.message };
+    }
+
+    // Обновляем начисление в сопровождении, если есть запись за расчетный месяц
+    if (conn.accrual_month) {
+      await supabase
+        .from('client_maintenance')
+        .update({
+          plan_price: roundedPrice,
+          maintenance_amount: Math.round(((roundedPrice * feePercent) / 100) * 100) / 100,
+        })
+        .eq('connection_id', connectionId)
+        .eq('accrual_month', conn.accrual_month);
+    }
+
+    revalidatePath('/connections');
+    revalidatePath('/payouts');
+    return { success: true, recalculatedBonus };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка обновления тарифа' };
+  }
 }

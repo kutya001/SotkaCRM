@@ -13,6 +13,7 @@ export interface EmployeeItem {
   phone: string | null;
   role: UserRole;
   is_active: boolean;
+  color: string;
   created_at: string;
 }
 
@@ -79,7 +80,7 @@ export async function getEmployees(
 
     let query = supabase
       .from('users')
-      .select('user_id, login, full_name, phone, role, is_active, created_at', {
+      .select('user_id, login, full_name, phone, role, is_active, color, created_at', {
         count: 'exact',
       });
 
@@ -139,13 +140,22 @@ export async function createEmployee(input: {
   full_name: string;
   phone?: string;
   role: UserRole;
+  color?: string;
 }): Promise<{ success: boolean; userId?: string; error?: string }> {
   try {
-    await requireAdminAuth();
+    const { supabase } = await requireAdminAuth();
     const res = await createCrmUser(input);
+    if (res.success && res.userId && input.color) {
+      await supabase
+        .from('users')
+        .update({ color: input.color })
+        .eq('user_id', res.userId);
+    }
     if (res.success) {
       revalidatePath('/employees');
       revalidatePath('/profile');
+      revalidatePath('/leads');
+      revalidatePath('/sellers');
     }
     return res;
   } catch (err: any) {
@@ -163,6 +173,7 @@ export async function updateEmployee(
     phone?: string | null;
     role?: UserRole;
     is_active?: boolean;
+    color?: string;
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -186,6 +197,10 @@ export async function updateEmployee(
 
     if (input.is_active !== undefined) {
       updates.is_active = input.is_active;
+    }
+
+    if (input.color !== undefined) {
+      updates.color = input.color;
     }
 
     const { data: updated, error: updateError } = await supabase

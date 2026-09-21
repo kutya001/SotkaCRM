@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { X, Link2, Search, UserCheck, Clock, Loader2, Store, Phone, Check } from 'lucide-react';
 import { getAvailableLeadsForSellerLinking, linkSellerToLeadAction, type SellerItem } from '@/app/sellers/actions';
+import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
 
 interface LinkSellerLeadModalProps {
@@ -21,6 +22,7 @@ interface LeadOption {
   assigned_user?: {
     user_id: string;
     full_name: string;
+    color?: string;
   } | null;
   created_at: string;
 }
@@ -34,28 +36,34 @@ export function LinkSellerLeadModal({
   const { showToast } = useToast();
   const [leads, setLeads] = React.useState<LeadOption[]>([]);
   const [search, setSearch] = React.useState('');
+  const [filterOnlySigned, setFilterOnlySigned] = React.useState(true);
   const [isLoadingLeads, setIsLoadingLeads] = React.useState(true);
   const [selectedLeadId, setSelectedLeadId] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
+  const fetchLeads = React.useCallback(async (onlySigned: boolean) => {
+    setIsLoadingLeads(true);
+    setSelectedLeadId(null);
+    try {
+      const res = await getAvailableLeadsForSellerLinking(onlySigned);
+      if (res.error) {
+        showToast(res.error, 'error');
+      } else {
+        setLeads(res.leads);
+      }
+    } catch {
+      showToast('Ошибка при загрузке лидов', 'error');
+    } finally {
+      setIsLoadingLeads(false);
+    }
+  }, [showToast]);
+
   React.useEffect(() => {
     if (isOpen && seller) {
-      setIsLoadingLeads(true);
-      setSelectedLeadId(null);
       setSearch('');
-      getAvailableLeadsForSellerLinking()
-        .then((res) => {
-          if (res.error) {
-            showToast(res.error, 'error');
-          } else {
-            setLeads(res.leads);
-          }
-        })
-        .finally(() => {
-          setIsLoadingLeads(false);
-        });
+      fetchLeads(filterOnlySigned);
     }
-  }, [isOpen, seller, showToast]);
+  }, [isOpen, seller, filterOnlySigned, fetchLeads]);
 
   if (!isOpen || !seller) return null;
 
@@ -139,6 +147,32 @@ export function LinkSellerLeadModal({
           </span>
         </div>
 
+        {/* Фильтр: Только Подписан vs Все свободные */}
+        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200/60 dark:border-zinc-700/60 text-xs">
+          <button
+            type="button"
+            onClick={() => setFilterOnlySigned(true)}
+            className={`flex-1 py-1.5 px-3 rounded-xl font-semibold transition-all ${
+              filterOnlySigned
+                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-xs'
+                : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+            }`}
+          >
+            Только «Подписан»
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterOnlySigned(false)}
+            className={`flex-1 py-1.5 px-3 rounded-xl font-semibold transition-all ${
+              !filterOnlySigned
+                ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-xs'
+                : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+            }`}
+          >
+            Все свободные лиды
+          </button>
+        </div>
+
         {/* Поиск лида */}
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -162,6 +196,8 @@ export function LinkSellerLeadModal({
             <div className="py-8 text-center text-xs text-zinc-400">
               {search.trim()
                 ? 'Лиды по вашему запросу не найдены'
+                : filterOnlySigned
+                ? 'Нет свободных лидов со статусом «Подписан»'
                 : 'Нет доступных свободных лидов в воронке'}
             </div>
           ) : (
@@ -177,21 +213,33 @@ export function LinkSellerLeadModal({
                       : 'bg-zinc-50 dark:bg-zinc-800/40 border-zinc-200/60 dark:border-zinc-700/60 hover:bg-zinc-100 dark:hover:bg-zinc-800'
                   }`}
                 >
-                  <div className="space-y-1 min-w-0">
+                  <div className="space-y-1.5 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-zinc-900 dark:text-zinc-100 truncate">
                         {lead.client_name}
                       </span>
-                      <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-zinc-200/60 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300">
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                          lead.status === 'Подписан'
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                            : 'bg-zinc-200/60 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'
+                        }`}
+                      >
                         {lead.status}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
                       <span>+{lead.phone}</span>
                       <span>•</span>
-                      <span>
-                        Куратор: {lead.assigned_user?.full_name || 'Не назначен'}
-                      </span>
+                      {lead.assigned_user ? (
+                        <EmployeeBadge
+                          name={lead.assigned_user.full_name}
+                          color={lead.assigned_user.color}
+                          size="sm"
+                        />
+                      ) : (
+                        <span className="text-[10px] text-zinc-400 italic">Не назначен</span>
+                      )}
                     </div>
                   </div>
 

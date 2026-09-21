@@ -13,10 +13,23 @@ export interface EmployeeRateItem {
   full_name: string;
   role: string;
   login: string;
+  color?: string;
   connection_percent: number;
   maintenance_percent: number;
   effective_from: string;
   created_at?: string;
+}
+
+export interface EmployeeRateHistoryItem {
+  rate_id: string;
+  user_id: string;
+  connection_percent: number;
+  maintenance_percent: number;
+  effective_from: string;
+  created_at: string;
+  creator?: {
+    full_name: string;
+  } | null;
 }
 
 /**
@@ -46,7 +59,7 @@ export async function getEmployeeRates(): Promise<{
   // 1. Запрашиваем всех активных сотрудников
   const { data: users, error: userError } = await supabase
     .from('users')
-    .select('user_id, full_name, role, login')
+    .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
     .order('full_name');
 
@@ -58,18 +71,25 @@ export async function getEmployeeRates(): Promise<{
   const { data: existingRates } = await supabase
     .from('employee_rates')
     .select('*')
-    .order('created_at', { ascending: false });
+    .order('effective_from', { ascending: false });
 
   const currentMonth = new Date().toISOString().substring(0, 7);
 
-  // Сводим список
+  // Сводим актуальную ставку для каждого пользователя (наиболее поздний период <= currentMonth или первый доступный)
   const ratesMap = new Map<string, any>();
   if (existingRates) {
-    existingRates.forEach((r) => {
+    // Сначала ищем ставки, действующие на текущий месяц
+    for (const r of existingRates) {
+      if (!ratesMap.has(r.user_id) && r.effective_from <= currentMonth) {
+        ratesMap.set(r.user_id, r);
+      }
+    }
+    // Если на текущий месяц нет, берем самую свежую
+    for (const r of existingRates) {
       if (!ratesMap.has(r.user_id)) {
         ratesMap.set(r.user_id, r);
       }
-    });
+    }
   }
 
   const result: EmployeeRateItem[] = users.map((u) => {
@@ -80,6 +100,7 @@ export async function getEmployeeRates(): Promise<{
       full_name: u.full_name,
       role: u.role,
       login: u.login,
+      color: u.color,
       connection_percent: r ? Number(r.connection_percent) : 30.0,
       maintenance_percent: r ? Number(r.maintenance_percent) : 10.0,
       effective_from: r?.effective_from || currentMonth,
@@ -91,7 +112,51 @@ export async function getEmployeeRates(): Promise<{
 }
 
 /**
- * Установка или обновление персональной ставки (строго admin)
+ * Получение истории процентных ставок по периодам для конкретного сотрудника
+ */
+export async function getEmployeeRatesHistory(
+  userId: string
+): Promise<EmployeeRateHistoryItem[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('employee_rates')
+    .select('*, creator:users!employee_rates_created_by_fkey(full_name)')
+    .eq('user_id', userId)
+    .order('effective_from', { ascending: false });
+
+  if (error || !data) return [];
+  return data.map((d: any) => ({
+    rate_id: d.rate_id,
+    user_id: d.user_id,
+    connection_percent: Number(d.connection_percent),
+    maintenance_percent: Number(d.maintenance_percent),
+    effective_from: d.effective_from,
+    created_at: d.created_at,
+    creator: d.creator,
+  }));
+}
+
+/**
+ * Удаление конкретного периода ставки сотрудника
+ */
+export async function deleteEmployeeRatePeriod(
+  rateId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+    const { error } = await supabase.from('employee_rates').delete().eq('rate_id', rateId);
+    if (error) return { success: false, error: error.message };
+    revalidatePath('/rates');
+    revalidatePath('/connections');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Установка или обновление персональной ставки на период (строго admin)
+ * Сохраняет историю периодов (UNIQUE по user_id, effective_from)
  */
 export async function upsertEmployeeRate(data: {
   user_id: string;
@@ -111,36 +176,18 @@ export async function upsertEmployeeRate(data: {
     const connectionPercent = roundMoney(validData.connection_percent);
     const maintenancePercent = roundMoney(validData.maintenance_percent);
 
-    // Проверяем, есть ли уже ставка для пользователя
-    const { data: existing } = await supabase
-      .from('employee_rates')
-      .select('rate_id')
-      .eq('user_id', validData.user_id)
-      .maybeSingle();
-
-    if (existing) {
-      const { error } = await supabase
-        .from('employee_rates')
-        .update({
-          connection_percent: connectionPercent,
-          maintenance_percent: maintenancePercent,
-          effective_from: validData.effective_from,
-          created_by: profile.user_id,
-        })
-        .eq('rate_id', existing.rate_id);
-
-      if (error) return { success: false, error: error.message };
-    } else {
-      const { error } = await supabase.from('employee_rates').insert({
+    const { error } = await supabase.from('employee_rates').upsert(
+      {
         user_id: validData.user_id,
         connection_percent: connectionPercent,
         maintenance_percent: maintenancePercent,
         effective_from: validData.effective_from,
         created_by: profile.user_id,
-      });
+      },
+      { onConflict: 'user_id,effective_from' }
+    );
 
-      if (error) return { success: false, error: error.message };
-    }
+    if (error) return { success: false, error: error.message };
 
     revalidatePath('/rates');
     revalidatePath('/connections');

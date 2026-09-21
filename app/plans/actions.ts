@@ -31,6 +31,15 @@ export interface PlanHistoryItem {
   } | null;
 }
 
+export interface PlanPriceItem {
+  price_id: string;
+  plan_id: string;
+  price: number;
+  effective_from: string; // YYYY-MM-DD
+  created_at: string;
+  created_by: string | null;
+}
+
 /**
  * Получение каталога тарифов
  */
@@ -71,6 +80,11 @@ export async function getPlans(): Promise<{
  * Обновление параметров тарифа (строго admin)
  * При смене price срабатывает триггер audit_plan_price_trigger
  */
+/**
+ * Обновление параметров тарифа (строго admin)
+ * При смене price срабатывает триггер audit_plan_price_trigger
+ * и фиксируется запись в plan_prices с датой начала действия
+ */
 export async function updatePlan(
   planId: string,
   data: {
@@ -79,10 +93,11 @@ export async function updatePlan(
     billing_period: string;
     description?: string | null;
     is_active: boolean;
+    effective_from?: string; // YYYY-MM-DD
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
+    const { supabase, profile } = await requireAdmin();
 
     const parsed = PlanUpdateSchema.safeParse(data);
     if (!parsed.success) {
@@ -90,12 +105,13 @@ export async function updatePlan(
     }
 
     const valid = parsed.data;
+    const roundedPrice = roundMoney(valid.price);
 
     const { error } = await supabase
       .from('plans')
       .update({
         plan_name: valid.plan_name,
-        price: roundMoney(valid.price),
+        price: roundedPrice,
         billing_period: valid.billing_period,
         description: valid.description ?? null,
         is_active: valid.is_active,
@@ -106,6 +122,18 @@ export async function updatePlan(
     if (error) {
       return { success: false, error: error.message };
     }
+
+    // Сохраняем в версионирование по датам (plan_prices)
+    const effectiveFrom = data.effective_from || new Date().toISOString().substring(0, 10);
+    await supabase.from('plan_prices').upsert(
+      {
+        plan_id: planId,
+        price: roundedPrice,
+        effective_from: effectiveFrom,
+        created_by: profile.user_id,
+      },
+      { onConflict: 'plan_id,effective_from' }
+    );
 
     revalidatePath('/plans');
     return { success: true };
@@ -124,9 +152,10 @@ export async function createPlan(data: {
   billing_period: string;
   description?: string | null;
   is_active: boolean;
+  effective_from?: string; // YYYY-MM-DD
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
+    const { supabase, profile } = await requireAdmin();
 
     if (!data.plan_id || data.plan_id.trim().length < 2) {
       return { success: false, error: 'Идентификатор тарифа должен содержать не менее 2 символов' };
@@ -138,11 +167,13 @@ export async function createPlan(data: {
     }
 
     const valid = parsed.data;
+    const planId = data.plan_id.toUpperCase().trim();
+    const roundedPrice = roundMoney(valid.price);
 
     const { error } = await supabase.from('plans').insert({
-      plan_id: data.plan_id.toUpperCase().trim(),
+      plan_id: planId,
       plan_name: valid.plan_name,
-      price: roundMoney(valid.price),
+      price: roundedPrice,
       billing_period: valid.billing_period,
       description: valid.description ?? null,
       is_active: valid.is_active,
@@ -152,10 +183,140 @@ export async function createPlan(data: {
       return { success: false, error: error.message };
     }
 
+    // Сохраняем начальную цену в plan_prices
+    const effectiveFrom = data.effective_from || new Date().toISOString().substring(0, 10);
+    await supabase.from('plan_prices').insert({
+      plan_id: planId,
+      price: roundedPrice,
+      effective_from: effectiveFrom,
+      created_by: profile.user_id,
+    });
+
     revalidatePath('/plans');
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Ошибка создания тарифа' };
+  }
+}
+
+/**
+ * Получение истории периодов цен тарифа из plan_prices
+ */
+export async function getPlanPrices(planId: string): Promise<PlanPriceItem[]> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from('plan_prices')
+    .select('*')
+    .eq('plan_id', planId)
+    .order('effective_from', { ascending: false });
+
+  if (error || !data) return [];
+  return data.map((d) => ({
+    price_id: d.price_id,
+    plan_id: d.plan_id,
+    price: Number(d.price),
+    effective_from: d.effective_from,
+    created_at: d.created_at,
+    created_by: d.created_by,
+  }));
+}
+
+/**
+ * Добавление или обновление цены тарифа для определенной даты
+ */
+export async function upsertPlanPrice(
+  planId: string,
+  price: number,
+  effectiveFrom: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase, profile } = await requireAdmin();
+
+    if (!planId || !effectiveFrom || price <= 0) {
+      return { success: false, error: 'Заполните корректную дату и стоимость' };
+    }
+
+    const roundedPrice = roundMoney(price);
+
+    const { error } = await supabase.from('plan_prices').upsert(
+      {
+        plan_id: planId,
+        price: roundedPrice,
+        effective_from: effectiveFrom,
+        created_by: profile.user_id,
+      },
+      { onConflict: 'plan_id,effective_from' }
+    );
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Если дата меньше или равна сегодняшней, обновляем и базовое поле price в plans
+    const today = new Date().toISOString().substring(0, 10);
+    if (effectiveFrom <= today) {
+      // Ищем самую свежую цену на сегодня
+      const { data: latestPrice } = await supabase
+        .from('plan_prices')
+        .select('price')
+        .eq('plan_id', planId)
+        .lte('effective_from', today)
+        .order('effective_from', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (latestPrice) {
+        await supabase
+          .from('plans')
+          .update({ price: Number(latestPrice.price) })
+          .eq('plan_id', planId);
+      }
+    }
+
+    revalidatePath('/plans');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Удаление записи интервала цены тарифа
+ */
+export async function deletePlanPrice(
+  priceId: string,
+  planId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    // Проверяем, не является ли это единственной ценой тарифа
+    const { count } = await supabase
+      .from('plan_prices')
+      .select('price_id', { count: 'exact', head: true })
+      .eq('plan_id', planId);
+
+    if (count && count <= 1) {
+      return {
+        success: false,
+        error: 'Нельзя удалить единственную запись стоимости для этого тарифа',
+      };
+    }
+
+    const { error } = await supabase
+      .from('plan_prices')
+      .delete()
+      .eq('price_id', priceId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/plans');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
   }
 }
 

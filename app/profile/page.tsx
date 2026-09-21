@@ -8,7 +8,7 @@ import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
   getUserProfileAndKpi,
-  updateUserProfile,
+  updateProfileData,
   changeUserPassword,
   getAllUsersForAdmin,
   type UserProfileData,
@@ -17,6 +17,8 @@ import {
   type AdminKpiStats,
 } from './actions';
 import { signOut } from '@/app/auth/actions';
+import { ColorPicker } from '@/components/ui/ColorPicker';
+import { DEFAULT_EMPLOYEE_COLOR, getEmployeeColorConfig } from '@/lib/constants/colors';
 import {
   User,
   ShieldCheck,
@@ -44,6 +46,7 @@ import {
   ArrowLeft,
   Lock,
   ExternalLink,
+  Palette,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
@@ -76,6 +79,7 @@ export default function ProfilePage() {
   const [editFullName, setEditFullName] = React.useState('');
   const [editPhone, setEditPhone] = React.useState('');
   const [editRole, setEditRole] = React.useState<UserRole>('consultant');
+  const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
   const [isSavingProfile, setIsSavingProfile] = React.useState(false);
 
@@ -167,6 +171,7 @@ export default function ProfilePage() {
     setEditFullName(profile.full_name);
     setEditPhone(profile.phone || '');
     setEditRole(profile.role);
+    setEditColor(profile.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(profile.is_active);
     setIsEditModalOpen(true);
   };
@@ -180,10 +185,11 @@ export default function ProfilePage() {
 
     setIsSavingProfile(true);
     try {
-      const res = await updateUserProfile({
+      const res = await updateProfileData({
         full_name: editFullName.trim(),
         phone: editPhone.trim() || null,
         role: editRole,
+        color: editColor,
         is_active: editIsActive,
         targetUserId: activeViewingUserId,
       });
@@ -297,8 +303,11 @@ export default function ProfilePage() {
         {/* 1. Карточка профиля пользователя (Apple Island Glassmorphism) */}
         <div className="p-6 sm:p-8 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-gradient-to-br from-zinc-800 to-zinc-950 text-white dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900 flex items-center justify-center text-2xl sm:text-3xl font-bold shadow-lg flex-shrink-0">
-              {profile?.full_name ? profile.full_name.charAt(0) : 'U'}
+            <div
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl text-white flex items-center justify-center text-2xl sm:text-3xl font-bold shadow-lg flex-shrink-0 transition-transform hover:scale-105"
+              style={{ backgroundColor: profile?.color || DEFAULT_EMPLOYEE_COLOR }}
+            >
+              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : 'U'}
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -742,6 +751,12 @@ export default function ProfilePage() {
                     </div>
                   </>
                 )}
+
+                <ColorPicker
+                  value={editColor}
+                  onChange={setEditColor}
+                  label="Цвет индикатора сотрудника"
+                />
 
                 <div className="flex items-center justify-end gap-2.5 pt-3">
                   <button

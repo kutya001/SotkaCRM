@@ -9,8 +9,12 @@ import {
   getEmployeeRates,
   upsertEmployeeRate,
   deleteEmployeeRate,
+  getEmployeeRatesHistory,
+  deleteEmployeeRatePeriod,
   type EmployeeRateItem,
+  type EmployeeRateHistoryItem,
 } from './actions';
+import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import {
   Percent,
   BookOpen,
@@ -21,6 +25,9 @@ import {
   TrendingUp,
   ShieldAlert,
   Trash2,
+  History,
+  Plus,
+  Calendar,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -44,6 +51,19 @@ export default function RatesPage() {
     connection_percent: 30,
     maintenance_percent: 10,
     effective_from: new Date().toISOString().substring(0, 7),
+  });
+
+  // Модалка истории ставок по периодам
+  const [historyModal, setHistoryModal] = React.useState<{
+    isOpen: boolean;
+    employee: EmployeeRateItem | null;
+    items: EmployeeRateHistoryItem[];
+    loading: boolean;
+  }>({
+    isOpen: false,
+    employee: null,
+    items: [],
+    loading: false,
   });
 
   // Модалка подтверждения сброса/удаления ставки
@@ -92,6 +112,39 @@ export default function RatesPage() {
     });
   };
 
+  const handleOpenHistory = async (item: EmployeeRateItem) => {
+    setHistoryModal({
+      isOpen: true,
+      employee: item,
+      items: [],
+      loading: true,
+    });
+    try {
+      const items = await getEmployeeRatesHistory(item.user_id);
+      setHistoryModal((p) => ({ ...p, items, loading: false }));
+    } catch {
+      showToast('Не удалось загрузить историю ставок', 'error');
+      setHistoryModal((p) => ({ ...p, loading: false }));
+    }
+  };
+
+  const handleDeleteHistoryPeriod = async (rateId: string) => {
+    if (!historyModal.employee) return;
+    try {
+      const res = await deleteEmployeeRatePeriod(rateId);
+      if (res.success) {
+        showToast('Период ставки удален', 'success');
+        const items = await getEmployeeRatesHistory(historyModal.employee.user_id);
+        setHistoryModal((p) => ({ ...p, items }));
+        fetchData();
+      } else {
+        showToast(res.error || 'Ошибка удаления периода', 'error');
+      }
+    } catch {
+      showToast('Сбой сервера при удалении периода', 'error');
+    }
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRate) return;
@@ -128,10 +181,8 @@ export default function RatesPage() {
       sortable: true,
       filterable: true,
       renderCell: (row) => (
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-bold flex items-center justify-center flex-shrink-0">
-            {row.full_name.charAt(0)}
-          </div>
+        <div className="flex items-center gap-2.5">
+          <EmployeeBadge name={row.full_name} color={row.color} size="md" />
           <div className="flex flex-col truncate">
             <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100 truncate">
               {row.full_name}
@@ -185,12 +236,20 @@ export default function RatesPage() {
     {
       key: 'actions',
       label: 'Действия',
-      width: 140,
-      minWidth: 120,
+      width: 210,
+      minWidth: 180,
       sortable: false,
       filterable: false,
       renderCell: (row) => (
         <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => handleOpenHistory(row)}
+            className="h-7 px-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-[11px] font-medium flex items-center gap-1 transition-colors"
+            title="История ставок по периодам"
+          >
+            <History className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span>Периоды</span>
+          </button>
           <button
             onClick={() => handleOpenEdit(row)}
             disabled={currentUserRole !== 'admin'}
@@ -411,6 +470,116 @@ export default function RatesPage() {
                 </div>
               </div>
             </form>
+          </div>
+        )}
+
+        {/* Модальное окно истории ставок по периодам */}
+        {historyModal.isOpen && historyModal.employee && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                    <History className="w-5 h-5" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      История ставок по периодам
+                    </h3>
+                    <p className="text-xs text-zinc-400">
+                      {historyModal.employee.full_name} (@{historyModal.employee.login})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setHistoryModal((p) => ({ ...p, isOpen: false, employee: null }))}
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500"
+                >
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-purple-500/5 dark:bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-700 dark:text-purple-300">
+                При расчете выплат комиссия сотрудника берется из ставки, действовавшей в соответствующем расчетном месяце (наиболее поздняя ставка с периодом &le; расчетного месяца).
+              </div>
+
+              <div className="max-h-64 overflow-y-auto space-y-2">
+                {historyModal.loading ? (
+                  <div className="p-6 text-center text-xs text-zinc-400">Загрузка истории...</div>
+                ) : historyModal.items.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-200/50 dark:border-zinc-800">
+                    Индивидуальные периоды отсутствуют. Сотрудник рассчитывается по базовой ставке платформы (30% подключение / 10% сопровождение).
+                  </div>
+                ) : (
+                  historyModal.items.map((item) => (
+                    <div
+                      key={item.rate_id}
+                      className="p-3.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 flex items-center justify-between text-xs"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md font-mono text-[11px] font-bold bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20">
+                            Период: {item.effective_from}
+                          </span>
+                          <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                            Подключение: {item.connection_percent}%
+                          </span>
+                          <span className="text-zinc-400">•</span>
+                          <span className="font-mono text-purple-600 dark:text-purple-400 font-bold">
+                            Сопровождение: {item.maintenance_percent}%
+                          </span>
+                        </div>
+                        {item.creator?.full_name && (
+                          <span className="text-[10px] text-zinc-400 block">
+                            Установил: {item.creator.full_name}
+                          </span>
+                        )}
+                      </div>
+
+                      {currentUserRole === 'admin' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteHistoryPeriod(item.rate_id)}
+                          className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
+                          title="Удалить период ставки"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                {currentUserRole === 'admin' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emp = historyModal.employee;
+                      setHistoryModal((p) => ({ ...p, isOpen: false }));
+                      if (emp) handleOpenEdit(emp);
+                    }}
+                    className="h-9 px-3.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-sm transition-all active:scale-95 flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+                    <span>Добавить / изменить период</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setHistoryModal((p) => ({ ...p, isOpen: false, employee: null }))}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  Закрыть
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

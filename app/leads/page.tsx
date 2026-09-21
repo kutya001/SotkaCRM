@@ -37,6 +37,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { LeadStatus, UserRole } from '@/types/database.types';
+import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
 
 function LeadsContent() {
   const { showToast } = useToast();
@@ -62,7 +63,7 @@ function LeadsContent() {
 
   // Список консультантов для назначения
   const [consultants, setConsultants] = React.useState<
-    { user_id: string; full_name: string; role: string; login: string }[]
+    { user_id: string; full_name: string; role: string; login: string; color?: string }[]
   >([]);
 
   // Состояние шторки скриптов продаж
@@ -239,24 +240,28 @@ function LeadsContent() {
     {
       key: 'assigned_to',
       label: 'Ответственный',
-      width: 180,
-      minWidth: 150,
+      width: 190,
+      minWidth: 160,
       sortable: true,
       filterable: true,
       renderCell: (row) => {
         if (currentUserRole === 'admin') {
           const isUnassigned = !row.assigned_to;
+          const currentConsultant = consultants.find((c) => c.user_id === row.assigned_to);
           return (
             <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <EmployeeColorDot
+                color={currentConsultant?.color || (isUnassigned ? '#9CA3AF' : undefined)}
+                size="sm"
+              />
               <select
                 value={row.assigned_to || ''}
                 onChange={async (e) => {
-                  const newConsultantId = e.target.value;
-                  if (!newConsultantId) return;
+                  const newConsultantId = e.target.value || null;
                   try {
                     const res = await assignLeadConsultant(row.lead_id, newConsultantId);
                     if (res.success) {
-                      showToast('Консультант назначен', 'success');
+                      showToast(newConsultantId ? 'Консультант назначен' : 'Назначение отменено', 'success');
                       fetchInitialData();
                     } else {
                       showToast(res.error || 'Ошибка назначения', 'error');
@@ -271,12 +276,10 @@ function LeadsContent() {
                     : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
                 }`}
               >
-                <option value="" disabled>
-                  + Назначить сотрудника
-                </option>
+                <option value="">— Не назначен —</option>
                 {consultants.map((c) => (
                   <option key={c.user_id} value={c.user_id}>
-                    {c.full_name}
+                    ● {c.full_name}
                   </option>
                 ))}
               </select>
@@ -286,19 +289,16 @@ function LeadsContent() {
         if (!row.assigned_user) {
           return (
             <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
-              Не назначен
+              — Не назначен —
             </span>
           );
         }
         return (
-          <div className="flex items-center gap-1.5">
-            <div className="w-5 h-5 rounded-full bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-[10px] font-bold flex items-center justify-center">
-              {row.assigned_user.full_name.charAt(0)}
-            </div>
-            <span className="text-xs font-medium truncate">
-              {row.assigned_user.full_name}
-            </span>
-          </div>
+          <EmployeeBadge
+            name={row.assigned_user.full_name}
+            color={row.assigned_user.color}
+            size="sm"
+          />
         );
       },
     },
@@ -399,7 +399,7 @@ function LeadsContent() {
                 { value: '', label: '— Не назначен —' },
                 ...consultants.map((c) => ({
                   value: c.user_id,
-                  label: `${c.full_name} (${c.role === 'admin' ? 'Администратор' : 'Консультант'})`,
+                  label: `● ${c.full_name} (${c.role === 'admin' ? 'Администратор' : 'Консультант'})`,
                 })),
               ],
       },
@@ -600,11 +600,11 @@ function LeadsContent() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все статусы воронки</option>
-          <option value="Открыт">Открыт</option>
-          <option value="Обработан">Обработан</option>
-          <option value="Назначен">Назначен</option>
-          <option value="Подписан">Подписан</option>
-          <option value="Отмена">Отмена</option>
+          <option value="Открыт">● Открыт</option>
+          <option value="Обработан">● Обработан</option>
+          <option value="Назначен">● Назначен</option>
+          <option value="Подписан">● Подписан</option>
+          <option value="Отмена">● Отмена</option>
         </select>
       </div>
 
@@ -618,10 +618,10 @@ function LeadsContent() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все консультанты</option>
-          <option value="unassigned">Без куратора</option>
+          <option value="unassigned">— Без куратора —</option>
           {consultants.map((c) => (
             <option key={c.user_id} value={c.user_id}>
-              {c.full_name}
+              ● {c.full_name}
             </option>
           ))}
         </select>

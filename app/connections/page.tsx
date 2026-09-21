@@ -11,9 +11,12 @@ import {
   getConnectionsStats,
   updateConnectionClientStatus,
   getAccrualMonthsList,
+  getActivePlansList,
+  updateConnectionTariffAndPrice,
   type ConnectionItem,
   type ConnectionsStats,
 } from './actions';
+import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import {
   generateMonthlyMaintenanceAccruals,
   type MaintenanceAccrualResult,
@@ -95,6 +98,12 @@ export default function ConnectionsPage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false);
   const [statusToUpdate, setStatusToUpdate] = React.useState<ClientLifecycleStatus>('новый');
 
+  // Тарифы для редактирования администратором
+  const [activePlans, setActivePlans] = React.useState<{ plan_id: string; plan_name: string; price: number }[]>([]);
+  const [editPlanId, setEditPlanId] = React.useState<string>('');
+  const [editPlanPrice, setEditPlanPrice] = React.useState<number>(0);
+  const [isUpdatingTariff, setIsUpdatingTariff] = React.useState(false);
+
   // Модальное окно биллинга сопровождения
   const [isBillingModalOpen, setIsBillingModalOpen] = React.useState(false);
   const [isBillingLoading, setIsBillingLoading] = React.useState(false);
@@ -108,7 +117,7 @@ export default function ConnectionsPage() {
       const monthFilter = month !== undefined ? month : selectedMonth;
       const statusFilter = status !== undefined ? status : selectedStatus;
 
-      const [res, statsRes, monthsRes] = await Promise.all([
+      const [res, statsRes, monthsRes, plansRes] = await Promise.all([
         getConnections({
           page: 1,
           pageSize: 100,
@@ -117,6 +126,7 @@ export default function ConnectionsPage() {
         }),
         getConnectionsStats(),
         getAccrualMonthsList(),
+        getActivePlansList(),
       ]);
 
       if (res.currentUserRole === 'smm') {
@@ -129,6 +139,7 @@ export default function ConnectionsPage() {
       setTotalCount(res.totalCount);
       setStats(statsRes);
       setAccrualMonths(monthsRes);
+      setActivePlans(plansRes);
 
       if (res.currentUserRole) {
         setCurrentUserRole(res.currentUserRole);
@@ -171,6 +182,41 @@ export default function ConnectionsPage() {
   const handleRowClick = (connection: ConnectionItem) => {
     setSelectedConnection(connection);
     setStatusToUpdate(connection.client_status);
+    setEditPlanId(connection.plan_id || '');
+    setEditPlanPrice(Number(connection.plan_price) || 0);
+  };
+
+  // Сохранение нового тарифа и стоимости (строго admin)
+  const handleSaveTariffAndPrice = async () => {
+    if (!selectedConnection) return;
+    setIsUpdatingTariff(true);
+    try {
+      const res = await updateConnectionTariffAndPrice(selectedConnection.connection_id, {
+        plan_id: editPlanId || null,
+        plan_price: editPlanPrice,
+      });
+
+      if (res.success) {
+        showToast('Тариф и начисление бонуса успешно обновлены', 'success');
+        setSelectedConnection((prev) =>
+          prev
+            ? {
+                ...prev,
+                plan_id: editPlanId || null,
+                plan_price: editPlanPrice,
+                connection_fee_amount: res.recalculatedBonus ?? prev.connection_fee_amount,
+              }
+            : null
+        );
+        fetchData();
+      } else {
+        showToast(res.error || 'Ошибка при обновлении тарифа', 'error');
+      }
+    } catch {
+      showToast('Не удалось обновить тариф подключения', 'error');
+    } finally {
+      setIsUpdatingTariff(false);
+    }
   };
 
   // Сохранение нового статуса сопровождения (строго admin)
@@ -321,14 +367,11 @@ export default function ConnectionsPage() {
           );
         }
         return (
-          <div className="flex items-center gap-1.5">
-            <div className="w-5 h-5 rounded-full bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-[10px] font-bold flex items-center justify-center">
-              {row.manager_user.full_name.charAt(0)}
-            </div>
-            <span className="text-xs font-medium truncate">
-              {row.manager_user.full_name}
-            </span>
-          </div>
+          <EmployeeBadge
+            name={row.manager_user.full_name}
+            color={row.manager_user.color}
+            size="sm"
+          />
         );
       },
     },
@@ -584,10 +627,18 @@ export default function ConnectionsPage() {
                   <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
                     Консультант
                   </span>
-                  <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                    {selectedConnection.manager_user?.full_name || 'Не назначен'}
-                  </p>
-                  <span className="text-[10px] text-zinc-400 block">
+                  <div className="pt-0.5">
+                    {selectedConnection.manager_user ? (
+                      <EmployeeBadge
+                        name={selectedConnection.manager_user.full_name}
+                        color={selectedConnection.manager_user.color}
+                        size="sm"
+                      />
+                    ) : (
+                      <span className="text-xs text-zinc-400 font-medium">Не назначен</span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-zinc-400 block pt-0.5">
                     Привязал: {selectedConnection.assigned_user?.full_name || 'Система'}
                   </span>
                 </div>
@@ -606,25 +657,104 @@ export default function ConnectionsPage() {
               </div>
 
               {/* Финансовые начисления */}
-              <div className="p-4 rounded-2xl bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+              <div className="p-4 rounded-2xl bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 space-y-3">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-600 dark:text-zinc-400">Тариф продавца:</span>
-                  <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
-                    {Number(selectedConnection.plan_price).toLocaleString('ru-RU')} сом
+                  <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                    Тариф и расчет комиссии
+                  </span>
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    Ставка: {selectedConnection.connection_fee_percent}%
                   </span>
                 </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-600 dark:text-zinc-400">Ставка бонуса за подключение:</span>
-                  <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
-                    {selectedConnection.connection_fee_percent}%
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-sm pt-1 border-t border-emerald-500/20 font-bold">
-                  <span className="text-emerald-700 dark:text-emerald-300">Начисленный бонус:</span>
-                  <span className="font-mono text-emerald-600 dark:text-emerald-400 text-base">
-                    +{Number(selectedConnection.connection_fee_amount).toLocaleString('ru-RU')} сом
-                  </span>
-                </div>
+
+                {currentUserRole === 'admin' ? (
+                  <div className="space-y-2.5 pt-1 border-t border-emerald-500/20 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                          Вид тарифа
+                        </label>
+                        <select
+                          value={editPlanId}
+                          onChange={(e) => {
+                            const newId = e.target.value;
+                            setEditPlanId(newId);
+                            const matched = activePlans.find((p) => p.plan_id === newId);
+                            if (matched) {
+                              setEditPlanPrice(matched.price);
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        >
+                          <option value="">Без тарифа</option>
+                          {activePlans.map((p) => (
+                            <option key={p.plan_id} value={p.plan_id}>
+                              {p.plan_name} ({p.price.toLocaleString('ru-RU')} с)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
+                          Стоимость тарифа (сом)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editPlanPrice || ''}
+                          onChange={(e) => setEditPlanPrice(parseFloat(e.target.value) || 0)}
+                          className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-emerald-500/20">
+                      <div>
+                        <span className="text-[11px] text-zinc-500 dark:text-zinc-400 block">
+                          Бонус ({selectedConnection.connection_fee_percent}%):
+                        </span>
+                        <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                          +{(Math.round((editPlanPrice * Number(selectedConnection.connection_fee_percent)) / 100 * 100) / 100).toLocaleString('ru-RU')} сом
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveTariffAndPrice}
+                        disabled={
+                          isUpdatingTariff ||
+                          (editPlanId === (selectedConnection.plan_id || '') &&
+                            editPlanPrice === Number(selectedConnection.plan_price))
+                        }
+                        className="h-8 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isUpdatingTariff ? 'Сохранение...' : 'Сохранить тариф'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-600 dark:text-zinc-400">Тариф продавца:</span>
+                      <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+                        {Number(selectedConnection.plan_price).toLocaleString('ru-RU')} сом
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-600 dark:text-zinc-400">Ставка бонуса за подключение:</span>
+                      <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+                        {selectedConnection.connection_fee_percent}%
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm pt-1 border-t border-emerald-500/20 font-bold">
+                      <span className="text-emerald-700 dark:text-emerald-300">Начисленный бонус:</span>
+                      <span className="font-mono text-emerald-600 dark:text-emerald-400 text-base">
+                        +{Number(selectedConnection.connection_fee_amount).toLocaleString('ru-RU')} сом
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Сопровождение и статус жизненного цикла */}

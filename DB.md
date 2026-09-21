@@ -120,6 +120,7 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 | `is_active` | `BOOLEAN` | `NOT NULL, DEFAULT true` | Флаг активности (доступ к CRM заблокирован при `false`).
 
  |
+| `color` | `VARCHAR(30)` | `NOT NULL, DEFAULT '#3B82F6'` | Цветовая метка сотрудника (HEX) для сквозной идентификации в интерфейсе. |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Дата и время создания учетной записи. |
 
 ---
@@ -534,9 +535,25 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 | `changed_by` | `UUID` | `NULL, REFERENCES users(user_id)` | Инициатор изменения.
 
  |
-| `changed_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Время фиксации изменения.
+| `changed_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Время фиксации изменения. |
 
- |
+---
+
+**3.12. Таблица `plan_prices` (Версионирование цен тарифов по датам действия)**
+
+* **Назначение:** Хранение интервалов действия цен на тарифы для исторически точного расчета бонусов при подключении на любую дату.
+* **Источник наполнения:** Администратор в модуле «Тарифы» (`/plans`).
+
+| Поле | Тип данных | Ограничения | Описание |
+| --- | --- | --- | --- |
+| `price_id` | `UUID` | `PRIMARY KEY, DEFAULT gen_random_uuid()` | Идентификатор ценового интервала. |
+| `plan_id` | `VARCHAR(50)` | `NOT NULL, REFERENCES plans(plan_id) ON DELETE CASCADE` | Ссылка на тариф. |
+| `price` | `NUMERIC(12,2)` | `NOT NULL` | Действующая цена в сомах. |
+| `effective_from` | `DATE` | `NOT NULL, DEFAULT CURRENT_DATE` | Дата начала действия цены (включительно). |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Время регистрации цены. |
+| `created_by` | `UUID` | `NULL, REFERENCES users(user_id)` | Администратор, установивший цену. |
+
+*Ограничение целостности:* `CONSTRAINT uq_plan_price_plan_date UNIQUE(plan_id, effective_from)`
 
 ---
 

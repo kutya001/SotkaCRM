@@ -35,27 +35,32 @@ import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 import { LinkSellerLeadModal } from '@/components/sellers/LinkSellerLeadModal';
+import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
 
 const SELLER_MODERATION_OPTIONS: StatusOption[] = [
   {
     value: 'approved',
     label: 'Одобрен',
     colorClass: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    dotColor: 'bg-emerald-500',
   },
   {
     value: 'pending',
     label: 'На модерации',
     colorClass: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+    dotColor: 'bg-amber-500',
   },
   {
     value: 'rejected',
     label: 'Отклонен',
     colorClass: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
+    dotColor: 'bg-rose-500',
   },
   {
     value: 'blocked',
     label: 'Заблокирован',
     colorClass: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30',
+    dotColor: 'bg-zinc-500',
   },
 ];
 
@@ -82,7 +87,7 @@ export default function SellersPage() {
 
   // Список кураторов для фильтрации и назначения
   const [managers, setManagers] = React.useState<
-    { user_id: string; full_name: string; role: string; login: string }[]
+    { user_id: string; full_name: string; role: string; login: string; color?: string }[]
   >([]);
 
   // Состояние модального окна EntityModal (строго режим просмотра)
@@ -346,15 +351,20 @@ export default function SellersPage() {
     {
       key: 'manager_id',
       label: 'Куратор',
-      width: 180,
-      minWidth: 150,
+      width: 190,
+      minWidth: 160,
       sortable: true,
       filterable: true,
       renderCell: (row: SellerItem) => {
         if (currentUserRole === 'admin') {
           const isUnassigned = !row.manager_id;
+          const currentMgr = managers.find((m) => m.user_id === row.manager_id);
           return (
             <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <EmployeeColorDot
+                color={currentMgr?.color || (isUnassigned ? '#9CA3AF' : undefined)}
+                size="sm"
+              />
               <select
                 value={row.manager_id || ''}
                 onChange={async (e) => {
@@ -367,10 +377,10 @@ export default function SellersPage() {
                     : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
                 }`}
               >
-                <option value="">{isUnassigned ? '+ Назначить куратора' : 'Не назначен'}</option>
+                <option value="">— Не назначен —</option>
                 {managers.map((m) => (
                   <option key={m.user_id} value={m.user_id}>
-                    {m.full_name}
+                    ● {m.full_name}
                   </option>
                 ))}
               </select>
@@ -379,18 +389,15 @@ export default function SellersPage() {
         }
         if (!row.manager_user) {
           return (
-            <span className="text-[11px] text-zinc-400 italic">Не назначен</span>
+            <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>
           );
         }
         return (
-          <div className="flex items-center gap-1.5">
-            <span className="w-5 h-5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 text-[10px] font-bold flex items-center justify-center">
-              {row.manager_user.full_name.charAt(0)}
-            </span>
-            <span className="text-xs text-zinc-800 dark:text-zinc-200 truncate">
-              {row.manager_user.full_name}
-            </span>
-          </div>
+          <EmployeeBadge
+            name={row.manager_user.full_name}
+            color={row.manager_user.color}
+            size="sm"
+          />
         );
       },
     },
@@ -651,10 +658,10 @@ export default function SellersPage() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Любая модерация</option>
-          <option value="approved">Одобрен</option>
-          <option value="pending">На модерации</option>
-          <option value="rejected">Отклонен</option>
-          <option value="blocked">Заблокирован</option>
+          <option value="approved">● Одобрен</option>
+          <option value="pending">● На модерации</option>
+          <option value="rejected">● Отклонен</option>
+          <option value="blocked">● Заблокирован</option>
         </select>
       </div>
 
@@ -668,8 +675,8 @@ export default function SellersPage() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все статусы активности</option>
-          <option value="true">Только активные</option>
-          <option value="false">Только неактивные</option>
+          <option value="true">● Только активные</option>
+          <option value="false">● Только неактивные</option>
         </select>
       </div>
 
@@ -683,10 +690,10 @@ export default function SellersPage() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все кураторы</option>
-          <option value="unassigned">Без куратора</option>
+          <option value="unassigned">— Без куратора —</option>
           {managers.map((m) => (
             <option key={m.user_id} value={m.user_id}>
-              {m.full_name}
+              ● {m.full_name}
             </option>
           ))}
         </select>
@@ -722,6 +729,213 @@ export default function SellersPage() {
       <span className="hidden sm:inline">Обновить</span>
     </button>
   );
+
+  // Кастомный рендеринг карточки продавца для мобильных устройств (Card View)
+  const renderSellerCard = (seller: SellerItem) => {
+    const bal = Number(seller.balance) || 0;
+    const currentMgr = managers.find((m) => m.user_id === seller.manager_id);
+    const isUnassignedMgr = !seller.manager_id;
+    const cleanPhone = seller.seller_phone.replace(/\D/g, '');
+    const modOpt = SELLER_MODERATION_OPTIONS.find((o) => o.value === seller.moderation) || {
+      value: seller.moderation,
+      label: seller.moderation,
+      colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
+      dotColor: 'bg-zinc-500',
+    };
+
+    return (
+      <div
+        key={seller.seller_phone}
+        onClick={() =>
+          setModalState({
+            isOpen: true,
+            mode: 'view',
+            selectedSeller: seller,
+          })
+        }
+        className="rounded-2xl sm:rounded-3xl island-glass border border-white/20 dark:border-zinc-800/40 p-3.5 sm:p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all shadow-sm"
+      >
+        {/* Верхняя строка: Магазин, имя продавца и бейджи статуса */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+                <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
+                  {seller.seller_name || 'Без имени'}
+                </h4>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                  {seller.store || 'Без названия'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1 ${modOpt.colorClass}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${modOpt.dotColor || 'bg-current'}`} />
+              <span>{modOpt.label}</span>
+            </span>
+            <span
+              className={`text-[10px] font-medium flex items-center gap-1 ${
+                seller.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  seller.is_active ? 'bg-emerald-500' : 'bg-zinc-400'
+                }`}
+              />
+              <span>{seller.is_active ? 'Активен' : 'Неактивен'}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Телефон и быстрые кнопки связи */}
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
+          <div className="font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+            +{seller.seller_phone}
+          </div>
+          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            {cleanPhone && (
+              <>
+                <a
+                  href={`tel:+${cleanPhone}`}
+                  className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 transition-colors"
+                  title="Позвонить"
+                >
+                  <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </a>
+                <a
+                  href={`https://wa.me/${cleanPhone}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-colors"
+                  title="WhatsApp"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </a>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Характеристики: Баланс, Тариф, Точки/Сотрудники */}
+        <div className="grid grid-cols-3 gap-2 py-1.5 px-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-700/50 text-center">
+          <div>
+            <span className="text-[10px] text-zinc-400 block">Баланс</span>
+            <span
+              className={`text-xs font-bold font-mono ${
+                bal > 0
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-zinc-700 dark:text-zinc-300'
+              }`}
+            >
+              {bal.toLocaleString('ru-RU')} c
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-zinc-400 block">Тариф</span>
+            <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate block">
+              {seller.plan_name || 'Базовый'}
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-zinc-400 block">Точек/Сотр</span>
+            <span className="text-xs font-mono font-medium text-zinc-700 dark:text-zinc-300">
+              {seller.outlets_count} / {seller.employees_count}
+            </span>
+          </div>
+        </div>
+
+        {/* Назначение куратора и Связанный лид (Мобильный режим) */}
+        <div className="space-y-2 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
+          {/* Блок Куратора */}
+          <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
+            <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+              Куратор:
+            </span>
+            {currentUserRole === 'admin' ? (
+              <div className="flex items-center gap-1.5 flex-1 max-w-[210px] justify-end">
+                <EmployeeColorDot
+                  color={currentMgr?.color || (isUnassignedMgr ? '#9CA3AF' : undefined)}
+                  size="xs"
+                />
+                <select
+                  value={seller.manager_id || ''}
+                  onChange={async (e) => {
+                    const val = e.target.value || null;
+                    await handleAssignManager(seller.seller_phone, val);
+                  }}
+                  className={`h-7 w-full px-2 text-[11px] font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
+                    isUnassignedMgr
+                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40'
+                      : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200'
+                  }`}
+                >
+                  <option value="">— Не назначен —</option>
+                  {managers.map((m) => (
+                    <option key={m.user_id} value={m.user_id}>
+                      ● {m.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div>
+                {seller.manager_user ? (
+                  <EmployeeBadge
+                    name={seller.manager_user.full_name}
+                    color={seller.manager_user.color}
+                    size="xs"
+                  />
+                ) : (
+                  <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Блок Привязки Лида */}
+          <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
+            <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+              Лид:
+            </span>
+            {seller.linked_lead ? (
+              <div className="flex items-center gap-1.5 text-right min-w-0">
+                <span className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
+                  <UserCheck className="w-2.5 h-2.5" />
+                </span>
+                <div className="min-w-0">
+                  <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate block">
+                    {seller.linked_lead.client_name}
+                  </span>
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                    {seller.linked_lead.status}
+                  </span>
+                </div>
+              </div>
+            ) : currentUserRole === 'admin' ? (
+              <button
+                type="button"
+                onClick={() => setLinkLeadModal({ isOpen: true, seller })}
+                className="h-7 px-2.5 text-[11px] font-semibold rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 transition-all flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Связать с лидом</span>
+              </button>
+            ) : (
+              <span className="text-[11px] text-zinc-400 italic">Прямое подключение</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <AppLayout
@@ -831,6 +1045,7 @@ export default function SellersPage() {
             totalCount={totalCount}
             externalSearchQuery={searchQuery}
             customActions={sellerActions}
+            renderCard={renderSellerCard}
             onRowClick={(seller) =>
               setModalState({
                 isOpen: true,

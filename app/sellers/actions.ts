@@ -34,6 +34,7 @@ export interface SellerItem {
     full_name: string;
     role: string;
     login: string;
+    color?: string;
   } | null;
   linked_lead?: LinkedLeadInfo | null;
 }
@@ -175,12 +176,12 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     new Set((sellersData || []).map((s) => s.manager_id).filter((id): id is string => Boolean(id)))
   );
 
-  const managersMap = new Map<string, { user_id: string; full_name: string; role: string; login: string }>();
+  const managersMap = new Map<string, { user_id: string; full_name: string; role: string; login: string; color?: string }>();
 
   if (managerIds.length > 0) {
     const { data: managers } = await supabase
       .from('users')
-      .select('user_id, full_name, role, login')
+      .select('user_id, full_name, role, login, color')
       .in('user_id', managerIds);
 
     if (managers) {
@@ -287,13 +288,13 @@ export async function getSellersStats(): Promise<SellersStats> {
  * Получение списка сотрудников для назначения куратором
  */
 export async function getManagersList(): Promise<
-  { user_id: string; full_name: string; role: string; login: string }[]
+  { user_id: string; full_name: string; role: string; login: string; color?: string }[]
 > {
   const supabase = await createClient();
 
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, full_name, role, login')
+    .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
     .in('role', ['admin', 'consultant'])
     .order('full_name', { ascending: true });
@@ -303,12 +304,13 @@ export async function getManagersList(): Promise<
     return [];
   }
 
-  return data || [];
+  return (data as any) || [];
 }
 
 /**
  * Назначение/изменение куратора продавца с автоматической фиксацией связи в connections
  * и расчетом вознаграждения для зарплат и выплат (только для роли admin)
+ * Поддерживает сброс обратно на null ("Не назначен")
  */
 export async function assignSellerManager(
   sellerPhone: string,
@@ -333,71 +335,90 @@ export async function assignSellerManager(
       return { success: false, error: updateSellerError?.message || 'Продавец не найден' };
     }
 
-    // 2. Если куратор назначен (не сброшен), фиксируем связь в connections
-    if (managerId) {
-      // Определяем цену тарифа
-      let planPrice = 2500;
-      if (updatedSeller.plan_id) {
+    // Если куратор сброшен (null)
+    if (!managerId) {
+      await supabase
+        .from('connections')
+        .delete()
+        .eq('seller_phone', sellerPhone);
+
+      revalidatePath('/sellers');
+      revalidatePath('/connections');
+      revalidatePath('/payouts');
+      revalidatePath('/analytics');
+      revalidatePath('/');
+      return { success: true };
+    }
+
+    // 2. Если куратор назначен, определяем тариф и ставку на дату
+    let planPrice = 2500;
+    const today = new Date().toISOString().substring(0, 10);
+    if (updatedSeller.plan_id) {
+      const { data: priceData } = await supabase.rpc('get_plan_price_on_date', {
+        p_plan_id: updatedSeller.plan_id,
+        p_date: today,
+      });
+      if (priceData && Number(priceData) > 0) {
+        planPrice = Number(priceData);
+      } else {
         const { data: planData } = await supabase
           .from('plans')
           .select('price')
           .eq('plan_id', updatedSeller.plan_id)
           .maybeSingle();
-
         if (planData) planPrice = Number(planData.price);
       }
+    }
 
-      // Получаем ставку консультанта из employee_rates
-      const { data: rateData } = await supabase
-        .from('employee_rates')
-        .select('connection_percent')
-        .eq('user_id', managerId)
-        .order('effective_from', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    // Получаем ставку консультанта на текущий месяц из RPC get_employee_rate_on_month
+    const currentMonth = new Date().toISOString().substring(0, 7);
+    let connectionPercent = 30;
+    const { data: rpcRate } = await supabase.rpc('get_employee_rate_on_month', {
+      p_user_id: managerId,
+      p_month: currentMonth,
+    });
 
-      const connectionPercent = rateData ? Number(rateData.connection_percent) : 30;
-      const connectionFeeAmount = Math.round(((planPrice * connectionPercent) / 100) * 100) / 100;
-      const currentMonth = new Date().toISOString().substring(0, 7);
-      const nowIso = new Date().toISOString();
+    if (rpcRate && typeof rpcRate === 'object' && 'connection_percent' in (rpcRate as any)) {
+      connectionPercent = Number((rpcRate as any).connection_percent) || 30;
+    }
 
-      // Проверяем, существует ли уже запись в connections для данного продавца
-      const { data: existingConnection } = await supabase
+    const connectionFeeAmount = Math.round(((planPrice * connectionPercent) / 100) * 100) / 100;
+    const nowIso = new Date().toISOString();
+
+    // Проверяем, существует ли уже запись в connections для данного продавца
+    const { data: existingConnection } = await supabase
+      .from('connections')
+      .select('connection_id')
+      .eq('seller_phone', sellerPhone)
+      .maybeSingle();
+
+    if (existingConnection) {
+      await supabase
         .from('connections')
-        .select('connection_id')
-        .eq('seller_phone', sellerPhone)
-        .maybeSingle();
-
-      if (existingConnection) {
-        // Обновляем менеджера и пересчитываем комиссию
-        await supabase
-          .from('connections')
-          .update({
-            manager_id: managerId,
-            connection_fee_percent: connectionPercent,
-            connection_fee_amount: connectionFeeAmount,
-            plan_price: planPrice,
-          })
-          .eq('connection_id', existingConnection.connection_id);
-      } else {
-        // Вставляем новую связь
-        await supabase.from('connections').insert({
-          seller_phone: sellerPhone,
-          seller_name: updatedSeller.seller_name,
-          store: updatedSeller.store || 'Без названия',
+        .update({
           manager_id: managerId,
-          assigned_by: profile.user_id,
-          assigned_at: nowIso,
-          status: 'подключен',
-          plan_id: updatedSeller.plan_id,
-          plan_price: planPrice,
           connection_fee_percent: connectionPercent,
           connection_fee_amount: connectionFeeAmount,
-          accrual_month: currentMonth,
-          client_status: 'новый',
-          maintenance_months_limit: 3,
-        });
-      }
+          plan_price: planPrice,
+        })
+        .eq('connection_id', existingConnection.connection_id);
+    } else {
+      await supabase.from('connections').insert({
+        seller_phone: sellerPhone,
+        seller_name: updatedSeller.seller_name,
+        store: updatedSeller.store || 'Без названия',
+        manager_id: managerId,
+        assigned_by: profile.user_id,
+        assigned_at: nowIso,
+        status: 'подключен',
+        plan_id: updatedSeller.plan_id,
+        plan_price: planPrice,
+        connection_fee_percent: connectionPercent,
+        connection_fee_amount: connectionFeeAmount,
+        accrual_month: currentMonth,
+        client_status: 'новый',
+        maintenance_months_limit: 3,
+      });
     }
 
     revalidatePath('/sellers');
@@ -413,8 +434,11 @@ export async function assignSellerManager(
 
 /**
  * Получение свободных лидов для привязки к продавцу
+ * Приоритезирует статус 'Подписан'
  */
-export async function getAvailableLeadsForSellerLinking(): Promise<{
+export async function getAvailableLeadsForSellerLinking(
+  onlySigned: boolean = false
+): Promise<{
   leads: {
     lead_id: string;
     client_name: string;
@@ -424,6 +448,7 @@ export async function getAvailableLeadsForSellerLinking(): Promise<{
     assigned_user?: {
       user_id: string;
       full_name: string;
+      color?: string;
     } | null;
     created_at: string;
   }[];
@@ -432,7 +457,7 @@ export async function getAvailableLeadsForSellerLinking(): Promise<{
   try {
     const { supabase } = await requireAdmin();
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('leads')
       .select(`
         lead_id,
@@ -441,18 +466,30 @@ export async function getAvailableLeadsForSellerLinking(): Promise<{
         status,
         assigned_to,
         created_at,
-        assigned_user:users!leads_assigned_to_fkey(user_id, full_name)
+        assigned_user:users!leads_assigned_to_fkey(user_id, full_name, color)
       `)
       .is('seller_phone', null)
-      .neq('status', 'Отмена')
-      .order('created_at', { ascending: false })
-      .limit(100);
+      .neq('status', 'Отмена');
+
+    if (onlySigned) {
+      query = query.eq('status', 'Подписан');
+    }
+
+    query = query.order('created_at', { ascending: false }).limit(100);
+
+    const { data, error } = await query;
 
     if (error) {
       return { leads: [], error: error.message };
     }
 
-    return { leads: (data as any) || [] };
+    const sortedLeads = ((data as any) || []).sort((a: any, b: any) => {
+      if (a.status === 'Подписан' && b.status !== 'Подписан') return -1;
+      if (a.status !== 'Подписан' && b.status === 'Подписан') return 1;
+      return 0;
+    });
+
+    return { leads: sortedLeads };
   } catch (err: any) {
     return { leads: [], error: err.message || 'Ошибка загрузки доступных лидов' };
   }

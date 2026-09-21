@@ -24,11 +24,13 @@ export interface LeadItem {
     user_id: string;
     full_name: string;
     role: string;
+    color?: string;
   } | null;
   created_user?: {
     user_id: string;
     full_name: string;
     role: string;
+    color?: string;
   } | null;
 }
 
@@ -83,8 +85,8 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
       .select(
         `
           *,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role)
+          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
+          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
         `,
         { count: 'exact' }
       );
@@ -218,8 +220,8 @@ export async function createLead(input: {
       .select(
         `
           *,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role)
+          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
+          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
         `
       )
       .single();
@@ -343,8 +345,8 @@ export async function updateLead(
       .select(
         `
           *,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role)
+          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
+          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
         `
       )
       .single();
@@ -490,12 +492,14 @@ export async function cancelLead(
 /**
  * Получение списка активных консультантов и администраторов
  */
-export async function getConsultantsList() {
+export async function getConsultantsList(): Promise<
+  { user_id: string; full_name: string; role: string; login: string; color?: string }[]
+> {
   const supabase = await createClient();
 
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, full_name, role, login')
+    .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
     .in('role', ['admin', 'consultant'])
     .order('full_name', { ascending: true });
@@ -505,7 +509,7 @@ export async function getConsultantsList() {
     return [];
   }
 
-  return data || [];
+  return (data as any) || [];
 }
 
 /**
@@ -558,10 +562,11 @@ export async function getLeadsStats() {
 
 /**
  * Быстрое назначение/переназначение ответственного консультанта администратором
+ * Поддерживает сброс консультанта (null) с возвратом статуса в "Обработан"
  */
 export async function assignLeadConsultant(
   leadId: string,
-  consultantId: string
+  consultantId: string | null
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { profile, supabase } = await requireAuth();
@@ -577,13 +582,18 @@ export async function assignLeadConsultant(
       .single();
 
     const updates: Database['public']['Tables']['leads']['Update'] = {
-      assigned_to: consultantId,
+      assigned_to: consultantId || null,
       updated_at: new Date().toISOString(),
     };
 
-    // Если статус был Открыт или Обработан, автоматически переводим в Назначен
-    if (currentLead && (currentLead.status === 'Открыт' || currentLead.status === 'Обработан')) {
+    // Если консультант назначен и статус был Открыт или Обработан, автоматически переводим в Назначен
+    if (consultantId && currentLead && (currentLead.status === 'Открыт' || currentLead.status === 'Обработан')) {
       updates.status = 'Назначен';
+    }
+
+    // Если консультанта сбросили (null) и статус был Назначен, возвращаем в Обработан
+    if (!consultantId && currentLead && currentLead.status === 'Назначен') {
+      updates.status = 'Обработан';
     }
 
     const { error } = await supabase

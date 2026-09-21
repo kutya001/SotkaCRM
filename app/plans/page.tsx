@@ -10,6 +10,7 @@ import {
   getPlans,
   updatePlan,
   createPlan,
+  deletePlan,
   getPlanHistory,
   type PlanItem,
   type PlanHistoryItem,
@@ -26,6 +27,7 @@ import {
   X,
   Clock,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -76,6 +78,16 @@ export default function PlansPage() {
     items: [],
     loading: false,
   });
+
+  // Модалка подтверждения удаления тарифа
+  const [deleteDialog, setDeleteDialog] = React.useState<{
+    isOpen: boolean;
+    plan: PlanItem | null;
+  }>({
+    isOpen: false,
+    plan: null,
+  });
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
   const fetchData = React.useCallback(async () => {
     setIsLoading(true);
@@ -261,20 +273,31 @@ export default function PlansPage() {
     },
     {
       key: 'actions',
-      label: 'Аудит цен',
-      width: 130,
-      minWidth: 110,
+      label: 'Действия',
+      width: 150,
+      minWidth: 120,
       sortable: false,
       filterable: false,
       renderCell: (row) => (
-        <button
-          onClick={(e) => handleOpenHistory(row, e)}
-          className="h-7 px-2.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[11px] font-medium flex items-center gap-1 transition-colors"
-          title="История изменений цен"
-        >
-          <History className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
-          <span>История</span>
-        </button>
+        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={(e) => handleOpenHistory(row, e)}
+            className="h-7 px-2 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[11px] font-medium flex items-center gap-1 transition-colors"
+            title="История изменений цен"
+          >
+            <History className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
+            <span>История</span>
+          </button>
+          {currentUserRole === 'admin' && (
+            <button
+              onClick={() => setDeleteDialog({ isOpen: true, plan: row })}
+              className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
+              title="Удалить тариф"
+            >
+              <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
       ),
     },
   ];
@@ -461,21 +484,41 @@ export default function PlansPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setEditModal({ isOpen: false, isNew: false, plan: null })}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Сохранение...' : 'Сохранить'}
-                </button>
+              <div className="flex items-center justify-between gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                {!editModal.isNew && currentUserRole === 'admin' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentPlan = editModal.plan;
+                      setEditModal({ isOpen: false, isNew: false, plan: null });
+                      if (currentPlan) {
+                        setDeleteDialog({ isOpen: true, plan: currentPlan });
+                      }
+                    }}
+                    className="h-9 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Удалить</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditModal({ isOpen: false, isNew: false, plan: null })}
+                    className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'Сохранение...' : 'Сохранить'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -555,6 +598,70 @@ export default function PlansPage() {
                   className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 >
                   Закрыть
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Модальное окно подтверждения удаления тарифа */}
+        {deleteDialog.isOpen && deleteDialog.plan && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 text-rose-500">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={2} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Удаление тарифа
+                  </h3>
+                  <p className="text-xs text-zinc-400 font-mono">
+                    {deleteDialog.plan.plan_id} • {deleteDialog.plan.plan_name}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Вы действительно хотите удалить тариф <strong>«{deleteDialog.plan.plan_name}»</strong>?
+                Действие необратимо. Если тариф привязан к действующим продавцам, система заблокирует удаление.
+              </p>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteDialog({ isOpen: false, plan: null })}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={async () => {
+                    if (!deleteDialog.plan) return;
+                    setIsDeleting(true);
+                    try {
+                      const res = await deletePlan(deleteDialog.plan.plan_id);
+                      if (res.success) {
+                        showToast('Тариф успешно удален', 'success');
+                        setDeleteDialog({ isOpen: false, plan: null });
+                        fetchData();
+                      } else {
+                        showToast(res.error || 'Ошибка при удалении тарифа', 'error');
+                      }
+                    } catch {
+                      showToast('Сбой сервера при удалении тарифа', 'error');
+                    } finally {
+                      setIsDeleting(false);
+                    }
+                  }}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isDeleting ? 'Удаление...' : 'Удалить тариф'}
                 </button>
               </div>
             </div>

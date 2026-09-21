@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   getEmployeeRates,
   upsertEmployeeRate,
+  deleteEmployeeRate,
   type EmployeeRateItem,
 } from './actions';
 import {
@@ -19,6 +20,7 @@ import {
   X,
   TrendingUp,
   ShieldAlert,
+  Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -43,6 +45,16 @@ export default function RatesPage() {
     maintenance_percent: 10,
     effective_from: new Date().toISOString().substring(0, 7),
   });
+
+  // Модалка подтверждения сброса/удаления ставки
+  const [deleteDialog, setDeleteDialog] = React.useState<{
+    isOpen: boolean;
+    rate: EmployeeRateItem | null;
+  }>({
+    isOpen: false,
+    rate: null,
+  });
+  const [isDeleting, setIsDeleting] = React.useState(false);
 
   const fetchData = React.useCallback(async () => {
     setIsLoading(true);
@@ -173,23 +185,31 @@ export default function RatesPage() {
     {
       key: 'actions',
       label: 'Действия',
-      width: 120,
-      minWidth: 100,
+      width: 140,
+      minWidth: 120,
       sortable: false,
       filterable: false,
       renderCell: (row) => (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleOpenEdit(row);
-          }}
-          disabled={currentUserRole !== 'admin'}
-          className="h-7 px-2.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[11px] font-medium flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Настроить процентную ставку"
-        >
-          <Edit2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>Настроить</span>
-        </button>
+        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => handleOpenEdit(row)}
+            disabled={currentUserRole !== 'admin'}
+            className="h-7 px-2 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[11px] font-medium flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Настроить процентную ставку"
+          >
+            <Edit2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span>Настроить</span>
+          </button>
+          {currentUserRole === 'admin' && Boolean(row.rate_id) && (
+            <button
+              onClick={() => setDeleteDialog({ isOpen: true, rate: row })}
+              className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
+              title="Сбросить к базовой ставке (30%/10%)"
+            >
+              <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
       ),
     },
   ];
@@ -354,23 +374,107 @@ export default function RatesPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+              <div className="flex items-center justify-between gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                {Boolean(selectedRate?.rate_id) && currentUserRole === 'admin' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rateToReset = selectedRate;
+                      setSelectedRate(null);
+                      if (rateToReset) {
+                        setDeleteDialog({ isOpen: true, rate: rateToReset });
+                      }
+                    }}
+                    className="h-9 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Сбросить к базовой</span>
+                  </button>
+                ) : (
+                  <div />
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRate(null)}
+                    className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="h-9 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'Сохранение...' : 'Сохранить ставки'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Модальное окно подтверждения сброса персональной ставки */}
+        {deleteDialog.isOpen && deleteDialog.rate && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 text-rose-500">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={2} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Сброс персональной ставки
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    {deleteDialog.rate.full_name} (@{deleteDialog.rate.login})
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Вы действительно хотите удалить индивидуальную ставку для сотрудника <strong>{deleteDialog.rate.full_name}</strong>?
+                Сотрудник будет переведен на стандартные базовые ставки платформы (<strong>30%</strong> за подключение / <strong>10%</strong> за сопровождение).
+              </p>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedRate(null)}
+                  onClick={() => setDeleteDialog({ isOpen: false, rate: null })}
                   className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 >
                   Отмена
                 </button>
                 <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="h-9 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={async () => {
+                    if (!deleteDialog.rate) return;
+                    setIsDeleting(true);
+                    try {
+                      const res = await deleteEmployeeRate(deleteDialog.rate.user_id);
+                      if (res.success) {
+                        showToast('Персональная ставка успешно сброшена', 'success');
+                        setDeleteDialog({ isOpen: false, rate: null });
+                        fetchData();
+                      } else {
+                        showToast(res.error || 'Ошибка сброса ставки', 'error');
+                      }
+                    } catch {
+                      showToast('Сбой сервера при сбросе ставки', 'error');
+                    } finally {
+                      setIsDeleting(false);
+                    }
+                  }}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {isSubmitting ? 'Сохранение...' : 'Сохранить ставки'}
+                  {isDeleting ? 'Сброс...' : 'Сбросить ставку'}
                 </button>
               </div>
-            </form>
+            </div>
           </div>
         )}
       </div>

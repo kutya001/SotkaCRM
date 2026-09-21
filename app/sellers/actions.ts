@@ -410,3 +410,103 @@ export async function assignSellerManager(
     return { success: false, error: err.message || 'Ошибка назначения куратора' };
   }
 }
+
+/**
+ * Получение свободных лидов для привязки к продавцу
+ */
+export async function getAvailableLeadsForSellerLinking(): Promise<{
+  leads: {
+    lead_id: string;
+    client_name: string;
+    phone: string;
+    status: string;
+    assigned_to: string | null;
+    assigned_user?: {
+      user_id: string;
+      full_name: string;
+    } | null;
+    created_at: string;
+  }[];
+  error?: string;
+}> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    const { data, error } = await supabase
+      .from('leads')
+      .select(`
+        lead_id,
+        client_name,
+        phone,
+        status,
+        assigned_to,
+        created_at,
+        assigned_user:users!leads_assigned_to_fkey(user_id, full_name)
+      `)
+      .is('seller_phone', null)
+      .neq('status', 'Отмена')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) {
+      return { leads: [], error: error.message };
+    }
+
+    return { leads: (data as any) || [] };
+  } catch (err: any) {
+    return { leads: [], error: err.message || 'Ошибка загрузки доступных лидов' };
+  }
+}
+
+/**
+ * Ручное связывание продавца с лидом администратором с автоматическим
+ * назначением куратора из лида и мгновенным расчетом выплат в connections
+ */
+export async function linkSellerToLeadAction(
+  sellerPhone: string,
+  leadId: string
+): Promise<{ success: boolean; error?: string; connectionFeeAmount?: number }> {
+  try {
+    const { supabase, profile } = await requireAdmin();
+
+    if (!sellerPhone || !leadId) {
+      return { success: false, error: 'Не указан продавец или лид' };
+    }
+
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
+      p_lead_id: leadId,
+      p_seller_phone: sellerPhone,
+      p_manager_id: null,
+      p_assigned_by: profile.user_id,
+    });
+
+    if (rpcErr) {
+      return { success: false, error: rpcErr.message };
+    }
+
+    const result = rpcRes as {
+      success: boolean;
+      error?: string;
+      connection_fee_amount?: number;
+    };
+
+    if (!result.success) {
+      return { success: false, error: result.error || 'Ошибка при связывании продавца с лидом' };
+    }
+
+    revalidatePath('/sellers');
+    revalidatePath('/leads');
+    revalidatePath('/connections');
+    revalidatePath('/payouts');
+    revalidatePath('/analytics');
+    revalidatePath('/');
+
+    return {
+      success: true,
+      connectionFeeAmount: result.connection_fee_amount,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Сбой при связывании продавца с лидом' };
+  }
+}
+

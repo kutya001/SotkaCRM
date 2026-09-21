@@ -747,13 +747,13 @@ $$ LANGUAGE sql SECURITY DEFINER STABLE;
 ```sql
 ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 
--- Просмотр: Администратор видит всё; SMM видит созданные им; Консультант видит свободные (не назначенные) и свои
+-- Просмотр: Администратор видит всё; SMM видит созданные им; Консультант видит строго назначенные ему лиды в статусах Назначен, Подписан, Отмена
 CREATE POLICY "leads_select_policy" ON leads
 FOR SELECT TO authenticated
 USING (
     get_current_user_role() = 'admin'
     OR (get_current_user_role() = 'smm' AND created_by = get_current_crm_user_id())
-    OR (get_current_user_role() = 'consultant' AND (assigned_to = get_current_crm_user_id() OR assigned_to IS NULL))
+    OR (get_current_user_role() = 'consultant' AND assigned_to = get_current_crm_user_id() AND status IN ('Назначен', 'Подписан', 'Отмена'))
 );
 
 -- Создание: Доступно Администратору, SMM и Консультантам
@@ -764,18 +764,19 @@ WITH CHECK (
     AND created_by = get_current_crm_user_id()
 );
 
--- Обновление: SMM не может менять взятые лиды; Консультант меняет свои и открытые; Администратор меняет все
+-- Обновление: SMM меняет только созданные им в статусах Открыт/Обработан; Консультант меняет только свои лиды; Администратор меняет все
 CREATE POLICY "leads_update_policy" ON leads
 FOR UPDATE TO authenticated
 USING (
     get_current_user_role() = 'admin'
-    OR (get_current_user_role() = 'consultant' AND (assigned_to = get_current_crm_user_id() OR assigned_to IS NULL))
+    OR (get_current_user_role() = 'smm' AND created_by = get_current_crm_user_id() AND status IN ('Открыт', 'Обработан'))
+    OR (get_current_user_role() = 'consultant' AND assigned_to = get_current_crm_user_id() AND status IN ('Назначен', 'Подписан', 'Отмена'))
 )
 WITH CHECK (
     get_current_user_role() = 'admin'
-    OR (get_current_user_role() = 'consultant')
+    OR (get_current_user_role() = 'smm' AND created_by = get_current_crm_user_id() AND status IN ('Открыт', 'Обработан'))
+    OR (get_current_user_role() = 'consultant' AND assigned_to = get_current_crm_user_id() AND status IN ('Назначен', 'Подписан', 'Отмена'))
 );
-
 ```
 
 **6.2. Политики для таблицы `sellers**`

@@ -29,10 +29,12 @@ import {
   RefreshCw,
   Loader2,
   RotateCcw,
+  Plus,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
+import { LinkSellerLeadModal } from '@/components/sellers/LinkSellerLeadModal';
 
 const SELLER_MODERATION_OPTIONS: StatusOption[] = [
   {
@@ -92,6 +94,15 @@ export default function SellersPage() {
     isOpen: false,
     mode: 'view',
     selectedSeller: null,
+  });
+
+  // Состояние модального окна связывания с лидом
+  const [linkLeadModal, setLinkLeadModal] = React.useState<{
+    isOpen: boolean;
+    seller: SellerItem | null;
+  }>({
+    isOpen: false,
+    seller: null,
   });
 
   // Поиск и Фильтры (ЯРУС 1)
@@ -381,6 +392,52 @@ export default function SellersPage() {
             </span>
           </div>
         );
+      },
+    },
+    {
+      key: 'linked_lead',
+      label: 'Лид',
+      width: 175,
+      minWidth: 145,
+      sortable: false,
+      filterable: false,
+      renderCell: (row: SellerItem) => {
+        if (row.linked_lead) {
+          return (
+            <div className="flex items-center gap-1.5" title={`Лид: ${row.linked_lead.client_name}`}>
+              <span className="w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                <UserCheck className="w-3 h-3" />
+              </span>
+              <div className="truncate">
+                <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate block">
+                  {row.linked_lead.client_name}
+                </span>
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  {row.linked_lead.status}
+                </span>
+              </div>
+            </div>
+          );
+        }
+
+        if (currentUserRole === 'admin') {
+          return (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLinkLeadModal({ isOpen: true, seller: row });
+              }}
+              className="h-7 px-2 text-[11px] font-semibold rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 transition-all flex items-center gap-1"
+              title="Привязать свободный лид"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Связать с лидом</span>
+            </button>
+          );
+        }
+
+        return <span className="text-[11px] text-zinc-400 italic">—</span>;
       },
     },
   ];
@@ -794,6 +851,14 @@ export default function SellersPage() {
           keyField="seller_phone"
           phoneField="seller_phone"
           initialMode="view"
+        />
+
+        {/* МОДАЛЬНОЕ ОКНО ПРИВЯЗКИ ПРОДАВЦА К ЛИДУ */}
+        <LinkSellerLeadModal
+          isOpen={linkLeadModal.isOpen}
+          onClose={() => setLinkLeadModal({ isOpen: false, seller: null })}
+          seller={linkLeadModal.seller}
+          onSuccess={() => fetchSellersData()}
         />
       </div>
     </AppLayout>

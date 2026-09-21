@@ -89,9 +89,11 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
         { count: 'exact' }
       );
 
-    // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только свои назначенные лиды, SMM — только свои созданные
+    // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только свои назначенные лиды в статусах Назначен, Подписан, Отмена
     if (currentProfile?.role === 'consultant') {
-      query = query.eq('assigned_to', currentProfile.user_id);
+      query = query
+        .eq('assigned_to', currentProfile.user_id)
+        .in('status', ['Назначен', 'Подписан', 'Отмена']);
     } else if (currentProfile?.role === 'smm') {
       query = query.eq('created_by', currentProfile.user_id);
     }
@@ -191,23 +193,14 @@ export async function createLead(input: {
         : cleanPhone;
 
     // Инвариант назначения ответственного:
-    // 1. Для консультанта лид ВСЕГДА принудительно назначается строго на него самого
+    // 1. Для SMM куратор не назначается (заполняется администратором при переводе в «Назначен»)
+    // 2. Для консультанта лид ВСЕГДА закрепляется за ним
+    // 3. Для администратора лид назначается на выбранного консультанта (или остается null)
     let finalAssignedTo = valid.assigned_to;
-    if (profile.role === 'consultant') {
+    if (profile.role === 'smm') {
+      finalAssignedTo = null;
+    } else if (profile.role === 'consultant') {
       finalAssignedTo = profile.user_id;
-    } else if (!finalAssignedTo) {
-      // 2. Для администратора/SMM, если ответственный не передан, назначаем первого активного консультанта/админа
-      const { data: defaultConsultant } = await supabase
-        .from('users')
-        .select('user_id')
-        .eq('is_active', true)
-        .in('role', ['consultant', 'admin'])
-        .order('full_name', { ascending: true })
-        .limit(1)
-        .single();
-      if (defaultConsultant) {
-        finalAssignedTo = defaultConsultant.user_id;
-      }
     }
 
     const { data: newLead, error } = await supabase
@@ -262,28 +255,50 @@ export async function updateLead(
   try {
     const { profile, supabase } = await requireAuth();
 
-    // RBAC: Проверка прав доступа к изменению лида
-    if (profile.role !== 'admin') {
-      const { data: targetLead } = await supabase
-        .from('leads')
-        .select('created_by, assigned_to')
-        .eq('lead_id', leadId)
-        .single();
+    // RBAC: Проверка прав доступа и валидация статусов перед изменением
+    const { data: targetLead } = await supabase
+      .from('leads')
+      .select('created_by, assigned_to, status')
+      .eq('lead_id', leadId)
+      .single();
 
-      if (!targetLead) {
-        return { success: false, error: 'Лид не найден в системе' };
-      }
+    if (!targetLead) {
+      return { success: false, error: 'Лид не найден в системе' };
+    }
 
-      if (profile.role === 'smm' && targetLead.created_by !== profile.user_id) {
+    if (profile.role === 'smm') {
+      if (targetLead.created_by !== profile.user_id) {
         return { success: false, error: 'Роль SMM может редактировать только созданные собой лиды' };
       }
-
-      if (
-        profile.role === 'consultant' &&
-        targetLead.assigned_to &&
-        targetLead.assigned_to !== profile.user_id
-      ) {
+      if (targetLead.status !== 'Открыт' && targetLead.status !== 'Обработан') {
+        return {
+          success: false,
+          error: 'SMM-специалист не может изменять лид на этапе «Назначен», «Подписан» или «Отмена»',
+        };
+      }
+      if (updates.status && updates.status !== 'Открыт' && updates.status !== 'Обработан') {
+        return {
+          success: false,
+          error: 'SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»',
+        };
+      }
+      // SMM не имеет прав назначать ответственного
+      updates.assigned_to = undefined;
+    } else if (profile.role === 'consultant') {
+      if (targetLead.assigned_to !== profile.user_id) {
         return { success: false, error: 'Лид назначен на другого консультанта' };
+      }
+      if (!['Назначен', 'Подписан', 'Отмена'].includes(targetLead.status)) {
+        return {
+          success: false,
+          error: 'Консультанту доступны только лиды в статусах «Назначен», «Подписан» или «Отмена»',
+        };
+      }
+      if (updates.status && !['Назначен', 'Подписан', 'Отмена'].includes(updates.status)) {
+        return {
+          success: false,
+          error: 'Консультант может переводить статус только в «Назначен», «Подписан» или «Отмена»',
+        };
       }
     }
 
@@ -291,25 +306,34 @@ export async function updateLead(
       updated_at: new Date().toISOString(),
     };
 
-    if (updates.client_name !== undefined) payload.client_name = updates.client_name.trim();
-    if (updates.country_code !== undefined) payload.country_code = updates.country_code;
-    if (updates.instagram !== undefined) {
-      payload.instagram = updates.instagram && updates.instagram.trim() !== '' ? updates.instagram.trim() : null;
-    }
-    if (updates.comment !== undefined) {
-      payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
-    }
-    if (updates.assigned_to !== undefined) {
-      payload.assigned_to = normalizeNullableUuid(updates.assigned_to);
-    }
-    if (updates.status !== undefined) payload.status = updates.status;
+    // Консультант имеет право изменять ТОЛЬКО статус и комментарий
+    if (profile.role === 'consultant') {
+      if (updates.status !== undefined) payload.status = updates.status;
+      if (updates.comment !== undefined) {
+        payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
+      }
+    } else {
+      // Администратор и SMM (с учетом проверок выше)
+      if (updates.client_name !== undefined) payload.client_name = updates.client_name.trim();
+      if (updates.country_code !== undefined) payload.country_code = updates.country_code;
+      if (updates.instagram !== undefined) {
+        payload.instagram = updates.instagram && updates.instagram.trim() !== '' ? updates.instagram.trim() : null;
+      }
+      if (updates.comment !== undefined) {
+        payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
+      }
+      if (updates.assigned_to !== undefined && profile.role === 'admin') {
+        payload.assigned_to = normalizeNullableUuid(updates.assigned_to);
+      }
+      if (updates.status !== undefined) payload.status = updates.status;
 
-    if (updates.phone !== undefined) {
-      const cleanPhone = updates.phone.replace(/\D/g, '');
-      payload.phone =
-        cleanPhone.startsWith('996') && cleanPhone.length > 9
-          ? cleanPhone.substring(3)
-          : cleanPhone;
+      if (updates.phone !== undefined) {
+        const cleanPhone = updates.phone.replace(/\D/g, '');
+        payload.phone =
+          cleanPhone.startsWith('996') && cleanPhone.length > 9
+            ? cleanPhone.substring(3)
+            : cleanPhone;
+      }
     }
 
     const { data, error } = await supabase
@@ -348,19 +372,35 @@ export async function updateLeadStatus(
   try {
     const { profile, supabase } = await requireAuth();
 
-    if (profile.role === 'smm') {
-      return { success: false, error: 'Роль SMM не имеет прав на смену статуса воронки' };
+    const { data: targetLead } = await supabase
+      .from('leads')
+      .select('created_by, assigned_to, status')
+      .eq('lead_id', leadId)
+      .single();
+
+    if (!targetLead) {
+      return { success: false, error: 'Лид не найден в системе' };
     }
 
-    if (profile.role === 'consultant') {
-      const { data: targetLead } = await supabase
-        .from('leads')
-        .select('assigned_to')
-        .eq('lead_id', leadId)
-        .single();
-
-      if (targetLead && targetLead.assigned_to && targetLead.assigned_to !== profile.user_id) {
+    if (profile.role === 'smm') {
+      if (targetLead.created_by !== profile.user_id) {
+        return { success: false, error: 'Роль SMM может управлять только созданными собой лидами' };
+      }
+      if (!['Открыт', 'Обработан'].includes(targetLead.status) || !['Открыт', 'Обработан'].includes(status)) {
+        return {
+          success: false,
+          error: 'SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»',
+        };
+      }
+    } else if (profile.role === 'consultant') {
+      if (targetLead.assigned_to !== profile.user_id) {
         return { success: false, error: 'Лид назначен на другого консультанта' };
+      }
+      if (!['Назначен', 'Подписан', 'Отмена'].includes(status)) {
+        return {
+          success: false,
+          error: 'Консультант может переводить статус только в «Назначен», «Подписан» или «Отмена»',
+        };
       }
     }
 

@@ -149,3 +149,34 @@ export async function upsertEmployeeRate(data: {
     return { success: false, error: err.message || 'Ошибка обновления ставки' };
   }
 }
+
+/**
+ * Сброс/удаление персональной ставки сотрудника (строго admin)
+ * После удаления сотрудник рассчитывается по базовым ставкам платформы (30% / 10%)
+ */
+export async function deleteEmployeeRate(userId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    if (!userId) {
+      return { success: false, error: 'Не указан идентификатор сотрудника' };
+    }
+
+    const { error } = await supabase
+      .from('employee_rates')
+      .delete()
+      .eq('user_id', userId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/rates');
+    revalidatePath('/connections');
+    revalidatePath('/payouts');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка сброса персональной ставки' };
+  }
+}
+

@@ -179,3 +179,67 @@ export async function getPlanHistory(planId: string): Promise<PlanHistoryItem[]>
   if (error || !data) return [];
   return data as unknown as PlanHistoryItem[];
 }
+
+/**
+ * Удаление тарифа (строго admin)
+ * Выполняется проверка на использование в таблицах sellers и connections
+ */
+export async function deletePlan(planId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    if (!planId) {
+      return { success: false, error: 'Не указан идентификатор тарифа' };
+    }
+
+    // 1. Проверяем использование в sellers
+    const { count: sellersCount, error: sellersErr } = await supabase
+      .from('sellers')
+      .select('seller_phone', { count: 'exact', head: true })
+      .eq('plan_id', planId);
+
+    if (sellersErr) {
+      return { success: false, error: sellersErr.message };
+    }
+
+    if (sellersCount && sellersCount > 0) {
+      return {
+        success: false,
+        error: `Тариф используется у ${sellersCount} продавцов. Удаление заблокировано для сохранения целостности.`,
+      };
+    }
+
+    // 2. Проверяем использование в connections
+    const { count: connCount, error: connErr } = await supabase
+      .from('connections')
+      .select('connection_id', { count: 'exact', head: true })
+      .eq('plan_id', planId);
+
+    if (connErr) {
+      return { success: false, error: connErr.message };
+    }
+
+    if (connCount && connCount > 0) {
+      return {
+        success: false,
+        error: `Тариф зафиксирован в ${connCount} подключениях. Удаление заблокировано.`,
+      };
+    }
+
+    // 3. Удаляем связанную историю цен
+    await supabase.from('plans_history').delete().eq('plan_id', planId);
+
+    // 4. Удаляем сам тариф
+    const { error: deleteErr } = await supabase.from('plans').delete().eq('plan_id', planId);
+
+    if (deleteErr) {
+      return { success: false, error: deleteErr.message };
+    }
+
+    revalidatePath('/plans');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка при удалении тарифа' };
+  }
+}
+

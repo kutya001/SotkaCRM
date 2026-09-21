@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { UserCheck, Store, Banknote, User, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, UserCheck, Store, Banknote, User, BarChart3 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
 import { useUser } from '@/components/auth/AuthProvider';
@@ -18,6 +18,12 @@ export function MobileBottomBar({ userRole }: MobileBottomBarProps) {
   const effectiveRole = userRole || user.role || 'consultant';
 
   const navItems = [
+    {
+      title: 'Главная',
+      href: '/',
+      icon: LayoutDashboard,
+      show: true,
+    },
     {
       title: 'Лиды',
       href: '/leads',
@@ -54,8 +60,9 @@ export function MobileBottomBar({ userRole }: MobileBottomBarProps) {
     <nav className="lg:hidden fixed bottom-4 left-4 right-4 h-16 rounded-2xl z-40 island-glass flex items-center justify-around px-2 shadow-xl border border-white/20 dark:border-zinc-800/40">
       {navItems.map((item) => {
         const isActive =
-          pathname === item.href ||
-          (item.href !== '/' && pathname.startsWith(item.href));
+          item.href === '/'
+            ? pathname === '/'
+            : pathname.startsWith(item.href);
         const Icon = item.icon;
 
         return (

@@ -349,6 +349,7 @@ function LeadsContent() {
         name: 'client_name',
         label: 'Имя клиента или название точки',
         required: true,
+        immutable: currentUserRole === 'consultant',
         placeholder: 'Например: Айбек (Магазин Береке)',
       },
       {
@@ -356,12 +357,14 @@ function LeadsContent() {
         label: 'Номер телефона',
         type: 'phone',
         required: true,
+        immutable: currentUserRole === 'consultant',
         placeholder: '700123456 (без кода страны)',
         helperText: 'Номер абонента без пробелов и тире (код страны слева)',
       },
       {
         name: 'instagram',
         label: 'Instagram аккаунт',
+        immutable: currentUserRole === 'consultant',
         placeholder: '@username или ссылка',
       },
       {
@@ -374,11 +377,15 @@ function LeadsContent() {
         name: 'assigned_to',
         label: 'Ответственный консультант',
         type: 'select',
-        disabled: currentUserRole === 'consultant',
-        defaultValue: defaultConsultantId,
+        disabled: currentUserRole !== 'admin',
+        immutable: currentUserRole === 'consultant',
+        isSystem: currentUserRole === 'smm',
+        defaultValue: currentUserRole === 'consultant' ? currentUserId : '',
         helperText:
           currentUserRole === 'consultant'
-            ? 'Лид автоматически закрепляется за вами'
+            ? 'Лид закреплен за вами'
+            : currentUserRole === 'smm'
+            ? 'Куратор назначается администратором'
             : undefined,
         options:
           currentUserRole === 'consultant'
@@ -403,8 +410,36 @@ function LeadsContent() {
         placeholder: 'Заметки по клиенту, детали разговора, пожелания...',
       },
     ],
-    [consultants, currentUserRole, currentUserId, userName, defaultConsultantId]
+    [consultants, currentUserRole, currentUserId, userName]
   );
+
+  // Права на редактирование текущего лида в EntityModal
+  const canEditCurrentLead = React.useMemo(() => {
+    if (currentUserRole === 'admin') return true;
+    if (currentUserRole === 'consultant') {
+      return (
+        modalState.selectedLead?.assigned_to === currentUserId &&
+        ['Назначен', 'Подписан', 'Отмена'].includes(modalState.selectedLead?.status || '')
+      );
+    }
+    if (currentUserRole === 'smm') {
+      return ['Открыт', 'Обработан'].includes(modalState.selectedLead?.status || '');
+    }
+    return false;
+  }, [currentUserRole, currentUserId, modalState.selectedLead]);
+
+  // Доступные статусы воронки по ролям
+  const roleStatusOptions = React.useMemo(() => {
+    if (currentUserRole === 'smm') {
+      return PIPELINE_STATUS_OPTIONS.filter((s) => ['Открыт', 'Обработан'].includes(s.value));
+    }
+    if (currentUserRole === 'consultant') {
+      return PIPELINE_STATUS_OPTIONS.filter((s) =>
+        ['Назначен', 'Подписан', 'Отмена'].includes(s.value)
+      );
+    }
+    return PIPELINE_STATUS_OPTIONS;
+  }, [currentUserRole]);
 
   // Обработчики строк DataJournal
   const handleRowClick = (lead: LeadItem) => {
@@ -420,13 +455,21 @@ function LeadsContent() {
       isOpen: true,
       mode: 'create',
       selectedLead: {
-        assigned_to: defaultConsultantId,
+        assigned_to: currentUserRole === 'consultant' ? currentUserId : null,
         status: 'Открыт',
       } as any,
     });
   };
 
   const handleStatusChangeInJournal = async (lead: LeadItem, newStatus: string) => {
+    if (currentUserRole === 'smm' && !['Открыт', 'Обработан'].includes(newStatus)) {
+      showToast('SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»', 'error');
+      return;
+    }
+    if (currentUserRole === 'consultant' && !['Назначен', 'Подписан', 'Отмена'].includes(newStatus)) {
+      showToast('Консультанту доступны только статусы «Назначен», «Подписан» или «Отмена»', 'error');
+      return;
+    }
     const res = await updateLeadStatus(lead.lead_id, newStatus as LeadStatus);
     if (!res.success) {
       showToast(res.error || 'Ошибка при обновлении статуса лида', 'error');
@@ -469,7 +512,9 @@ function LeadsContent() {
     const assignedConsultant =
       currentUserRole === 'consultant'
         ? currentUserId
-        : newLeadData.assigned_to || defaultConsultantId || null;
+        : currentUserRole === 'smm'
+        ? null
+        : newLeadData.assigned_to || null;
 
     const res = await createLead({
       client_name: newLeadData.client_name,
@@ -684,122 +729,202 @@ function LeadsContent() {
       hideFab={isAnyModalOpen}
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: KPI воронки продаж (Адаптивная сетка: 3x2 на мобильных, 6 в ряд на десктопе, интерактивный фильтр) */}
-        <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
-          {/* Всего в базе */}
-          <button
-            type="button"
-            onClick={() => setFilterStatus('all')}
-            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
-              filterStatus === 'all'
-                ? 'bg-white/95 dark:bg-zinc-800/90 border-zinc-400 dark:border-zinc-500 shadow-md ring-2 ring-zinc-500/20'
-                : 'bg-white/75 dark:bg-zinc-900/75 border-white/20 dark:border-zinc-800/40 hover:bg-white/90 dark:hover:bg-zinc-800/60'
-            }`}
-            title="Показать все лиды"
-          >
-            <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-medium truncate block w-full">
-              Всего в базе
-            </span>
-            <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100 mt-0.5">
-              {stats.total}
-            </p>
-          </button>
+        {/* ЯРУС 2: KPI воронки продаж (Адаптивная сетка под роль пользователя) */}
+        {currentUserRole === 'consultant' ? (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+            {/* Всего в работе */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus('all')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'all'
+                  ? 'bg-white/95 dark:bg-zinc-800/90 border-zinc-400 dark:border-zinc-500 shadow-md ring-2 ring-zinc-500/20'
+                  : 'bg-white/75 dark:bg-zinc-900/75 border-white/20 dark:border-zinc-800/40 hover:bg-white/90 dark:hover:bg-zinc-800/60'
+              }`}
+              title="Показать все лиды в работе"
+            >
+              <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-medium truncate block w-full">
+                Всего в работе
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100 mt-0.5">
+                {stats.total}
+              </p>
+            </button>
 
-          {/* Открыт */}
-          <button
-            type="button"
-            onClick={() => setFilterStatus(filterStatus === 'Открыт' ? 'all' : 'Открыт')}
-            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
-              filterStatus === 'Открыт'
-                ? 'bg-blue-500/20 dark:bg-blue-500/25 border-blue-500/50 shadow-md ring-2 ring-blue-500/30'
-                : 'bg-blue-500/10 dark:bg-blue-500/5 border-blue-500/20 hover:bg-blue-500/15'
-            }`}
-            title="Фильтровать по статусу «Открыт»"
-          >
-            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block w-full">
-              Открыт
-            </span>
-            <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300 mt-0.5">
-              {stats.open}
-            </p>
-          </button>
+            {/* Назначен */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Назначен' ? 'all' : 'Назначен')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Назначен'
+                  ? 'bg-amber-500/20 dark:bg-amber-500/25 border-amber-500/50 shadow-md ring-2 ring-amber-500/30'
+                  : 'bg-amber-500/10 dark:bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/15'
+              }`}
+              title="Фильтровать по статусу «Назначен»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 font-semibold truncate block w-full">
+                Назначен
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-amber-700 dark:text-amber-300 mt-0.5">
+                {stats.assigned}
+              </p>
+            </button>
 
-          {/* Обработан */}
-          <button
-            type="button"
-            onClick={() => setFilterStatus(filterStatus === 'Обработан' ? 'all' : 'Обработан')}
-            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
-              filterStatus === 'Обработан'
-                ? 'bg-purple-500/20 dark:bg-purple-500/25 border-purple-500/50 shadow-md ring-2 ring-purple-500/30'
-                : 'bg-purple-500/10 dark:bg-purple-500/5 border-purple-500/20 hover:bg-purple-500/15'
-            }`}
-            title="Фильтровать по статусу «Обработан»"
-          >
-            <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block w-full">
-              Обработан
-            </span>
-            <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300 mt-0.5">
-              {stats.processed}
-            </p>
-          </button>
+            {/* Подписан */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Подписан' ? 'all' : 'Подписан')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Подписан'
+                  ? 'bg-emerald-500/20 dark:bg-emerald-500/25 border-emerald-500/50 shadow-md ring-2 ring-emerald-500/30'
+                  : 'bg-emerald-500/10 dark:bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/15'
+              }`}
+              title="Фильтровать по статусу «Подписан»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block w-full">
+                Подписан
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
+                {stats.signed}
+              </p>
+            </button>
 
-          {/* Назначен */}
-          <button
-            type="button"
-            onClick={() => setFilterStatus(filterStatus === 'Назначен' ? 'all' : 'Назначен')}
-            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
-              filterStatus === 'Назначен'
-                ? 'bg-amber-500/20 dark:bg-amber-500/25 border-amber-500/50 shadow-md ring-2 ring-amber-500/30'
-                : 'bg-amber-500/10 dark:bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/15'
-            }`}
-            title="Фильтровать по статусу «Назначен»"
-          >
-            <span className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 font-semibold truncate block w-full">
-              Назначен
-            </span>
-            <p className="text-base sm:text-xl font-bold font-mono text-amber-700 dark:text-amber-300 mt-0.5">
-              {stats.assigned}
-            </p>
-          </button>
+            {/* Отмена */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Отмена' ? 'all' : 'Отмена')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Отмена'
+                  ? 'bg-rose-500/20 dark:bg-rose-500/25 border-rose-500/50 shadow-md ring-2 ring-rose-500/30'
+                  : 'bg-rose-500/10 dark:bg-rose-500/5 border-rose-500/20 hover:bg-rose-500/15'
+              }`}
+              title="Фильтровать по статусу «Отмена»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold truncate block w-full">
+                Отмена
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-rose-700 dark:text-rose-300 mt-0.5">
+                {stats.cancelled}
+              </p>
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
+            {/* Всего в базе */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus('all')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'all'
+                  ? 'bg-white/95 dark:bg-zinc-800/90 border-zinc-400 dark:border-zinc-500 shadow-md ring-2 ring-zinc-500/20'
+                  : 'bg-white/75 dark:bg-zinc-900/75 border-white/20 dark:border-zinc-800/40 hover:bg-white/90 dark:hover:bg-zinc-800/60'
+              }`}
+              title="Показать все лиды"
+            >
+              <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-medium truncate block w-full">
+                Всего в базе
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100 mt-0.5">
+                {stats.total}
+              </p>
+            </button>
 
-          {/* Подписан */}
-          <button
-            type="button"
-            onClick={() => setFilterStatus(filterStatus === 'Подписан' ? 'all' : 'Подписан')}
-            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
-              filterStatus === 'Подписан'
-                ? 'bg-emerald-500/20 dark:bg-emerald-500/25 border-emerald-500/50 shadow-md ring-2 ring-emerald-500/30'
-                : 'bg-emerald-500/10 dark:bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/15'
-            }`}
-            title="Фильтровать по статусу «Подписан»"
-          >
-            <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block w-full">
-              Подписан
-            </span>
-            <p className="text-base sm:text-xl font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
-              {stats.signed}
-            </p>
-          </button>
+            {/* Открыт */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Открыт' ? 'all' : 'Открыт')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Открыт'
+                  ? 'bg-blue-500/20 dark:bg-blue-500/25 border-blue-500/50 shadow-md ring-2 ring-blue-500/30'
+                  : 'bg-blue-500/10 dark:bg-blue-500/5 border-blue-500/20 hover:bg-blue-500/15'
+              }`}
+              title="Фильтровать по статусу «Открыт»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block w-full">
+                Открыт
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300 mt-0.5">
+                {stats.open}
+              </p>
+            </button>
 
-          {/* Отмена */}
-          <button
-            type="button"
-            onClick={() => setFilterStatus(filterStatus === 'Отмена' ? 'all' : 'Отмена')}
-            className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
-              filterStatus === 'Отмена'
-                ? 'bg-rose-500/20 dark:bg-rose-500/25 border-rose-500/50 shadow-md ring-2 ring-rose-500/30'
-                : 'bg-rose-500/10 dark:bg-rose-500/5 border-rose-500/20 hover:bg-rose-500/15'
-            }`}
-            title="Фильтровать по статусу «Отмена»"
-          >
-            <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold truncate block w-full">
-              Отмена
-            </span>
-            <p className="text-base sm:text-xl font-bold font-mono text-rose-700 dark:text-rose-300 mt-0.5">
-              {stats.cancelled}
-            </p>
-          </button>
-        </div>
+            {/* Обработан */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Обработан' ? 'all' : 'Обработан')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Обработан'
+                  ? 'bg-purple-500/20 dark:bg-purple-500/25 border-purple-500/50 shadow-md ring-2 ring-purple-500/30'
+                  : 'bg-purple-500/10 dark:bg-purple-500/5 border-purple-500/20 hover:bg-purple-500/15'
+              }`}
+              title="Фильтровать по статусу «Обработан»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block w-full">
+                Обработан
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300 mt-0.5">
+                {stats.processed}
+              </p>
+            </button>
+
+            {/* Назначен */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Назначен' ? 'all' : 'Назначен')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Назначен'
+                  ? 'bg-amber-500/20 dark:bg-amber-500/25 border-amber-500/50 shadow-md ring-2 ring-amber-500/30'
+                  : 'bg-amber-500/10 dark:bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/15'
+              }`}
+              title="Фильтровать по статусу «Назначен»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 font-semibold truncate block w-full">
+                Назначен
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-amber-700 dark:text-amber-300 mt-0.5">
+                {stats.assigned}
+              </p>
+            </button>
+
+            {/* Подписан */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Подписан' ? 'all' : 'Подписан')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Подписан'
+                  ? 'bg-emerald-500/20 dark:bg-emerald-500/25 border-emerald-500/50 shadow-md ring-2 ring-emerald-500/30'
+                  : 'bg-emerald-500/10 dark:bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/15'
+              }`}
+              title="Фильтровать по статусу «Подписан»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block w-full">
+                Подписан
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">
+                {stats.signed}
+              </p>
+            </button>
+
+            {/* Отмена */}
+            <button
+              type="button"
+              onClick={() => setFilterStatus(filterStatus === 'Отмена' ? 'all' : 'Отмена')}
+              className={`text-left p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl backdrop-blur-xl border shadow-sm transition-all active:scale-95 flex flex-col justify-between ${
+                filterStatus === 'Отмена'
+                  ? 'bg-rose-500/20 dark:bg-rose-500/25 border-rose-500/50 shadow-md ring-2 ring-rose-500/30'
+                  : 'bg-rose-500/10 dark:bg-rose-500/5 border-rose-500/20 hover:bg-rose-500/15'
+              }`}
+              title="Фильтровать по статусу «Отмена»"
+            >
+              <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold truncate block w-full">
+                Отмена
+              </span>
+              <p className="text-base sm:text-xl font-bold font-mono text-rose-700 dark:text-rose-300 mt-0.5">
+                {stats.cancelled}
+              </p>
+            </button>
+          </div>
+        )}
 
         {/* ЯРУС 3: Полиморфный реестр заявок DataJournal */}
         <DataJournal<LeadItem>
@@ -826,10 +951,10 @@ function LeadsContent() {
           keyField="lead_id"
           phoneField="phone"
           statusField="status"
-          statusOptions={PIPELINE_STATUS_OPTIONS}
-          onSave={handleSaveLead}
+          statusOptions={roleStatusOptions}
+          onSave={canEditCurrentLead ? handleSaveLead : undefined}
           onCreate={handleCreateLead}
-          onStatusChange={handleStatusChangeInModal}
+          onStatusChange={canEditCurrentLead ? handleStatusChangeInModal : undefined}
           onLinkSeller={handleLinkSeller}
           createSubmitLabel="Сохранить запись"
         />

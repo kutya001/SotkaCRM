@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireAuth } from '@/lib/auth/check-role';
 import type { Database, UserRole, ClientLifecycleStatus } from '@/types/database.types';
 
 export interface ConnectionItem {
@@ -72,25 +73,13 @@ export interface ConnectionsStats {
 export async function getConnections(
   params: GetConnectionsParams = {}
 ): Promise<ConnectionsResponse> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { connections: [], totalCount: 0, error: 'Пользователь не аутентифицирован' };
+  let authCtx;
+  try {
+    authCtx = await requireAuth();
+  } catch (err: any) {
+    return { connections: [], totalCount: 0, error: err?.message || 'Пользователь не аутентифицирован' };
   }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role, full_name')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile) {
-    return { connections: [], totalCount: 0, error: 'Профиль пользователя не найден' };
-  }
+  const { profile, supabase } = authCtx;
 
   // Роли SMM доступ к модулю подключений закрыт
   if (profile.role === 'smm') {
@@ -234,23 +223,13 @@ export async function getConnections(
  * Получение KPI-метрик по закреплениям
  */
 export async function getConnectionsStats(accrualMonth?: string): Promise<ConnectionsStats> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  const authCtx = await requireAuth().catch(() => null);
+  if (!authCtx) {
     return { total: 0, newThisMonth: 0, inMaintenance: 0, totalBonusAmount: 0 };
   }
+  const { profile, supabase } = authCtx;
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role === 'smm') {
+  if (profile.role === 'smm') {
     return { total: 0, newThisMonth: 0, inMaintenance: 0, totalBonusAmount: 0 };
   }
 

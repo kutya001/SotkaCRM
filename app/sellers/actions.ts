@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
 import type { Database, UserRole, SellerModerationStatus } from '@/types/database.types';
 
 export interface LinkedLeadInfo {
@@ -70,26 +70,13 @@ export interface SellersStats {
  * Получение списка продавцов с пагинацией, фильтрацией, связанным лидом и изоляцией
  */
 export async function getSellers(params: GetSellersParams = {}): Promise<SellersResponse> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { sellers: [], totalCount: 0, error: 'Пользователь не аутентифицирован' };
+  let authCtx;
+  try {
+    authCtx = await requireAuth();
+  } catch (err: any) {
+    return { sellers: [], totalCount: 0, error: err?.message || 'Пользователь не аутентифицирован' };
   }
-
-  // Получаем профиль текущего пользователя и проверяем роль (RBAC)
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role, full_name')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile) {
-    return { sellers: [], totalCount: 0, error: 'Профиль пользователя не найден' };
-  }
+  const { profile, supabase } = authCtx;
 
   // Роли SMM доступ к базе продавцов строго запрещен
   if (profile.role === 'smm') {
@@ -135,9 +122,15 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     { count: 'exact' }
   );
 
-  // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только закрепленных за ним продавцов
+  // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только не назначенных продавцов либо назначенных на него
   if (profile.role === 'consultant') {
-    query = query.eq('manager_id', profile.user_id);
+    if (managerId === 'unassigned') {
+      query = query.is('manager_id', null);
+    } else if (managerId === profile.user_id || managerId === 'my') {
+      query = query.eq('manager_id', profile.user_id);
+    } else {
+      query = query.or(`manager_id.is.null,manager_id.eq.${profile.user_id}`);
+    }
   } else if (managerId && managerId !== 'all') {
     // Для администратора доступен произвольный фильтр по куратору
     if (managerId === 'unassigned') {
@@ -247,7 +240,17 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
  * Получение агрегированной статистики по базе продавцов с учетом роли
  */
 export async function getSellersStats(): Promise<SellersStats> {
-  const supabase = await createClient();
+  const authCtx = await requireAuth().catch(() => null);
+  if (!authCtx) {
+    return {
+      total: 0,
+      active: 0,
+      pendingModeration: 0,
+      totalBalance: 0,
+      assigned: 0,
+    };
+  }
+  const { supabase } = authCtx;
 
   // Вызов SQL-агрегата get_sellers_kpi_stats (с изолированным расчетом)
   try {
@@ -307,7 +310,9 @@ export async function getSellersStats(): Promise<SellersStats> {
 export async function getManagersList(): Promise<
   { user_id: string; full_name: string; role: string; login: string; color?: string }[]
 > {
-  const supabase = await createClient();
+  const authCtx = await requireAuth().catch(() => null);
+  if (!authCtx) return [];
+  const { supabase } = authCtx;
 
   const { data, error } = await supabase
     .from('users')

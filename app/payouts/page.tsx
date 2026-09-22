@@ -119,7 +119,7 @@ export default function PayoutsPage() {
       const [res, statsRes, monthsRes, employeesRes] = await Promise.all([
         getPayouts({
           page: 1,
-          pageSize: 100,
+          pageSize: 50,
           accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
           category: catFilter !== 'all' ? catFilter : undefined,
         }),
@@ -206,118 +206,121 @@ export default function PayoutsPage() {
     }
   };
 
-  // Колонки DataJournal
-  const columns: ColumnDef<PayoutItem>[] = [
-    {
-      key: 'recipient',
-      label: 'Сотрудник',
-      width: 220,
-      minWidth: 180,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-xl bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-bold flex items-center justify-center flex-shrink-0">
-            {row.recipient?.full_name?.charAt(0) || 'U'}
+  // Колонки DataJournal (мемоизированы для стабилизации виртуализатора)
+  const columns: ColumnDef<PayoutItem>[] = React.useMemo(
+    () => [
+      {
+        key: 'recipient',
+        label: 'Сотрудник',
+        width: 220,
+        minWidth: 180,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-xl bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-bold flex items-center justify-center flex-shrink-0">
+              {row.recipient?.full_name?.charAt(0) || 'U'}
+            </div>
+            <div className="flex flex-col truncate">
+              <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs truncate">
+                {row.recipient?.full_name || 'Неизвестный'}
+              </span>
+              <span className="text-[10px] text-zinc-400 capitalize">
+                {row.recipient?.role || 'Сотрудник'} • @{row.recipient?.login || 'user'}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col truncate">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs truncate">
-              {row.recipient?.full_name || 'Неизвестный'}
-            </span>
-            <span className="text-[10px] text-zinc-400 capitalize">
-              {row.recipient?.role || 'Сотрудник'} • @{row.recipient?.login || 'user'}
-            </span>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'payout_category',
-      label: 'Категория',
-      width: 160,
-      minWidth: 140,
-      sortable: true,
-      filterable: true,
-      type: 'status',
-      statusOptions: CATEGORY_STATUS_OPTIONS,
-    },
-    {
-      key: 'amount',
-      label: 'Сумма',
-      width: 140,
-      minWidth: 120,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => {
-        const isDeduction = row.payout_category === 'удержание';
-        return (
-          <span
-            className={`font-mono text-xs font-bold ${
-              isDeduction
-                ? 'text-rose-600 dark:text-rose-400'
-                : 'text-emerald-600 dark:text-emerald-400'
-            }`}
-          >
-            {isDeduction ? '-' : '+'}
-            {Number(row.amount).toLocaleString('ru-RU')} сом
-          </span>
-        );
+        ),
       },
-    },
-    {
-      key: 'payment_method',
-      label: 'Метод оплаты',
-      width: 140,
-      minWidth: 120,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-          <CreditCard className="w-3 h-3 text-zinc-400" strokeWidth={1.5} />
-          <span>{row.payment_method}</span>
-        </span>
-      ),
-    },
-    {
-      key: 'accrual_month',
-      label: 'Период',
-      width: 110,
-      minWidth: 95,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-          {row.accrual_month}
-        </span>
-      ),
-    },
-    {
-      key: 'payout_date',
-      label: 'Дата выплаты',
-      width: 130,
-      minWidth: 110,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-          <FormattedDate date={row.payout_date} type="date" />
-        </span>
-      ),
-    },
-    {
-      key: 'comment',
-      label: 'Примечание',
-      width: 200,
-      minWidth: 150,
-      sortable: false,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-xs block">
-          {row.comment || '—'}
-        </span>
-      ),
-    },
-  ];
+      {
+        key: 'payout_category',
+        label: 'Категория',
+        width: 160,
+        minWidth: 140,
+        sortable: true,
+        filterable: true,
+        type: 'status',
+        statusOptions: CATEGORY_STATUS_OPTIONS,
+      },
+      {
+        key: 'amount',
+        label: 'Сумма',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => {
+          const isDeduction = row.payout_category === 'удержание';
+          return (
+            <span
+              className={`font-mono text-xs font-bold ${
+                isDeduction
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : 'text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
+              {isDeduction ? '-' : '+'}
+              {Number(row.amount).toLocaleString('ru-RU')} сом
+            </span>
+          );
+        },
+      },
+      {
+        key: 'payment_method',
+        label: 'Метод оплаты',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
+            <CreditCard className="w-3 h-3 text-zinc-400" strokeWidth={1.5} />
+            <span>{row.payment_method}</span>
+          </span>
+        ),
+      },
+      {
+        key: 'accrual_month',
+        label: 'Период',
+        width: 110,
+        minWidth: 95,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
+            {row.accrual_month}
+          </span>
+        ),
+      },
+      {
+        key: 'payout_date',
+        label: 'Дата выплаты',
+        width: 130,
+        minWidth: 110,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+            <FormattedDate date={row.payout_date} type="date" />
+          </span>
+        ),
+      },
+      {
+        key: 'comment',
+        label: 'Примечание',
+        width: 200,
+        minWidth: 150,
+        sortable: false,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-xs block">
+            {row.comment || '—'}
+          </span>
+        ),
+      },
+    ],
+    []
+  );
 
   // Расчет количества активных фильтров (ЯРУС 1)
   const activeFilterCount =

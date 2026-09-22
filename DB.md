@@ -1137,4 +1137,25 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 **11.4. Исключение Race Conditions и транзакционные блокировки:**
 * Уникальный индекс `idx_payouts_unique_salary_period` на `employee_payouts (user_id, accrual_month) WHERE payout_category = 'выплата зп'` исключает повторное начисление зарплаты сотруднику за один и тот же период.
 * Функция `process_employee_payout_atomic(...)` выполняет блокировку `SELECT ... FOR UPDATE` по строке сотрудника в таблице `users`, гарантируя строгую сериализацию финансовых проводок.
+
+---
+
+### 12. Ограничение прав роли Консультант и оптимизация индексов продавцов (Миграция `010_consultant_permissions_and_indexes.sql`)
+
+**12.1. Исключение роли `consultant` из прав создания лидов:**
+* Обновлена RLS-политика `leads_insert_policy` на таблице `leads`: вставка разрешена исключительно ролям `admin` и `smm` при условии `created_by = (SELECT public.get_current_crm_user_id())`.
+* Роль `consultant` лишена прав на создание лидов как на уровне RLS-политики базы данных, так и на уровне серверных экшенов и UI.
+
+**12.2. Синхронизация расширенных метаданных пользователей:**
+* Функция и триггер `sync_user_app_metadata()` дополнены сохранением поля `full_name` в объект `auth.users.raw_app_meta_data` (наряду с `role` и `user_id`).
+* Позволяет выполнять мгновенную аутентификацию и извлечение профиля в серверных компонентах и Server Actions без дискового ввода-вывода к таблице `users`.
+
+**12.3. Синхронизация видимости продавцов в RPC-функциях:**
+* В RPC `get_sellers_kpi_stats()`: для роли `consultant` метрики рассчитываются по закрепленным за ним продавцам, а также по свободным (не назначенным ни на кого): `WHERE manager_id = v_user_uuid OR manager_id IS NULL`.
+* В RPC `get_analytics_summary()`: для роли `consultant` блок `sellers` аналогично учитывает `manager_id = v_user_uuid OR manager_id IS NULL`.
+
+**12.4. Специализированные B-Tree индексы для продавцов:**
+* `idx_sellers_manager_synced` на `public.sellers (manager_id, synced_at DESC)` — ускорение фильтрации продавцов по менеджеру с сортировкой по времени синхронизации.
+* `idx_sellers_unassigned_synced` на `public.sellers (synced_at DESC) WHERE manager_id IS NULL` — частичный индекс для мгновенной выборки свободных продавцов без куратора.
+
 

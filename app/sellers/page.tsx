@@ -132,7 +132,7 @@ export default function SellersPage() {
         const [sellersRes, statsRes, managersRes] = await Promise.all([
           getSellers({
             page,
-            pageSize: 100,
+            pageSize: 50,
             search,
             moderation: filterModeration,
             isActive: filterActive,
@@ -229,262 +229,265 @@ export default function SellersPage() {
     }
   };
 
-  // Конфигурация колонок DataJournal
-  const columns: ColumnDef<SellerItem>[] = [
-    {
-      key: 'seller_name',
-      label: 'Продавец',
-      minWidth: 180,
-      sortable: true,
-      filterable: true,
-      renderCell: (row: SellerItem) => (
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-medium text-xs flex-shrink-0">
-            <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-              {row.seller_name || 'Не указано'}
+  // Конфигурация колонок DataJournal (мемоизирована для стабилизации виртуализатора)
+  const columns: ColumnDef<SellerItem>[] = React.useMemo(
+    () => [
+      {
+        key: 'seller_name',
+        label: 'Продавец',
+        minWidth: 180,
+        sortable: true,
+        filterable: true,
+        renderCell: (row: SellerItem) => (
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-medium text-xs flex-shrink-0">
+              <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
             </div>
-            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-              {row.store || 'Без названия'}
-            </div>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'linked_lead',
-      label: 'Связанный лид',
-      width: 170,
-      minWidth: 140,
-      sortable: false,
-      renderCell: (row: SellerItem) => {
-        if (!row.linked_lead) {
-          return <span className="text-[11px] text-zinc-400">Прямое подключение</span>;
-        }
-        return (
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-              {row.linked_lead.client_name}
-            </span>
-            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-              Лид: {row.linked_lead.status}
-            </span>
-          </div>
-        );
-      },
-    },
-    {
-      key: 'store',
-      label: 'Магазин',
-      minWidth: 140,
-      sortable: true,
-      filterable: true,
-      renderCell: (row: SellerItem) => (
-        <span className="text-xs text-zinc-700 dark:text-zinc-300 font-medium truncate">
-          {row.store || '—'}
-        </span>
-      ),
-    },
-    {
-      key: 'seller_phone',
-      label: 'Телефон',
-      type: 'phone',
-      width: 170,
-      minWidth: 140,
-      sortable: true,
-      filterable: true,
-      phoneAccessor: (row: SellerItem) => row.seller_phone,
-      renderCell: (row: SellerItem) => (
-        <span className="text-xs font-mono text-zinc-800 dark:text-zinc-200">
-          {formatPhone(row.seller_phone)}
-        </span>
-      ),
-    },
-    {
-      key: 'balance',
-      label: 'Баланс',
-      type: 'currency',
-      width: 130,
-      minWidth: 110,
-      sortable: true,
-      filterable: true,
-      renderCell: (row: SellerItem) => {
-        const bal = Number(row.balance) || 0;
-        return (
-          <span
-            className={`text-xs font-semibold font-mono ${
-              bal > 0
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-zinc-500 dark:text-zinc-400'
-            }`}
-          >
-            {bal.toLocaleString('ru-RU')} KGS
-          </span>
-        );
-      },
-    },
-    {
-      key: 'plan_name',
-      label: 'Тариф',
-      width: 120,
-      minWidth: 100,
-      sortable: true,
-      filterable: true,
-      renderCell: (row: SellerItem) => (
-        <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/60 dark:border-zinc-700/60">
-          {row.plan_name || 'Базовый'}
-        </span>
-      ),
-    },
-    {
-      key: 'moderation',
-      label: 'Модерация',
-      type: 'status',
-      width: 140,
-      minWidth: 120,
-      sortable: true,
-      filterable: true,
-      statusOptions: SELLER_MODERATION_OPTIONS,
-    },
-    {
-      key: 'is_active',
-      label: 'Статус',
-      width: 110,
-      minWidth: 90,
-      sortable: true,
-      filterable: true,
-      renderCell: (row: SellerItem) => (
-        <span
-          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-medium ${
-            row.is_active
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-              : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500 border border-zinc-300/40 dark:border-zinc-700/40'
-          }`}
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              row.is_active ? 'bg-emerald-500' : 'bg-zinc-400'
-            }`}
-          />
-          {row.is_active ? 'Активен' : 'Неактивен'}
-        </span>
-      ),
-    },
-    {
-      key: 'outlets_count',
-      label: 'Точек / Сотр.',
-      width: 120,
-      minWidth: 100,
-      sortable: true,
-      filterable: false,
-      renderCell: (row: SellerItem) => (
-        <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono">
-          {row.outlets_count} / {row.employees_count}
-        </span>
-      ),
-    },
-    {
-      key: 'manager_id',
-      label: 'Куратор',
-      width: 190,
-      minWidth: 160,
-      sortable: true,
-      filterable: true,
-      renderCell: (row: SellerItem) => {
-        if (currentUserRole === 'admin') {
-          const isUnassigned = !row.manager_id;
-          const currentMgr = managers.find((m) => m.user_id === row.manager_id);
-          return (
-            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-              <EmployeeColorDot
-                color={currentMgr?.color || (isUnassigned ? '#9CA3AF' : undefined)}
-                size="sm"
-              />
-              <select
-                value={row.manager_id || ''}
-                onChange={async (e) => {
-                  const val = e.target.value || null;
-                  await handleAssignManager(row.seller_phone, val);
-                }}
-                className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
-                  isUnassigned
-                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
-                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
-                }`}
-              >
-                <option value="">— Не назначен —</option>
-                {managers.map((m) => (
-                  <option key={m.user_id} value={m.user_id}>
-                    ● {m.full_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          );
-        }
-        if (!row.manager_user) {
-          return (
-            <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>
-          );
-        }
-        return (
-          <EmployeeBadge
-            name={row.manager_user.full_name}
-            color={row.manager_user.color}
-            size="sm"
-          />
-        );
-      },
-    },
-    {
-      key: 'linked_lead',
-      label: 'Лид',
-      width: 175,
-      minWidth: 145,
-      sortable: false,
-      filterable: false,
-      renderCell: (row: SellerItem) => {
-        if (row.linked_lead) {
-          return (
-            <div className="flex items-center gap-1.5" title={`Лид: ${row.linked_lead.client_name}`}>
-              <span className="w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-                <UserCheck className="w-3 h-3" />
-              </span>
-              <div className="truncate">
-                <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate block">
-                  {row.linked_lead.client_name}
-                </span>
-                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                  {row.linked_lead.status}
-                </span>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                {row.seller_name || 'Не указано'}
+              </div>
+              <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                {row.store || 'Без названия'}
               </div>
             </div>
-          );
-        }
-
-        if (currentUserRole === 'admin' || currentUserRole === 'consultant') {
-          return (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setLinkLeadModal({ isOpen: true, seller: row });
-              }}
-              className="h-7 px-2 text-[11px] font-semibold rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 transition-all flex items-center gap-1"
-              title="Привязать свободный лид"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Связать с лидом</span>
-            </button>
-          );
-        }
-
-        return <span className="text-[11px] text-zinc-400 italic">—</span>;
+          </div>
+        ),
       },
-    },
-  ];
+      {
+        key: 'linked_lead',
+        label: 'Связанный лид',
+        width: 170,
+        minWidth: 140,
+        sortable: false,
+        renderCell: (row: SellerItem) => {
+          if (!row.linked_lead) {
+            return <span className="text-[11px] text-zinc-400">Прямое подключение</span>;
+          }
+          return (
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                {row.linked_lead.client_name}
+              </span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                Лид: {row.linked_lead.status}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        key: 'store',
+        label: 'Магазин',
+        minWidth: 140,
+        sortable: true,
+        filterable: true,
+        renderCell: (row: SellerItem) => (
+          <span className="text-xs text-zinc-700 dark:text-zinc-300 font-medium truncate">
+            {row.store || '—'}
+          </span>
+        ),
+      },
+      {
+        key: 'seller_phone',
+        label: 'Телефон',
+        type: 'phone',
+        width: 170,
+        minWidth: 140,
+        sortable: true,
+        filterable: true,
+        phoneAccessor: (row: SellerItem) => row.seller_phone,
+        renderCell: (row: SellerItem) => (
+          <span className="text-xs font-mono text-zinc-800 dark:text-zinc-200">
+            {formatPhone(row.seller_phone)}
+          </span>
+        ),
+      },
+      {
+        key: 'balance',
+        label: 'Баланс',
+        type: 'currency',
+        width: 130,
+        minWidth: 110,
+        sortable: true,
+        filterable: true,
+        renderCell: (row: SellerItem) => {
+          const bal = Number(row.balance) || 0;
+          return (
+            <span
+              className={`text-xs font-semibold font-mono ${
+                bal > 0
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-zinc-500 dark:text-zinc-400'
+              }`}
+            >
+              {bal.toLocaleString('ru-RU')} KGS
+            </span>
+          );
+        },
+      },
+      {
+        key: 'plan_name',
+        label: 'Тариф',
+        width: 120,
+        minWidth: 100,
+        sortable: true,
+        filterable: true,
+        renderCell: (row: SellerItem) => (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/60 dark:border-zinc-700/60">
+            {row.plan_name || 'Базовый'}
+          </span>
+        ),
+      },
+      {
+        key: 'moderation',
+        label: 'Модерация',
+        type: 'status',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: true,
+        statusOptions: SELLER_MODERATION_OPTIONS,
+      },
+      {
+        key: 'is_active',
+        label: 'Статус',
+        width: 110,
+        minWidth: 90,
+        sortable: true,
+        filterable: true,
+        renderCell: (row: SellerItem) => (
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-medium ${
+              row.is_active
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500 border border-zinc-300/40 dark:border-zinc-700/40'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                row.is_active ? 'bg-emerald-500' : 'bg-zinc-400'
+              }`}
+            />
+            {row.is_active ? 'Активен' : 'Неактивен'}
+          </span>
+        ),
+      },
+      {
+        key: 'outlets_count',
+        label: 'Точек / Сотр.',
+        width: 120,
+        minWidth: 100,
+        sortable: true,
+        filterable: false,
+        renderCell: (row: SellerItem) => (
+          <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono">
+            {row.outlets_count} / {row.employees_count}
+          </span>
+        ),
+      },
+      {
+        key: 'manager_id',
+        label: 'Куратор',
+        width: 190,
+        minWidth: 160,
+        sortable: true,
+        filterable: true,
+        renderCell: (row: SellerItem) => {
+          if (currentUserRole === 'admin') {
+            const isUnassigned = !row.manager_id;
+            const currentMgr = managers.find((m) => m.user_id === row.manager_id);
+            return (
+              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                <EmployeeColorDot
+                  color={currentMgr?.color || (isUnassigned ? '#9CA3AF' : undefined)}
+                  size="sm"
+                />
+                <select
+                  value={row.manager_id || ''}
+                  onChange={async (e) => {
+                    const val = e.target.value || null;
+                    await handleAssignManager(row.seller_phone, val);
+                  }}
+                  className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
+                    isUnassigned
+                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
+                      : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
+                  }`}
+                >
+                  <option value="">— Не назначен —</option>
+                  {managers.map((m) => (
+                    <option key={m.user_id} value={m.user_id}>
+                      ● {m.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          }
+          if (!row.manager_user) {
+            return (
+              <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>
+            );
+          }
+          return (
+            <EmployeeBadge
+              name={row.manager_user.full_name}
+              color={row.manager_user.color}
+              size="sm"
+            />
+          );
+        },
+      },
+      {
+        key: 'linked_lead',
+        label: 'Лид',
+        width: 175,
+        minWidth: 145,
+        sortable: false,
+        filterable: false,
+        renderCell: (row: SellerItem) => {
+          if (row.linked_lead) {
+            return (
+              <div className="flex items-center gap-1.5" title={`Лид: ${row.linked_lead.client_name}`}>
+                <span className="w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                  <UserCheck className="w-3 h-3" />
+                </span>
+                <div className="truncate">
+                  <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate block">
+                    {row.linked_lead.client_name}
+                  </span>
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                    {row.linked_lead.status}
+                  </span>
+                </div>
+              </div>
+            );
+          }
+
+          if (currentUserRole === 'admin' || currentUserRole === 'consultant') {
+            return (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLinkLeadModal({ isOpen: true, seller: row });
+                }}
+                className="h-7 px-2 text-[11px] font-semibold rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 transition-all flex items-center gap-1"
+                title="Привязать свободный лид"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Связать с лидом</span>
+              </button>
+            );
+          }
+
+          return <span className="text-[11px] text-zinc-400 italic">—</span>;
+        },
+      },
+    ],
+    [currentUserRole, managers, handleAssignManager]
+  );
 
   // Конфигурация полей для EntityModal
   const modalFields: EntityFieldConfig<SellerItem>[] = [
@@ -726,13 +729,23 @@ export default function SellersPage() {
           onChange={(e) => setFilterManager(e.target.value)}
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
-          <option value="all">Все кураторы</option>
-          <option value="unassigned">— Без куратора —</option>
-          {managers.map((m) => (
-            <option key={m.user_id} value={m.user_id}>
-              ● {m.full_name}
-            </option>
-          ))}
+          {currentUserRole === 'consultant' ? (
+            <>
+              <option value="all">Все доступные</option>
+              <option value="my">● Мои продавцы</option>
+              <option value="unassigned">— Свободные (без куратора) —</option>
+            </>
+          ) : (
+            <>
+              <option value="all">Все кураторы</option>
+              <option value="unassigned">— Без куратора —</option>
+              {managers.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  ● {m.full_name}
+                </option>
+              ))}
+            </>
+          )}
         </select>
       </div>
 

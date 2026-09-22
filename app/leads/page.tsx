@@ -162,6 +162,7 @@ function LeadsContent() {
   // Автоматическое открытие формы создания при переходе по ?action=create (кнопка FAB)
   React.useEffect(() => {
     if (searchParams.get('action') === 'create') {
+      if (currentUserRole === 'consultant') return;
       setModalState({
         isOpen: true,
         mode: 'create',
@@ -171,164 +172,167 @@ function LeadsContent() {
         } as any,
       });
     }
-  }, [searchParams, defaultConsultantId]);
+  }, [searchParams, defaultConsultantId, currentUserRole]);
 
-  // Конфигурация колонок DataJournal
-  const columns: ColumnDef<LeadItem>[] = [
-    {
-      key: 'lead_id',
-      label: 'ID лида',
-      width: 120,
-      minWidth: 100,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="font-mono text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
-          {row.lead_id.substring(0, 8)}...
-        </span>
-      ),
-    },
-    {
-      key: 'client_name',
-      label: 'Клиент / Торговая точка',
-      width: 200,
-      minWidth: 150,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <div className="space-y-0.5">
-          <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-            {row.client_name}
-          </p>
-          {row.instagram && (
-            <p className="text-[11px] text-zinc-400 flex items-center gap-1 truncate">
-              <Instagram className="w-3 h-3 text-pink-500 flex-shrink-0" strokeWidth={1.75} />
-              <span>{row.instagram}</span>
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'phone',
-      label: 'Телефон',
-      type: 'phone',
-      width: 160,
-      minWidth: 130,
-      sortable: true,
-      filterable: true,
-      phoneAccessor: (row) => `+${row.country_code || '996'} ${row.phone}`,
-      renderCell: (row) => {
-        const fullPhone = `+${row.country_code || '996'} ${row.phone}`;
-        return (
-          <span className="font-mono text-zinc-800 dark:text-zinc-200">
-            {fullPhone}
+  // Конфигурация колонок DataJournal (мемоизирована для стабилизации виртуализатора)
+  const columns: ColumnDef<LeadItem>[] = React.useMemo(
+    () => [
+      {
+        key: 'lead_id',
+        label: 'ID лида',
+        width: 120,
+        minWidth: 100,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="font-mono text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+            {row.lead_id.substring(0, 8)}...
           </span>
-        );
+        ),
       },
-    },
-    {
-      key: 'status',
-      label: 'Статус воронки',
-      type: 'status',
-      width: 150,
-      minWidth: 130,
-      sortable: true,
-      filterable: true,
-      statusOptions: PIPELINE_STATUS_OPTIONS,
-    },
-    {
-      key: 'assigned_to',
-      label: 'Ответственный',
-      width: 190,
-      minWidth: 160,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => {
-        if (currentUserRole === 'admin') {
-          const isUnassigned = !row.assigned_to;
-          const currentConsultant = consultants.find((c) => c.user_id === row.assigned_to);
+      {
+        key: 'client_name',
+        label: 'Клиент / Торговая точка',
+        width: 200,
+        minWidth: 150,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <div className="space-y-0.5">
+            <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+              {row.client_name}
+            </p>
+            {row.instagram && (
+              <p className="text-[11px] text-zinc-400 flex items-center gap-1 truncate">
+                <Instagram className="w-3 h-3 text-pink-500 flex-shrink-0" strokeWidth={1.75} />
+                <span>{row.instagram}</span>
+              </p>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'phone',
+        label: 'Телефон',
+        type: 'phone',
+        width: 160,
+        minWidth: 130,
+        sortable: true,
+        filterable: true,
+        phoneAccessor: (row) => `+${row.country_code || '996'} ${row.phone}`,
+        renderCell: (row) => {
+          const fullPhone = `+${row.country_code || '996'} ${row.phone}`;
           return (
-            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-              <EmployeeColorDot
-                color={currentConsultant?.color || (isUnassigned ? '#9CA3AF' : undefined)}
-                size="sm"
-              />
-              <select
-                value={row.assigned_to || ''}
-                onChange={async (e) => {
-                  const newConsultantId = e.target.value || null;
-                  try {
-                    const res = await assignLeadConsultant(row.lead_id, newConsultantId);
-                    if (res.success) {
-                      showToast(newConsultantId ? 'Консультант назначен' : 'Назначение отменено', 'success');
-                      fetchInitialData();
-                    } else {
-                      showToast(res.error || 'Ошибка назначения', 'error');
-                    }
-                  } catch {
-                    showToast('Ошибка при назначении консультанта', 'error');
-                  }
-                }}
-                className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
-                  isUnassigned
-                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
-                    : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
-                }`}
-              >
-                <option value="">— Не назначен —</option>
-                {consultants.map((c) => (
-                  <option key={c.user_id} value={c.user_id}>
-                    ● {c.full_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          );
-        }
-        if (!row.assigned_user) {
-          return (
-            <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
-              — Не назначен —
+            <span className="font-mono text-zinc-800 dark:text-zinc-200">
+              {fullPhone}
             </span>
           );
-        }
-        return (
-          <EmployeeBadge
-            name={row.assigned_user.full_name}
-            color={row.assigned_user.color}
-            size="sm"
-          />
-        );
+        },
       },
-    },
-    {
-      key: 'created_at',
-      label: 'Поступил',
-      width: 140,
-      minWidth: 120,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
-          <FormattedDate date={row.created_at} type="shortDateTime" />
-        </span>
-      ),
-    },
-    {
-      key: 'comment',
-      label: 'Заметки',
-      width: 220,
-      minWidth: 160,
-      sortable: false,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="text-zinc-500 dark:text-zinc-400 truncate max-w-xs block">
-          {row.comment || '—'}
-        </span>
-      ),
-    },
-  ];
+      {
+        key: 'status',
+        label: 'Статус воронки',
+        type: 'status',
+        width: 150,
+        minWidth: 130,
+        sortable: true,
+        filterable: true,
+        statusOptions: PIPELINE_STATUS_OPTIONS,
+      },
+      {
+        key: 'assigned_to',
+        label: 'Ответственный',
+        width: 190,
+        minWidth: 160,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => {
+          if (currentUserRole === 'admin') {
+            const isUnassigned = !row.assigned_to;
+            const currentConsultant = consultants.find((c) => c.user_id === row.assigned_to);
+            return (
+              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                <EmployeeColorDot
+                  color={currentConsultant?.color || (isUnassigned ? '#9CA3AF' : undefined)}
+                  size="sm"
+                />
+                <select
+                  value={row.assigned_to || ''}
+                  onChange={async (e) => {
+                    const newConsultantId = e.target.value || null;
+                    try {
+                      const res = await assignLeadConsultant(row.lead_id, newConsultantId);
+                      if (res.success) {
+                        showToast(newConsultantId ? 'Консультант назначен' : 'Назначение отменено', 'success');
+                        fetchInitialData();
+                      } else {
+                        showToast(res.error || 'Ошибка назначения', 'error');
+                      }
+                    } catch {
+                      showToast('Ошибка при назначении консультанта', 'error');
+                    }
+                  }}
+                  className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
+                    isUnassigned
+                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
+                      : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
+                  }`}
+                >
+                  <option value="">— Не назначен —</option>
+                  {consultants.map((c) => (
+                    <option key={c.user_id} value={c.user_id}>
+                      ● {c.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          }
+          if (!row.assigned_user) {
+            return (
+              <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
+                — Не назначен —
+              </span>
+            );
+          }
+          return (
+            <EmployeeBadge
+              name={row.assigned_user.full_name}
+              color={row.assigned_user.color}
+              size="sm"
+            />
+          );
+        },
+      },
+      {
+        key: 'created_at',
+        label: 'Поступил',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
+            <FormattedDate date={row.created_at} type="shortDateTime" />
+          </span>
+        ),
+      },
+      {
+        key: 'comment',
+        label: 'Заметки',
+        width: 220,
+        minWidth: 160,
+        sortable: false,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="text-zinc-500 dark:text-zinc-400 truncate max-w-xs block">
+            {row.comment || '—'}
+          </span>
+        ),
+      },
+    ],
+    [currentUserRole, consultants, fetchInitialData, showToast]
+  );
 
   // Конфигурация полей EntityModal (мемоизирована для предотвращения сброса формы при ререндере)
   const entityFields: EntityFieldConfig<LeadItem>[] = React.useMemo(
@@ -451,11 +455,15 @@ function LeadsContent() {
   };
 
   const handleCreateClick = () => {
+    if (currentUserRole === 'consultant') {
+      showToast('Консультанты не имеют прав на добавление лидов', 'error');
+      return;
+    }
     setModalState({
       isOpen: true,
       mode: 'create',
       selectedLead: {
-        assigned_to: currentUserRole === 'consultant' ? currentUserId : null,
+        assigned_to: null,
         status: 'Открыт',
       } as any,
     });
@@ -724,7 +732,7 @@ function LeadsContent() {
       searchPlaceholder="Быстрый поиск по телефону, имени или заметке..."
       filterCount={activeFilterCount}
       filterContent={filterContent}
-      onCreateClick={handleCreateClick}
+      onCreateClick={currentUserRole === 'consultant' ? undefined : handleCreateClick}
       createTooltip="Добавить лид"
       hideFab={isAnyModalOpen}
     >

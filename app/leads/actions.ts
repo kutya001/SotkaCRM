@@ -54,22 +54,13 @@ export interface LeadsResponse {
  * Получение списка лидов с обогащением данных ответственных и авторов
  */
 export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsResponse> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  let authCtx;
+  try {
+    authCtx = await requireAuth();
+  } catch {
     return { leads: [], totalCount: 0 };
   }
-
-  // Получаем текущего пользователя CRM
-  const { data: currentProfile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
+  const { profile: currentProfile, supabase } = authCtx;
 
   const {
     page = 1,
@@ -163,6 +154,13 @@ export async function createLead(input: {
   try {
     const { profile, supabase } = await requireAuth();
 
+    if (profile.role === 'consultant') {
+      return {
+        success: false,
+        error: 'Консультанты не имеют прав на добавление лидов',
+      };
+    }
+
     // Санитизация пустых строк для опциональных полей перед валидацией
     const sanitizedInput = {
       ...input,
@@ -208,13 +206,10 @@ export async function createLead(input: {
 
     // Инвариант назначения ответственного:
     // 1. Для SMM куратор не назначается (заполняется администратором при переводе в «Назначен»)
-    // 2. Для консультанта лид ВСЕГДА закрепляется за ним
-    // 3. Для администратора лид назначается на выбранного консультанта (или остается null)
+    // 2. Для администратора лид назначается на выбранного консультанта (или остается null)
     let finalAssignedTo = valid.assigned_to;
     if (profile.role === 'smm') {
       finalAssignedTo = null;
-    } else if (profile.role === 'consultant') {
-      finalAssignedTo = profile.user_id;
     }
 
     const { data: newLead, error } = await supabase
@@ -506,7 +501,9 @@ export async function cancelLead(
 export async function getConsultantsList(): Promise<
   { user_id: string; full_name: string; role: string; login: string; color?: string }[]
 > {
-  const supabase = await createClient();
+  const authCtx = await requireAuth().catch(() => null);
+  if (!authCtx) return [];
+  const { supabase } = authCtx;
 
   const { data, error } = await supabase
     .from('users')
@@ -527,7 +524,18 @@ export async function getConsultantsList(): Promise<
  * Сводная статистика по статусам воронки
  */
 export async function getLeadsStats() {
-  const supabase = await createClient();
+  const authCtx = await requireAuth().catch(() => null);
+  if (!authCtx) {
+    return {
+      total: 0,
+      open: 0,
+      processed: 0,
+      assigned: 0,
+      signed: 0,
+      cancelled: 0,
+    };
+  }
+  const { supabase } = authCtx;
 
   // Попытка получить предвычисленные агрегаты через SQL-функцию get_leads_funnel_stats (миграция 003)
   try {

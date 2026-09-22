@@ -101,7 +101,10 @@ export function AppLayout({
     return <>{children}</>;
   }
 
+  const canCreate = effectiveRole !== 'consultant';
+
   const handleFabClick = () => {
+    if (!canCreate) return;
     if (onCreateClick) {
       onCreateClick();
     } else if (pathname === '/leads') {
@@ -155,12 +158,12 @@ export function AppLayout({
 
       {/* УНИВЕРСАЛЬНАЯ КНОПКА ДОБАВЛЕНИЯ: */}
       {/* Мобильная кнопка FAB под большой палец правой руки */}
-      {(onCreateClick || pathname === '/leads') && !hideFab && (
+      {canCreate && (onCreateClick || pathname === '/leads') && !hideFab && (
         <FAB onClick={handleFabClick} label={createTooltip} />
       )}
 
       {/* Десктопная кнопка добавления в правом нижнем углу как аккуратный квадратик-островок */}
-      {onCreateClick && !hideFab && (
+      {canCreate && onCreateClick && !hideFab && (
         <button
           type="button"
           onClick={onCreateClick}

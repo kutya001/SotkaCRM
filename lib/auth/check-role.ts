@@ -35,6 +35,23 @@ export const requireAuth = cache(async (): Promise<AuthContext> => {
     throw new Error('Пользователь не авторизован');
   }
 
+  // Fast-path: использование синхронизированных метаданных из JWT/сессии (без лишнего round-trip в БД)
+  const appMeta = user.app_metadata;
+  if (appMeta?.role && appMeta?.user_id) {
+    return {
+      user: { id: user.id, email: user.email },
+      profile: {
+        user_id: appMeta.user_id as string,
+        auth_id: user.id,
+        login: (user.email?.split('@')[0] || user.id) as string,
+        full_name: (appMeta.full_name as string) || '',
+        role: appMeta.role as UserRole,
+        is_active: true,
+      },
+      supabase,
+    };
+  }
+
   const { data: profile, error: profileError } = await supabase
     .from('users')
     .select('user_id, auth_id, login, full_name, role, is_active')

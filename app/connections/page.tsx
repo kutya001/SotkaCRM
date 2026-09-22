@@ -136,7 +136,7 @@ export default function ConnectionsPage() {
       const [res, statsRes, monthsRes, plansRes] = await Promise.all([
         getConnections({
           page: 1,
-          pageSize: 100,
+          pageSize: 50,
           accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
           clientStatus: statusFilter !== 'all' ? statusFilter : undefined,
         }),
@@ -362,165 +362,168 @@ export default function ConnectionsPage() {
     );
   }
 
-  // Конфигурация колонок DataJournal
-  const columns: ColumnDef<ConnectionItem>[] = [
-    {
-      key: 'seller_name',
-      label: 'Продавец / Магазин',
-      width: 220,
-      minWidth: 180,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <div className="flex flex-col">
-          <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs truncate">
-            {row.seller_name}
-          </span>
-          <div className="flex items-center gap-1 text-[11px] text-zinc-400 mt-0.5">
-            <Store className="w-3 h-3 flex-shrink-0" strokeWidth={1.5} />
-            <span className="truncate">{row.store || 'Без магазина'}</span>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'seller_phone',
-      label: 'Телефон',
-      width: 170,
-      minWidth: 150,
-      sortable: true,
-      filterable: true,
-      type: 'phone',
-      phoneAccessor: (row) => row.seller_phone,
-      renderCell: (row) => {
-        const cleanPhone = row.seller_phone.replace(/\D/g, '');
-        return (
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
-              +{row.seller_phone}
+  // Конфигурация колонок DataJournal (мемоизирована для стабилизации виртуализатора)
+  const columns: ColumnDef<ConnectionItem>[] = React.useMemo(
+    () => [
+      {
+        key: 'seller_name',
+        label: 'Продавец / Магазин',
+        width: 220,
+        minWidth: 180,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <div className="flex flex-col">
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs truncate">
+              {row.seller_name}
             </span>
-            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <a
-                href={`https://wa.me/${cleanPhone}`}
-                target="_blank"
-                rel="noreferrer"
-                title="Написать в WhatsApp"
-                className="w-6 h-6 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-colors"
-              >
-                <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-              </a>
-              <a
-                href={`tel:+${cleanPhone}`}
-                title="Позвонить"
-                className="w-6 h-6 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 flex items-center justify-center transition-colors"
-              >
-                <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
-              </a>
+            <div className="flex items-center gap-1 text-[11px] text-zinc-400 mt-0.5">
+              <Store className="w-3 h-3 flex-shrink-0" strokeWidth={1.5} />
+              <span className="truncate">{row.store || 'Без магазина'}</span>
             </div>
           </div>
-        );
+        ),
       },
-    },
-    {
-      key: 'manager_user',
-      label: 'Консультант',
-      width: 180,
-      minWidth: 150,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => {
-        if (!row.manager_user) {
+      {
+        key: 'seller_phone',
+        label: 'Телефон',
+        width: 170,
+        minWidth: 150,
+        sortable: true,
+        filterable: true,
+        type: 'phone',
+        phoneAccessor: (row) => row.seller_phone,
+        renderCell: (row) => {
+          const cleanPhone = row.seller_phone.replace(/\D/g, '');
           return (
-            <span className="text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
-              Не назначен
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
+                +{row.seller_phone}
+              </span>
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <a
+                  href={`https://wa.me/${cleanPhone}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Написать в WhatsApp"
+                  className="w-6 h-6 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-colors"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </a>
+                <a
+                  href={`tel:+${cleanPhone}`}
+                  title="Позвонить"
+                  className="w-6 h-6 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 flex items-center justify-center transition-colors"
+                >
+                  <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </a>
+              </div>
+            </div>
           );
-        }
-        return (
-          <EmployeeBadge
-            name={row.manager_user.full_name}
-            color={row.manager_user.color}
-            size="sm"
-          />
-        );
+        },
       },
-    },
-    {
-      key: 'assigned_at',
-      label: 'Дата привязки',
-      width: 140,
-      minWidth: 120,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
-          <FormattedDate date={row.assigned_at} type="date" />
-        </span>
-      ),
-    },
-    {
-      key: 'plan_price',
-      label: 'Тариф',
-      width: 110,
-      minWidth: 90,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-          {Number(row.plan_price).toLocaleString('ru-RU')} сом
-        </span>
-      ),
-    },
-    {
-      key: 'connection_fee_percent',
-      label: 'Ставка',
-      width: 90,
-      minWidth: 80,
-      sortable: true,
-      filterable: false,
-      renderCell: (row) => (
-        <span className="font-mono text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-          {row.connection_fee_percent}%
-        </span>
-      ),
-    },
-    {
-      key: 'connection_fee_amount',
-      label: 'Бонус подключения',
-      width: 160,
-      minWidth: 140,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-          +{Number(row.connection_fee_amount).toLocaleString('ru-RU')} сом
-        </span>
-      ),
-    },
-    {
-      key: 'accrual_month',
-      label: 'Период',
-      width: 110,
-      minWidth: 95,
-      sortable: true,
-      filterable: true,
-      renderCell: (row) => (
-        <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-          {row.accrual_month}
-        </span>
-      ),
-    },
-    {
-      key: 'client_status',
-      label: 'Статус клиента',
-      width: 150,
-      minWidth: 130,
-      sortable: true,
-      filterable: true,
-      type: 'status',
-      statusOptions: CLIENT_STATUS_OPTIONS,
-    },
-  ];
+      {
+        key: 'manager_user',
+        label: 'Консультант',
+        width: 180,
+        minWidth: 150,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => {
+          if (!row.manager_user) {
+            return (
+              <span className="text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
+                Не назначен
+              </span>
+            );
+          }
+          return (
+            <EmployeeBadge
+              name={row.manager_user.full_name}
+              color={row.manager_user.color}
+              size="sm"
+            />
+          );
+        },
+      },
+      {
+        key: 'assigned_at',
+        label: 'Дата привязки',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
+            <FormattedDate date={row.assigned_at} type="date" />
+          </span>
+        ),
+      },
+      {
+        key: 'plan_price',
+        label: 'Тариф',
+        width: 110,
+        minWidth: 90,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+            {Number(row.plan_price).toLocaleString('ru-RU')} сом
+          </span>
+        ),
+      },
+      {
+        key: 'connection_fee_percent',
+        label: 'Ставка',
+        width: 90,
+        minWidth: 80,
+        sortable: true,
+        filterable: false,
+        renderCell: (row) => (
+          <span className="font-mono text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+            {row.connection_fee_percent}%
+          </span>
+        ),
+      },
+      {
+        key: 'connection_fee_amount',
+        label: 'Бонус подключения',
+        width: 160,
+        minWidth: 140,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+            +{Number(row.connection_fee_amount).toLocaleString('ru-RU')} сом
+          </span>
+        ),
+      },
+      {
+        key: 'accrual_month',
+        label: 'Период',
+        width: 110,
+        minWidth: 95,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
+            {row.accrual_month}
+          </span>
+        ),
+      },
+      {
+        key: 'client_status',
+        label: 'Статус клиента',
+        width: 150,
+        minWidth: 130,
+        sortable: true,
+        filterable: true,
+        type: 'status',
+        statusOptions: CLIENT_STATUS_OPTIONS,
+      },
+    ],
+    []
+  );
 
   // Расчет количества активных фильтров (ЯРУС 1)
   const activeFilterCount =

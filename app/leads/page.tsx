@@ -237,6 +237,7 @@ function LeadsContent() {
         minWidth: 130,
         sortable: true,
         filterable: true,
+        groupable: true,
         statusOptions: PIPELINE_STATUS_OPTIONS,
       },
       {
@@ -246,6 +247,12 @@ function LeadsContent() {
         minWidth: 160,
         sortable: true,
         filterable: true,
+        groupable: true,
+        filterType: 'select',
+        filterOptions: [
+          { value: '', label: '— Не назначен —' },
+          ...consultants.map((c) => ({ value: c.user_id, label: c.full_name })),
+        ],
         renderCell: (row) => {
           if (currentUserRole === 'admin') {
             const isUnassigned = !row.assigned_to;
@@ -941,6 +948,8 @@ function LeadsContent() {
           keyField="lead_id"
           storageKey="leads_live"
           externalSearchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          defaultGroupBy="status"
           customActions={leadActions}
           customRowActions={renderCustomRowActions}
           onRowClick={handleRowClick}

@@ -333,6 +333,7 @@ export default function SellersPage() {
         minWidth: 100,
         sortable: true,
         filterable: true,
+        groupable: true,
         renderCell: (row: SellerItem) => (
           <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/60 dark:border-zinc-700/60">
             {row.plan_name || 'Базовый'}
@@ -347,6 +348,7 @@ export default function SellersPage() {
         minWidth: 120,
         sortable: true,
         filterable: true,
+        groupable: true,
         statusOptions: SELLER_MODERATION_OPTIONS,
       },
       {
@@ -356,6 +358,12 @@ export default function SellersPage() {
         minWidth: 90,
         sortable: true,
         filterable: true,
+        groupable: true,
+        filterType: 'select',
+        filterOptions: [
+          { value: 'true', label: 'Активен' },
+          { value: 'false', label: 'Неактивен' },
+        ],
         renderCell: (row: SellerItem) => (
           <span
             className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-medium ${
@@ -393,6 +401,12 @@ export default function SellersPage() {
         minWidth: 160,
         sortable: true,
         filterable: true,
+        groupable: true,
+        filterType: 'select',
+        filterOptions: [
+          { value: '', label: '— Не назначен —' },
+          ...managers.map((m) => ({ value: m.user_id, label: m.full_name })),
+        ],
         renderCell: (row: SellerItem) => {
           if (currentUserRole === 'admin') {
             const isUnassigned = !row.manager_id;
@@ -1094,6 +1108,8 @@ export default function SellersPage() {
             emptyMessage="Продавцы не найдены. Выполните синхронизацию с Sotka API."
             totalCount={totalCount}
             externalSearchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            defaultGroupBy="moderation"
             customActions={sellerActions}
             renderCard={renderSellerCard}
             onRowClick={(seller) =>

@@ -369,6 +369,14 @@ export default function EmployeesPage() {
       key: 'role',
       label: 'Роль',
       sortable: true,
+      filterable: true,
+      groupable: true,
+      filterType: 'select',
+      filterOptions: [
+        { value: 'admin', label: 'Администратор' },
+        { value: 'consultant', label: 'Консультант' },
+        { value: 'smm', label: 'SMM-специалист' },
+      ],
       renderCell: (item: EmployeeItem) => {
         if (item.role === 'admin') {
           return (
@@ -420,6 +428,13 @@ export default function EmployeesPage() {
       key: 'is_active',
       label: 'Статус',
       sortable: true,
+      filterable: true,
+      groupable: true,
+      filterType: 'select',
+      filterOptions: [
+        { value: 'true', label: 'Активен' },
+        { value: 'false', label: 'Заблокирован' },
+      ],
       renderCell: (item: EmployeeItem) => (
         <button
           type="button"
@@ -559,36 +574,6 @@ export default function EmployeesPage() {
           </div>
         </div>
 
-        {/* Быстрые фильтры */}
-        <div className="flex flex-wrap items-center gap-3 p-3 rounded-2xl backdrop-blur-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-800/50">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-zinc-500 dark:text-zinc-400">Роль:</span>
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="h-8 px-2.5 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-800 dark:text-zinc-200 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">Все роли</option>
-              <option value="admin">Администратор</option>
-              <option value="consultant">Консультант</option>
-              <option value="smm">SMM-специалист</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-zinc-500 dark:text-zinc-400">Статус:</span>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-8 px-2.5 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-800 dark:text-zinc-200 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">Все статусы</option>
-              <option value="true">Только активные</option>
-              <option value="false">Только заблокированные</option>
-            </select>
-          </div>
-        </div>
-
         {/* Таблица DataJournal */}
         <DataJournal<EmployeeItem>
           data={employees}
@@ -598,6 +583,9 @@ export default function EmployeesPage() {
           totalCount={totalCount}
           storageKey="employees_journal"
           emptyMessage="Сотрудники не найдены"
+          externalSearchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          defaultGroupBy="role"
           onRowClick={(item) => handleOpenEdit(item)}
         />
 

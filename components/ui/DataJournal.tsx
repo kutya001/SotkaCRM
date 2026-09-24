@@ -478,15 +478,19 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
       key={rowKey}
       className="group hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 transition-colors"
     >
-      {orderedColumns.map((col) => {
+      {orderedColumns.map((col, colIndex) => {
         const val = row[col.key];
+        const isFirstCol = colIndex === 0;
+        const stickyFirstColClass = isFirstCol
+          ? 'sticky left-0 z-10 backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 shadow-[4px_0_12px_rgba(0,0,0,0.03)] dark:shadow-[4px_0_12px_rgba(0,0,0,0.2)] group-hover:bg-zinc-50/95 dark:group-hover:bg-zinc-800/95'
+          : '';
 
         if (col.renderCell) {
           return (
             <td
               key={col.key}
               onClick={() => onRowClick && onRowClick(row)}
-              className="px-4 py-3 truncate cursor-pointer"
+              className={`px-4 py-3 truncate cursor-pointer ${stickyFirstColClass}`}
             >
               {col.renderCell(row, val)}
             </td>
@@ -505,7 +509,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
 
           if (!onStatusChange) {
             return (
-              <td key={col.key} className="px-4 py-3">
+              <td key={col.key} className={`px-4 py-3 ${stickyFirstColClass}`}>
                 <span
                   className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass}`}
                 >
@@ -519,7 +523,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
             activeStatusDropdownRowKey === `${rowKey}_${col.key}`;
 
           return (
-            <td key={col.key} className="px-4 py-3 relative">
+            <td key={col.key} className={`px-4 py-3 relative ${stickyFirstColClass}`}>
               <div className="inline-block relative">
                 <button
                   onClick={(e) => {
@@ -585,7 +589,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
         if (col.type === 'phone') {
           const phoneStr = String(val || '');
           return (
-            <td key={col.key} className="px-4 py-3 truncate">
+            <td key={col.key} className={`px-4 py-3 truncate ${stickyFirstColClass}`}>
               <span
                 onClick={() => handleCopy(phoneStr, `${rowKey}_${col.key}`)}
                 className="inline-flex items-center gap-1.5 cursor-pointer font-mono hover:text-zinc-900 dark:hover:text-white"
@@ -611,7 +615,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
             <td
               key={col.key}
               onClick={() => onRowClick && onRowClick(row)}
-              className="px-4 py-3 font-semibold truncate cursor-pointer"
+              className={`px-4 py-3 font-semibold truncate cursor-pointer ${stickyFirstColClass}`}
             >
               {num.toLocaleString('ru-RU')} сом
             </td>
@@ -622,7 +626,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
           <td
             key={col.key}
             onClick={() => onRowClick && onRowClick(row)}
-            className="px-4 py-3 truncate cursor-pointer max-w-xs"
+            className={`px-4 py-3 truncate cursor-pointer max-w-xs ${stickyFirstColClass}`}
           >
             {String(val ?? '—')}
           </td>
@@ -1925,12 +1929,13 @@ export function DataJournal<T extends Record<string, any>>({
         /* ТАБЛИЧНЫЙ ВИД (TABLE VIEW) */
         <div className="relative z-10 w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm min-h-[360px]">
           <div ref={tableContainerRef} className="overflow-x-auto overflow-y-auto max-h-[680px]">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full min-w-full text-left border-collapse">
               {/* Sticky-шапка */}
               <thead className="sticky top-0 z-20 backdrop-blur-2xl bg-zinc-100/90 dark:bg-zinc-900/95 border-b border-zinc-200/80 dark:border-zinc-800">
                 <tr>
                   {orderedColumns.map((col, colIndex) => {
                     const width = columnWidths[col.key] || 160;
+                    const isFirstCol = colIndex === 0;
                     const isSorted = sortConfig.field === col.key;
                     const colFilter = columnFilters[col.key] || {};
                     const isColFiltered = isColumnFilterActive(colFilter);
@@ -1948,6 +1953,10 @@ export function DataJournal<T extends Record<string, any>>({
                         onDragOver={handleDragOver}
                         onDrop={(e) => handleDrop(e, col.key)}
                         className={`relative group px-4 py-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300 select-none ${
+                          isFirstCol
+                            ? 'sticky left-0 z-30 backdrop-blur-2xl bg-zinc-100/95 dark:bg-zinc-900/95 shadow-[4px_0_12px_rgba(0,0,0,0.04)] dark:shadow-[4px_0_12px_rgba(0,0,0,0.25)]'
+                            : ''
+                        } ${
                           draggedColumnKey === col.key ? 'opacity-40' : ''
                         }`}
                       >
@@ -2154,7 +2163,7 @@ export function DataJournal<T extends Record<string, any>>({
                 </div>
 
                 {/* Карточки группы */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
                   {group.items.map((row) => {
                     const rowKey = String(row[keyField]);
                     if (renderCard) {
@@ -2187,7 +2196,7 @@ export function DataJournal<T extends Record<string, any>>({
         </div>
       ) : (
         /* СТАНДАРТНЫЙ КАРТОЧНЫЙ ВИД */
-        <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
           {paginatedData.length === 0 ? (
             <div className="col-span-full p-8 text-center rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-xs text-zinc-400">
               {emptyMessage}

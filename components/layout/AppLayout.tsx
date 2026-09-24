@@ -59,13 +59,30 @@ export function AppLayout({
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [internalSyncing, setInternalSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
+  const [layoutWidth, setLayoutWidth] = React.useState<'compact' | 'wide'>('wide');
 
   React.useEffect(() => {
     try {
       const saved = localStorage.getItem('crm_last_sotka_sync');
       if (saved) setLastSyncedAt(saved);
+      const savedWidth = localStorage.getItem('sotka_crm_layout_width');
+      if (savedWidth === 'compact' || savedWidth === 'wide') {
+        setLayoutWidth(savedWidth);
+      }
     } catch {}
   }, []);
+
+  const handleToggleLayoutWidth = () => {
+    const next = layoutWidth === 'wide' ? 'compact' : 'wide';
+    setLayoutWidth(next);
+    try {
+      localStorage.setItem('sotka_crm_layout_width', next);
+    } catch {}
+    showToast(
+      next === 'wide' ? 'Включен режим широкого экрана' : 'Включен компактный режим',
+      'info'
+    );
+  };
 
   const handleSync = async () => {
     if (onSyncApi) {
@@ -136,6 +153,8 @@ export function AppLayout({
         searchPlaceholder={searchPlaceholder}
         filterCount={filterCount}
         filterContent={filterContent}
+        layoutWidth={layoutWidth}
+        onToggleLayoutWidth={handleToggleLayoutWidth}
       />
 
       {/* МОБИЛЬНЫЙ СЛОЙ (экран < 1024px) */}
@@ -153,7 +172,15 @@ export function AppLayout({
           sidebarCollapsed ? 'lg:pl-24' : 'lg:pl-72'
         } lg:pt-24 lg:pr-6 lg:pb-8 pt-20 px-3 pb-44`}
       >
-        <div className="max-w-7xl mx-auto">{children}</div>
+        <div
+          className={`transition-all duration-300 mx-auto ${
+            layoutWidth === 'wide'
+              ? 'w-full max-w-[1920px] px-0 sm:px-2 lg:px-4'
+              : 'w-full max-w-7xl px-0'
+          }`}
+        >
+          {children}
+        </div>
       </main>
 
       {/* УНИВЕРСАЛЬНАЯ КНОПКА ДОБАВЛЕНИЯ: */}

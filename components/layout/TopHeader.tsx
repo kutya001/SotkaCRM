@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
+import { Maximize2, Minimize2, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import type { UserRole } from '@/types/database.types';
 
@@ -19,6 +19,8 @@ interface TopHeaderProps {
   searchPlaceholder?: string;
   filterCount?: number;
   filterContent?: React.ReactNode;
+  layoutWidth?: 'compact' | 'wide';
+  onToggleLayoutWidth?: () => void;
 }
 
 const MODULE_TITLES: Record<string, string> = {
@@ -47,6 +49,8 @@ export function TopHeader({
   searchPlaceholder = 'Быстрый поиск по номеру, имени или магазину...',
   filterCount = 0,
   filterContent,
+  layoutWidth = 'wide',
+  onToggleLayoutWidth,
 }: TopHeaderProps) {
   const pathname = usePathname();
   const currentTitle = MODULE_TITLES[pathname] || 'SotkaCRM';
@@ -211,6 +215,31 @@ export function TopHeader({
               <span suppressHydrationWarning className="text-[10px] text-zinc-400 font-mono hidden 2xl:inline">
                 ({lastSyncedAt})
               </span>
+            )}
+          </button>
+        )}
+
+        {/* Переключатель ширины экрана: Компактный / Широкий экран */}
+        {onToggleLayoutWidth && (
+          <button
+            type="button"
+            onClick={onToggleLayoutWidth}
+            className="w-10 h-10 rounded-xl bg-zinc-200/50 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50 flex items-center justify-center transition-colors island-interactive"
+            title={
+              layoutWidth === 'wide'
+                ? 'Компактный вид (max-w-7xl)'
+                : 'Широкий экран (Full-Width)'
+            }
+            aria-label={
+              layoutWidth === 'wide'
+                ? 'Компактный вид'
+                : 'Широкий экран'
+            }
+          >
+            {layoutWidth === 'wide' ? (
+              <Minimize2 className="w-4 h-4" strokeWidth={1.75} />
+            ) : (
+              <Maximize2 className="w-4 h-4" strokeWidth={1.75} />
             )}
           </button>
         )}

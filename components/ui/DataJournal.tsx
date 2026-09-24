@@ -24,6 +24,7 @@ import {
   Phone,
   GripVertical,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { useToast, type ToastType } from '@/components/ui/Toast';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
@@ -73,6 +74,13 @@ export interface ColumnFilterState {
 
 export type ColumnFilters = Record<string, ColumnFilterState>;
 
+export interface DataJournalTab {
+  id: string;
+  label: string;
+  count?: number;
+  color?: string;
+}
+
 export interface DataJournalProps<T extends Record<string, any>> {
   data: T[];
   columns: ColumnDef<T>[];
@@ -94,6 +102,9 @@ export interface DataJournalProps<T extends Record<string, any>> {
   totalCount?: number;
   defaultGroupBy?: string;
   onResetAllFilters?: () => void;
+  tabs?: DataJournalTab[];
+  activeTab?: string;
+  onTabChange?: (tabId: string) => void;
 }
 
 export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
@@ -456,6 +467,7 @@ interface DataJournalTableRowProps<T extends Record<string, any>> {
   setActiveStatusDropdownRowKey: (key: string | null) => void;
   statusDropdownRef: React.RefObject<HTMLDivElement | null>;
   showToast: (msg: string, type?: ToastType) => void;
+  onRowContextMenu?: (e: React.MouseEvent, row: T) => void;
 }
 
 const DataJournalTableRowInner = <T extends Record<string, any>>({
@@ -472,10 +484,39 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   setActiveStatusDropdownRowKey,
   statusDropdownRef,
   showToast,
+  onRowContextMenu,
 }: DataJournalTableRowProps<T>) => {
+  const [dropdownCoords, setDropdownCoords] = React.useState<{ top: number; left: number } | null>(
+    null
+  );
+
+  // Автозакрытие выпадающего списка статуса при скролле
+  const isAnyRowDropdownOpen = Boolean(
+    activeStatusDropdownRowKey && activeStatusDropdownRowKey.startsWith(`${rowKey}_`)
+  );
+
+  React.useEffect(() => {
+    if (!isAnyRowDropdownOpen) return;
+    const handleScrollOrResize = () => {
+      setActiveStatusDropdownRowKey(null);
+    };
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [isAnyRowDropdownOpen, setActiveStatusDropdownRowKey]);
+
   return (
     <tr
       key={rowKey}
+      onContextMenu={(e) => {
+        if (onRowContextMenu) {
+          e.preventDefault();
+          onRowContextMenu(e, row);
+        }
+      }}
       className="group hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 transition-colors"
     >
       {orderedColumns.map((col, colIndex) => {
@@ -526,11 +567,23 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
             <td key={col.key} className={`px-4 py-3 relative ${stickyFirstColClass}`}>
               <div className="inline-block relative">
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setActiveStatusDropdownRowKey(
-                      isDropdownOpen ? null : `${rowKey}_${col.key}`
-                    );
+                    if (isDropdownOpen) {
+                      setActiveStatusDropdownRowKey(null);
+                    } else {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const popoverH =
+                        (col.statusOptions || PIPELINE_STATUS_OPTIONS).length * 36 + 20;
+                      const fitsBelow = rect.bottom + popoverH <= window.innerHeight;
+                      const top = fitsBelow
+                        ? rect.bottom + 4
+                        : Math.max(8, rect.top - popoverH - 4);
+                      const left = Math.min(rect.left, Math.max(8, window.innerWidth - 180));
+                      setDropdownCoords({ top, left });
+                      setActiveStatusDropdownRowKey(`${rowKey}_${col.key}`);
+                    }
                   }}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass} hover:opacity-90 transition-all`}
                 >
@@ -543,44 +596,56 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
                   <ChevronDown className="w-3 h-3" strokeWidth={2} />
                 </button>
 
-                {isDropdownOpen && (
-                  <div
-                    ref={statusDropdownRef}
-                    className="absolute left-0 top-8 z-50 min-w-[140px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
-                  >
-                    {(col.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveStatusDropdownRowKey(null);
-                          onStatusChange && onStatusChange(row, opt.value);
-                          showToast(`Статус изменен на «${opt.label}»`, 'success');
-                        }}
-                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
-                          opt.value === val
-                            ? 'bg-zinc-100 dark:bg-zinc-800 font-bold'
-                            : 'hover:bg-zinc-100/70 dark:hover:bg-zinc-800/50'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <span
-                            className={`w-2 h-2 rounded-full ${
-                              opt.dotColor || 'bg-zinc-400'
-                            }`}
-                          />
-                          <span>{opt.label}</span>
-                        </span>
-                        {opt.value === val && (
-                          <Check
-                            className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"
-                            strokeWidth={2}
-                          />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {isDropdownOpen &&
+                  dropdownCoords &&
+                  typeof document !== 'undefined' &&
+                  createPortal(
+                    <div
+                      ref={statusDropdownRef}
+                      style={{
+                        position: 'fixed',
+                        top: `${dropdownCoords.top}px`,
+                        left: `${dropdownCoords.left}px`,
+                        zIndex: 9999,
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="min-w-[150px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
+                    >
+                      {(col.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveStatusDropdownRowKey(null);
+                            onStatusChange && onStatusChange(row, opt.value);
+                            showToast(`Статус изменен на «${opt.label}»`, 'success');
+                          }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
+                            opt.value === val
+                              ? 'bg-zinc-100 dark:bg-zinc-800 font-bold'
+                              : 'hover:bg-zinc-100/70 dark:hover:bg-zinc-800/50'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                opt.dotColor || 'bg-zinc-400'
+                              }`}
+                            />
+                            <span>{opt.label}</span>
+                          </span>
+                          {opt.value === val && (
+                            <Check
+                              className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"
+                              strokeWidth={2}
+                            />
+                          )}
+                        </button>
+                      ))}
+                    </div>,
+                    document.body
+                  )}
               </div>
             </td>
           );
@@ -632,58 +697,6 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
           </td>
         );
       })}
-
-      {/* Закрепленные действия */}
-      <td className="sticky right-0 z-10 px-4 py-3 text-right backdrop-blur-2xl bg-white/90 dark:bg-zinc-900/90 shadow-[-4px_0_12px_rgba(0,0,0,0.03)] dark:shadow-[-4px_0_12px_rgba(0,0,0,0.2)]">
-        <div className="flex items-center justify-end gap-1.5">
-          {customRowActions && customRowActions(row)}
-
-          {onRowClick && (
-            <button
-              onClick={() => onRowClick(row)}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors"
-              title="Просмотр записи"
-            >
-              <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
-            </button>
-          )}
-
-          {(() => {
-            const phoneCol = initialColumns.find((c) => c.type === 'phone');
-            const rawPhone = phoneCol?.phoneAccessor
-              ? phoneCol.phoneAccessor(row)
-              : phoneCol
-              ? String(row[phoneCol.key] || '')
-              : '';
-            const cleanDigits = rawPhone.replace(/\D/g, '');
-            if (!cleanDigits) return null;
-            return (
-              <a
-                href={`https://wa.me/${cleanDigits}`}
-                target="_blank"
-                rel="noreferrer"
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors"
-                title="Написать в WhatsApp"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-              </a>
-            );
-          })()}
-
-          <button
-            onClick={() => handleCopy(rowKey, rowKey)}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-200/50 dark:hover:bg-zinc-800 transition-colors"
-            title="Скопировать ID записи"
-          >
-            {copiedKey === rowKey ? (
-              <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
-            ) : (
-              <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
-            )}
-          </button>
-        </div>
-      </td>
     </tr>
   );
 };
@@ -713,8 +726,6 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   onRowClick,
   onStatusChange,
   customRowActions,
-  handleCopy,
-  copiedKey,
   showToast,
 }: DataJournalCardProps<T>) => {
   const phoneCol = initialColumns.find((c) => c.type === 'phone');
@@ -749,18 +760,15 @@ const DataJournalCardInner = <T extends Record<string, any>>({
       className="rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
     >
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 line-clamp-1">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {cardTitle}
           </h3>
-          <p className="text-[10px] font-mono text-zinc-400 mt-0.5">
-            ID: {rowKey.substring(0, 8)}...
-          </p>
         </div>
 
         {currentStatusOpt && (
           <span
-            className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${currentStatusOpt.colorClass}`}
+            className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 ${currentStatusOpt.colorClass}`}
           >
             {currentStatusOpt.label}
           </span>
@@ -815,17 +823,16 @@ const DataJournalCardInner = <T extends Record<string, any>>({
             </>
           )}
 
-          <button
-            onClick={() => handleCopy(rowKey, rowKey)}
-            className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-            title="Скопировать ID"
-          >
-            {copiedKey === rowKey ? (
-              <Check className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
-            ) : (
-              <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
-            )}
-          </button>
+          {onRowClick && (
+            <button
+              type="button"
+              onClick={() => onRowClick(row)}
+              className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+              title="Просмотр записи"
+            >
+              <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
+            </button>
+          )}
 
           {customRowActions && customRowActions(row)}
         </div>
@@ -876,8 +883,48 @@ export function DataJournal<T extends Record<string, any>>({
   totalCount,
   defaultGroupBy,
   onResetAllFilters,
+  tabs,
+  activeTab,
+  onTabChange,
 }: DataJournalProps<T>) {
   const { showToast } = useToast();
+
+  // Состояние контекстного меню ПКМ
+  const [contextMenu, setContextMenu] = React.useState<{
+    x: number;
+    y: number;
+    row: T;
+  } | null>(null);
+
+  const handleRowContextMenu = React.useCallback((e: React.MouseEvent, row: T) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuW = 200;
+    const menuH = 150;
+    const x =
+      e.clientX + menuW > window.innerWidth ? window.innerWidth - menuW - 12 : e.clientX;
+    const y =
+      e.clientY + menuH > window.innerHeight ? window.innerHeight - menuH - 12 : e.clientY;
+    setContextMenu({ x, y, row });
+  }, []);
+
+  React.useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [contextMenu]);
 
   // 1. Режим отображения: Таблица / Карточки
   const [viewMode, setViewMode] = React.useState<'table' | 'cards'>('table');
@@ -1924,11 +1971,48 @@ export function DataJournal<T extends Record<string, any>>({
         </div>
       )}
 
+      {/* Горизонтальные вкладки статусов/категорий */}
+      {tabs && tabs.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+          {tabs.map((tab) => {
+            const isActive = (activeTab ?? 'all') === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onTabChange && onTabChange(tab.id)}
+                className={`h-9 px-3.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all flex-shrink-0 island-interactive ${
+                  isActive
+                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-sm'
+                    : 'bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-white dark:hover:bg-zinc-800'
+                }`}
+              >
+                <span>{tab.label}</span>
+                {tab.count !== undefined && (
+                  <span
+                    className={`min-w-[18px] h-4.5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                      isActive
+                        ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900'
+                        : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* 2. Представление данных: Таблица или Карточки */}
       {isClient && viewMode === 'table' ? (
         /* ТАБЛИЧНЫЙ ВИД (TABLE VIEW) */
-        <div className="relative z-10 w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm min-h-[360px]">
-          <div ref={tableContainerRef} className="overflow-x-auto overflow-y-auto max-h-[680px]">
+        <div className="relative z-10 w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col min-h-[360px]">
+          <div
+            ref={tableContainerRef}
+            className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[320px] flex-1"
+          >
             <table className="w-full min-w-full text-left border-collapse">
               {/* Sticky-шапка */}
               <thead className="sticky top-0 z-20 backdrop-blur-2xl bg-zinc-100/90 dark:bg-zinc-900/95 border-b border-zinc-200/80 dark:border-zinc-800">
@@ -2057,11 +2141,6 @@ export function DataJournal<T extends Record<string, any>>({
                       </th>
                     );
                   })}
-
-                  {/* Закрепленная правая колонка действий */}
-                  <th className="sticky right-0 z-30 w-28 px-4 py-3 text-xs font-semibold text-zinc-600 dark:text-zinc-300 text-right backdrop-blur-2xl bg-zinc-100/95 dark:bg-zinc-900/95 shadow-[-4px_0_12px_rgba(0,0,0,0.03)] dark:shadow-[-4px_0_12px_rgba(0,0,0,0.2)]">
-                    Действия
-                  </th>
                 </tr>
               </thead>
 
@@ -2070,7 +2149,7 @@ export function DataJournal<T extends Record<string, any>>({
                 {paginatedData.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={orderedColumns.length + 1}
+                      colSpan={orderedColumns.length}
                       className="px-4 py-16 text-center text-zinc-400"
                     >
                       {emptyMessage}
@@ -2081,7 +2160,7 @@ export function DataJournal<T extends Record<string, any>>({
                     {virtualRows.length > 0 && virtualRows[0].start > 0 && (
                       <tr>
                         <td
-                          colSpan={orderedColumns.length + 1}
+                          colSpan={orderedColumns.length}
                           style={{
                             height: `${virtualRows[0].start}px`,
                             padding: 0,
@@ -2110,6 +2189,7 @@ export function DataJournal<T extends Record<string, any>>({
                           setActiveStatusDropdownRowKey={setActiveStatusDropdownRowKey}
                           statusDropdownRef={statusDropdownRef}
                           showToast={showToast}
+                          onRowContextMenu={handleRowContextMenu}
                         />
                       );
                     })}
@@ -2117,7 +2197,7 @@ export function DataJournal<T extends Record<string, any>>({
                       totalVirtualSize - virtualRows[virtualRows.length - 1].end > 0 && (
                         <tr>
                           <td
-                            colSpan={orderedColumns.length + 1}
+                            colSpan={orderedColumns.length}
                             style={{
                               height: `${totalVirtualSize - virtualRows[virtualRows.length - 1].end}px`,
                               padding: 0,
@@ -2131,20 +2211,64 @@ export function DataJournal<T extends Record<string, any>>({
               </tbody>
             </table>
           </div>
-        </div>
-      ) : isClient && viewMode === 'cards' && groupByField ? (
-        /* КАРТОЧНЫЙ РЕЖИМ С ГРУППИРОВКОЙ (КАНБАН ПО КОЛОНКАМ) */
-        <div className="relative z-10 space-y-6">
-          {groupedData.length === 0 ? (
-            <div className="p-8 text-center rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-xs text-zinc-400">
-              {emptyMessage}
+
+          {/* Прижатый подвал пагинации внутри карточки таблицы */}
+          <div className="sticky bottom-0 z-20 border-t border-zinc-200/60 dark:border-zinc-800/60 backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-zinc-500 dark:text-zinc-400">
+            <div className="flex items-center gap-2">
+              <span>Строк на странице:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="h-8 px-2.5 text-xs bg-white/60 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span className="hidden sm:inline">
+                (Показано {sortedData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
+                {Math.min(currentPage * pageSize, sortedData.length)} из {totalRows})
+              </span>
             </div>
-          ) : (
-            groupedData.map((group) => (
-              <div key={group.groupKey} className="space-y-3">
-                {/* Шапка группы */}
-                <div className="flex items-center justify-between px-3 py-2 rounded-2xl bg-zinc-100/80 dark:bg-zinc-800/70 border border-zinc-200/60 dark:border-zinc-700/60">
-                  <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Предыдущая страница"
+              >
+                <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+
+              <span className="px-3 py-1 font-semibold text-zinc-800 dark:text-zinc-200">
+                {currentPage} / {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Следующая страница"
+              >
+                <ChevronRight className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : isClient && viewMode === 'cards' && groupByField && groupedData.filter((g) => g.items.length > 0).length > 0 ? (
+        /* КАРТОЧНЫЙ РЕЖИМ С ГРУППИРОВКОЙ (ТОЛЬКО НЕПУСТЫЕ ГРУППЫ) */
+        <div className="space-y-6">
+          <div className="relative z-10 space-y-6">
+            {groupedData
+              .filter((group) => group.items.length > 0)
+              .map((group) => (
+                <div key={group.groupKey} className="space-y-3">
+                  {/* Компактный заголовок группы */}
+                  <div className="flex items-center gap-2 px-1">
                     {group.statusOpt ? (
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${group.statusOpt.colorClass}`}
@@ -2156,124 +2280,235 @@ export function DataJournal<T extends Record<string, any>>({
                         {group.groupLabel}
                       </span>
                     )}
-                    <span className="px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-[10px] font-mono font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-[10px] font-mono font-bold">
                       {group.items.length}
                     </span>
                   </div>
-                </div>
 
-                {/* Карточки группы */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
-                  {group.items.map((row) => {
-                    const rowKey = String(row[keyField]);
-                    if (renderCard) {
+                  {/* Карточки группы */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
+                    {group.items.map((row) => {
+                      const rowKey = String(row[keyField]);
+                      if (renderCard) {
+                        return (
+                          <React.Fragment key={rowKey}>
+                            {renderCard(row)}
+                          </React.Fragment>
+                        );
+                      }
                       return (
-                        <React.Fragment key={rowKey}>
-                          {renderCard(row)}
-                        </React.Fragment>
+                        <DataJournalCard
+                          key={rowKey}
+                          row={row}
+                          rowKey={rowKey}
+                          orderedColumns={orderedColumns}
+                          initialColumns={initialColumns}
+                          onRowClick={onRowClick}
+                          onStatusChange={onStatusChange}
+                          customRowActions={customRowActions}
+                          handleCopy={handleCopy}
+                          copiedKey={copiedKey}
+                          showToast={showToast}
+                        />
                       );
-                    }
-                    return (
-                      <DataJournalCard
-                        key={rowKey}
-                        row={row}
-                        rowKey={rowKey}
-                        orderedColumns={orderedColumns}
-                        initialColumns={initialColumns}
-                        onRowClick={onRowClick}
-                        onStatusChange={onStatusChange}
-                        customRowActions={customRowActions}
-                        handleCopy={handleCopy}
-                        copiedKey={copiedKey}
-                        showToast={showToast}
-                      />
-                    );
-                  })}
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))
-          )}
+              ))}
+          </div>
+
+          {/* Плавающий прижатый подвал пагинации для карточек */}
+          <div className="sticky bottom-2 z-20 p-3 sm:p-4 rounded-3xl backdrop-blur-2xl bg-white/90 dark:bg-zinc-900/90 border border-white/20 dark:border-zinc-800/40 shadow-lg text-xs text-zinc-500 dark:text-zinc-400 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span>Строк на странице:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="h-8 px-2.5 text-xs bg-white/60 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span className="hidden sm:inline">
+                (Показано {sortedData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
+                {Math.min(currentPage * pageSize, sortedData.length)} из {totalRows})
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Предыдущая страница"
+              >
+                <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+
+              <span className="px-3 py-1 font-semibold text-zinc-800 dark:text-zinc-200">
+                {currentPage} / {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Следующая страница"
+              >
+                <ChevronRight className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            </div>
+          </div>
         </div>
       ) : (
         /* СТАНДАРТНЫЙ КАРТОЧНЫЙ ВИД */
-        <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
-          {paginatedData.length === 0 ? (
-            <div className="col-span-full p-8 text-center rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-xs text-zinc-400">
-              {emptyMessage}
+        <div className="space-y-6">
+          <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
+            {paginatedData.length === 0 ? (
+              <div className="col-span-full p-8 text-center rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-xs text-zinc-400">
+                {emptyMessage}
+              </div>
+            ) : renderCard ? (
+              paginatedData.map((row) => (
+                <React.Fragment key={String(row[keyField])}>
+                  {renderCard(row)}
+                </React.Fragment>
+              ))
+            ) : (
+              paginatedData.map((row) => {
+                const rowKey = String(row[keyField]);
+                return (
+                  <DataJournalCard
+                    key={rowKey}
+                    row={row}
+                    rowKey={rowKey}
+                    orderedColumns={orderedColumns}
+                    initialColumns={initialColumns}
+                    onRowClick={onRowClick}
+                    onStatusChange={onStatusChange}
+                    customRowActions={customRowActions}
+                    handleCopy={handleCopy}
+                    copiedKey={copiedKey}
+                    showToast={showToast}
+                  />
+                );
+              })
+            )}
+          </div>
+
+          {/* Плавающий прижатый подвал пагинации для карточек */}
+          <div className="sticky bottom-2 z-20 p-3 sm:p-4 rounded-3xl backdrop-blur-2xl bg-white/90 dark:bg-zinc-900/90 border border-white/20 dark:border-zinc-800/40 shadow-lg text-xs text-zinc-500 dark:text-zinc-400 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span>Строк на странице:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="h-8 px-2.5 text-xs bg-white/60 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span className="hidden sm:inline">
+                (Показано {sortedData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
+                {Math.min(currentPage * pageSize, sortedData.length)} из {totalRows})
+              </span>
             </div>
-          ) : renderCard ? (
-            paginatedData.map((row) => (
-              <React.Fragment key={String(row[keyField])}>
-                {renderCard(row)}
-              </React.Fragment>
-            ))
-          ) : (
-            paginatedData.map((row) => {
-              const rowKey = String(row[keyField]);
-              return (
-                <DataJournalCard
-                  key={rowKey}
-                  row={row}
-                  rowKey={rowKey}
-                  orderedColumns={orderedColumns}
-                  initialColumns={initialColumns}
-                  onRowClick={onRowClick}
-                  onStatusChange={onStatusChange}
-                  customRowActions={customRowActions}
-                  handleCopy={handleCopy}
-                  copiedKey={copiedKey}
-                  showToast={showToast}
-                />
-              );
-            })
-          )}
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Предыдущая страница"
+              >
+                <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+
+              <span className="px-3 py-1 font-semibold text-zinc-800 dark:text-zinc-200">
+                {currentPage} / {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                title="Следующая страница"
+              >
+                <ChevronRight className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* 3. Подвал пагинации */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm text-xs text-zinc-500 dark:text-zinc-400">
-        <div className="flex items-center gap-2">
-          <span>Строк на странице:</span>
-          <select
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-            className="h-8 px-2.5 text-xs bg-white/60 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+      {/* Контекстное меню ПКМ (Right-Click Context Menu) */}
+      {contextMenu &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            style={{
+              position: 'fixed',
+              top: `${contextMenu.y}px`,
+              left: `${contextMenu.x}px`,
+              zIndex: 9999,
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="min-w-[190px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
           >
-            <option value={10}>10</option>
-            <option value={25}>25</option>
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-          </select>
-          <span className="hidden sm:inline">
-            (Показано {sortedData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}–
-            {Math.min(currentPage * pageSize, sortedData.length)} из {totalRows})
-          </span>
-        </div>
+            {onRowClick && (
+              <button
+                type="button"
+                onClick={() => {
+                  const r = contextMenu.row;
+                  setContextMenu(null);
+                  onRowClick(r);
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2.5 transition-colors"
+              >
+                <Eye className="w-4 h-4 text-zinc-400" strokeWidth={1.75} />
+                <span>Просмотр / Изменить</span>
+              </button>
+            )}
 
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
-            className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            title="Предыдущая страница"
-          >
-            <ChevronLeft className="w-4 h-4" strokeWidth={1.75} />
-          </button>
+            {(() => {
+              const phoneCol = initialColumns.find((c) => c.type === 'phone');
+              const rawPhone = phoneCol?.phoneAccessor
+                ? phoneCol.phoneAccessor(contextMenu.row)
+                : phoneCol
+                ? String(contextMenu.row[phoneCol.key] || '')
+                : '';
+              const cleanDigits = rawPhone.replace(/\D/g, '');
+              if (!cleanDigits) return null;
+              return (
+                <a
+                  href={`https://wa.me/${cleanDigits}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setContextMenu(null)}
+                  className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors"
+                >
+                  <MessageCircle className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
+                  <span>Написать в WhatsApp</span>
+                </a>
+              );
+            })()}
 
-          <span className="px-3 py-1 font-semibold text-zinc-800 dark:text-zinc-200">
-            {currentPage} / {totalPages}
-          </span>
-
-          <button
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-            disabled={currentPage >= totalPages}
-            className="p-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/60 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            title="Следующая страница"
-          >
-            <ChevronRight className="w-4 h-4" strokeWidth={1.75} />
-          </button>
-        </div>
-      </div>
+            {customRowActions && (
+              <div className="pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
+                {customRowActions(contextMenu.row)}
+              </div>
+            )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

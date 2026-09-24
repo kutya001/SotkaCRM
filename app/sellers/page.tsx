@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
+import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } from '@/components/ui/DataJournal';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
@@ -124,7 +124,7 @@ export default function SellersPage() {
 
   // Загрузка начальных данных
   const fetchSellersData = React.useCallback(
-    async (page = 1, search = '', silent = false) => {
+    async (page = 1, search = '', silent = false, moderationOverride?: string) => {
       if (!silent) {
         setIsLoading(true);
       }
@@ -134,7 +134,7 @@ export default function SellersPage() {
             page,
             pageSize: 50,
             search,
-            moderation: filterModeration,
+            moderation: moderationOverride !== undefined ? moderationOverride : filterModeration,
             isActive: filterActive,
             managerId: filterManager,
           }),
@@ -170,6 +170,20 @@ export default function SellersPage() {
     },
     [filterModeration, filterActive, filterManager, router, showToast]
   );
+
+  // Вкладки статуса модерации для DataJournal
+  const sellerTabs: DataJournalTab[] = React.useMemo(() => [
+    { id: 'all', label: 'Все продавцы', count: stats.total },
+    { id: 'pending', label: 'На модерации', count: stats.pendingModeration },
+    { id: 'approved', label: 'Одобрен', count: stats.active },
+    { id: 'rejected', label: 'Отклонен' },
+    { id: 'blocked', label: 'Заблокирован' },
+  ], [stats]);
+
+  const handleTabChange = (tabId: string) => {
+    setFilterModeration(tabId);
+    fetchSellersData(1, searchQuery, false, tabId);
+  };
 
   React.useEffect(() => {
     if (user.profile) {
@@ -1109,7 +1123,9 @@ export default function SellersPage() {
             totalCount={totalCount}
             externalSearchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            defaultGroupBy="moderation"
+            tabs={sellerTabs}
+            activeTab={filterModeration}
+            onTabChange={handleTabChange}
             customActions={sellerActions}
             renderCard={renderSellerCard}
             onRowClick={(seller) =>

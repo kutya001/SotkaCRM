@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
+import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -505,6 +505,14 @@ export default function EmployeesPage() {
   const smmCount = employees.filter((e) => e.role === 'smm').length;
   const blockedCount = employees.filter((e) => !e.is_active).length;
 
+  // Вкладки ролей для DataJournal
+  const employeeTabs: DataJournalTab[] = React.useMemo(() => [
+    { id: 'all', label: 'Все сотрудники', count: totalCount },
+    { id: 'admin', label: 'Администраторы', count: adminsCount },
+    { id: 'consultant', label: 'Консультанты', count: consultantsCount },
+    { id: 'smm', label: 'SMM-операторы', count: smmCount },
+  ], [totalCount, adminsCount, consultantsCount, smmCount]);
+
   return (
     <AppLayout
       userRole={currentUserRole}
@@ -585,7 +593,9 @@ export default function EmployeesPage() {
           emptyMessage="Сотрудники не найдены"
           externalSearchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          defaultGroupBy="role"
+          tabs={employeeTabs}
+          activeTab={roleFilter}
+          onTabChange={setRoleFilter}
           onRowClick={(item) => handleOpenEdit(item)}
         />
 

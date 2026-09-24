@@ -32,10 +32,15 @@ import {
   Plus,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import dynamic from 'next/dynamic';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
-import { LinkSellerLeadModal } from '@/components/sellers/LinkSellerLeadModal';
 import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
+
+const LinkSellerLeadModal = dynamic(
+  () => import('@/components/sellers/LinkSellerLeadModal').then((m) => m.LinkSellerLeadModal),
+  { ssr: false }
+);
 
 const SELLER_MODERATION_OPTIONS: StatusOption[] = [
   {
@@ -1139,24 +1144,28 @@ export default function SellersPage() {
         )}
 
         {/* МОДАЛЬНОЕ ОКНО ДЕТАЛЬНОГО ПРОСМОТРА КАРТОЧКИ ПРОДАВЦА */}
-        <EntityModal
-          isOpen={modalState.isOpen}
-          onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))}
-          title={modalState.selectedSeller?.seller_name || 'Карточка продавца'}
-          data={modalState.selectedSeller}
-          fields={modalFields}
-          keyField="seller_phone"
-          phoneField="seller_phone"
-          initialMode="view"
-        />
+        {modalState.isOpen && (
+          <EntityModal
+            isOpen={modalState.isOpen}
+            onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))}
+            title={modalState.selectedSeller?.seller_name || 'Карточка продавца'}
+            data={modalState.selectedSeller}
+            fields={modalFields}
+            keyField="seller_phone"
+            phoneField="seller_phone"
+            initialMode="view"
+          />
+        )}
 
         {/* МОДАЛЬНОЕ ОКНО ПРИВЯЗКИ ПРОДАВЦА К ЛИДУ */}
-        <LinkSellerLeadModal
-          isOpen={linkLeadModal.isOpen}
-          onClose={() => setLinkLeadModal({ isOpen: false, seller: null })}
-          seller={linkLeadModal.seller}
-          onSuccess={() => fetchSellersData(1, searchQuery, true)}
-        />
+        {linkLeadModal.isOpen && (
+          <LinkSellerLeadModal
+            isOpen={linkLeadModal.isOpen}
+            onClose={() => setLinkLeadModal({ isOpen: false, seller: null })}
+            seller={linkLeadModal.seller}
+            onSuccess={() => fetchSellersData(1, searchQuery, true)}
+          />
+        )}
       </div>
     </AppLayout>
   );

@@ -701,9 +701,78 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   );
 };
 
-export const DataJournalTableRow = React.memo(
-  DataJournalTableRowInner
+/**
+ * Компаратор свойств строки таблицы для React.memo
+ * Предотвращает каскадный ре-рендер всей таблицы при обновлении отдельной строки
+ */
+function areRowPropsEqual<T extends Record<string, any>>(
+  prevProps: DataJournalTableRowProps<T>,
+  nextProps: DataJournalTableRowProps<T>
+): boolean {
+  if (prevProps.rowKey !== nextProps.rowKey) return false;
+
+  const prev = prevProps.row;
+  const next = nextProps.row;
+
+  // 1. Идентификатор сущности
+  const prevId =
+    prev.id ??
+    prev.lead_id ??
+    prev.seller_phone ??
+    prev.user_id ??
+    prev.payment_id ??
+    prev.connection_id;
+  const nextId =
+    next.id ??
+    next.lead_id ??
+    next.seller_phone ??
+    next.user_id ??
+    next.payment_id ??
+    next.connection_id;
+  if (prevId !== nextId) return false;
+
+  // 2. Ключевые изменяемые поля (status, assigned_to, updated_at, manager_id, is_active, moderation)
+  if (prev.status !== next.status) return false;
+  if (prev.assigned_to !== next.assigned_to) return false;
+  if (prev.updated_at !== next.updated_at) return false;
+  if (prev.manager_id !== next.manager_id) return false;
+  if (prev.is_active !== next.is_active) return false;
+  if (prev.moderation !== next.moderation) return false;
+
+  // 3. Локальное состояние выпадающего списка статуса именно для этой строки
+  const wasDropdownOpen = Boolean(
+    prevProps.activeStatusDropdownRowKey &&
+      prevProps.activeStatusDropdownRowKey.startsWith(`${prevProps.rowKey}_`)
+  );
+  const isDropdownOpen = Boolean(
+    nextProps.activeStatusDropdownRowKey &&
+      nextProps.activeStatusDropdownRowKey.startsWith(`${nextProps.rowKey}_`)
+  );
+  if (wasDropdownOpen !== isDropdownOpen) return false;
+
+  // 4. Локальный индикатор скопированного ключа
+  const wasCopied = Boolean(
+    prevProps.copiedKey && prevProps.copiedKey.startsWith(`${prevProps.rowKey}_`)
+  );
+  const isCopied = Boolean(
+    nextProps.copiedKey && nextProps.copiedKey.startsWith(`${nextProps.rowKey}_`)
+  );
+  if (wasCopied !== isCopied) return false;
+
+  // 5. Проверка структуры видимых колонок
+  if (prevProps.orderedColumns !== nextProps.orderedColumns) {
+    if (prevProps.orderedColumns.length !== nextProps.orderedColumns.length) return false;
+  }
+
+  return true;
+}
+
+export const DataJournalRow = React.memo(
+  DataJournalTableRowInner,
+  areRowPropsEqual
 ) as typeof DataJournalTableRowInner;
+
+export const DataJournalTableRow = DataJournalRow;
 
 interface DataJournalCardProps<T extends Record<string, any>> {
   row: T;
@@ -862,6 +931,148 @@ export const DataJournalCard = React.memo(
   DataJournalCardInner
 ) as typeof DataJournalCardInner;
 
+interface ContextMenuPayload<T> {
+  x: number;
+  y: number;
+  row: T;
+}
+
+/**
+ * Изолированный контроллер контекстного меню ПКМ.
+ * Позволяет открывать/закрывать контекстное меню без повторного рендера всей таблицы DataJournal.
+ */
+function useContextMenuController<T>() {
+  const listenersRef = React.useRef<Set<(data: ContextMenuPayload<T> | null) => void>>(new Set());
+
+  const open = React.useCallback((e: React.MouseEvent, row: T) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuW = 200;
+    const menuH = 150;
+    const x =
+      e.clientX + menuW > window.innerWidth ? window.innerWidth - menuW - 12 : e.clientX;
+    const y =
+      e.clientY + menuH > window.innerHeight ? window.innerHeight - menuH - 12 : e.clientY;
+
+    listenersRef.current.forEach((cb) => cb({ x, y, row }));
+  }, []);
+
+  const close = React.useCallback(() => {
+    listenersRef.current.forEach((cb) => cb(null));
+  }, []);
+
+  const subscribe = React.useCallback((cb: (data: ContextMenuPayload<T> | null) => void) => {
+    listenersRef.current.add(cb);
+    return () => {
+      listenersRef.current.delete(cb);
+    };
+  }, []);
+
+  return { open, close, subscribe };
+}
+
+interface DataJournalContextMenuProps<T extends Record<string, any>> {
+  subscribe: (cb: (data: ContextMenuPayload<T> | null) => void) => () => void;
+  onRowClick?: (row: T) => void;
+  initialColumns: ColumnDef<T>[];
+  customRowActions?: (row: T) => React.ReactNode;
+}
+
+function DataJournalContextMenuInner<T extends Record<string, any>>({
+  subscribe,
+  onRowClick,
+  initialColumns,
+  customRowActions,
+}: DataJournalContextMenuProps<T>) {
+  const [menu, setMenu] = React.useState<ContextMenuPayload<T> | null>(null);
+
+  React.useEffect(() => {
+    return subscribe(setMenu);
+  }, [subscribe]);
+
+  React.useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [menu]);
+
+  if (!menu || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        top: `${menu.y}px`,
+        left: `${menu.x}px`,
+        zIndex: 9999,
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className="min-w-[190px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
+    >
+      {onRowClick && (
+        <button
+          type="button"
+          onClick={() => {
+            const r = menu.row;
+            setMenu(null);
+            onRowClick(r);
+          }}
+          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2.5 transition-colors"
+        >
+          <Eye className="w-4 h-4 text-zinc-400" strokeWidth={1.75} />
+          <span>Просмотр / Изменить</span>
+        </button>
+      )}
+
+      {(() => {
+        const phoneCol = initialColumns.find((c) => c.type === 'phone');
+        const rawPhone = phoneCol?.phoneAccessor
+          ? phoneCol.phoneAccessor(menu.row)
+          : phoneCol
+          ? String(menu.row[phoneCol.key] || '')
+          : '';
+        const cleanDigits = rawPhone.replace(/\D/g, '');
+        if (!cleanDigits) return null;
+        return (
+          <a
+            href={`https://wa.me/${cleanDigits}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => setMenu(null)}
+            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors"
+          >
+            <MessageCircle className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
+            <span>Написать в WhatsApp</span>
+          </a>
+        );
+      })()}
+
+      {customRowActions && (
+        <div className="pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
+          {customRowActions(menu.row)}
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+const DataJournalContextMenu = React.memo(
+  DataJournalContextMenuInner
+) as typeof DataJournalContextMenuInner;
+
 export function DataJournal<T extends Record<string, any>>({
   data,
   columns: initialColumns,
@@ -889,42 +1100,8 @@ export function DataJournal<T extends Record<string, any>>({
 }: DataJournalProps<T>) {
   const { showToast } = useToast();
 
-  // Состояние контекстного меню ПКМ
-  const [contextMenu, setContextMenu] = React.useState<{
-    x: number;
-    y: number;
-    row: T;
-  } | null>(null);
-
-  const handleRowContextMenu = React.useCallback((e: React.MouseEvent, row: T) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const menuW = 200;
-    const menuH = 150;
-    const x =
-      e.clientX + menuW > window.innerWidth ? window.innerWidth - menuW - 12 : e.clientX;
-    const y =
-      e.clientY + menuH > window.innerHeight ? window.innerHeight - menuH - 12 : e.clientY;
-    setContextMenu({ x, y, row });
-  }, []);
-
-  React.useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener('click', close);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-      window.removeEventListener('keydown', handleKey);
-    };
-  }, [contextMenu]);
+  // Изолированный контроллер контекстного меню ПКМ
+  const contextMenuCtrl = useContextMenuController<T>();
 
   // 1. Режим отображения: Таблица / Карточки
   const [viewMode, setViewMode] = React.useState<'table' | 'cards'>('table');
@@ -2174,7 +2351,7 @@ export function DataJournal<T extends Record<string, any>>({
                       if (!row) return null;
                       const rowKey = String(row[keyField]);
                       return (
-                        <DataJournalTableRow
+                        <DataJournalRow
                           key={rowKey}
                           row={row}
                           rowKey={rowKey}
@@ -2189,7 +2366,7 @@ export function DataJournal<T extends Record<string, any>>({
                           setActiveStatusDropdownRowKey={setActiveStatusDropdownRowKey}
                           statusDropdownRef={statusDropdownRef}
                           showToast={showToast}
-                          onRowContextMenu={handleRowContextMenu}
+                          onRowContextMenu={contextMenuCtrl.open}
                         />
                       );
                     })}
@@ -2449,66 +2626,13 @@ export function DataJournal<T extends Record<string, any>>({
         </div>
       )}
 
-      {/* Контекстное меню ПКМ (Right-Click Context Menu) */}
-      {contextMenu &&
-        typeof document !== 'undefined' &&
-        createPortal(
-          <div
-            style={{
-              position: 'fixed',
-              top: `${contextMenu.y}px`,
-              left: `${contextMenu.x}px`,
-              zIndex: 9999,
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="min-w-[190px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
-          >
-            {onRowClick && (
-              <button
-                type="button"
-                onClick={() => {
-                  const r = contextMenu.row;
-                  setContextMenu(null);
-                  onRowClick(r);
-                }}
-                className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2.5 transition-colors"
-              >
-                <Eye className="w-4 h-4 text-zinc-400" strokeWidth={1.75} />
-                <span>Просмотр / Изменить</span>
-              </button>
-            )}
-
-            {(() => {
-              const phoneCol = initialColumns.find((c) => c.type === 'phone');
-              const rawPhone = phoneCol?.phoneAccessor
-                ? phoneCol.phoneAccessor(contextMenu.row)
-                : phoneCol
-                ? String(contextMenu.row[phoneCol.key] || '')
-                : '';
-              const cleanDigits = rawPhone.replace(/\D/g, '');
-              if (!cleanDigits) return null;
-              return (
-                <a
-                  href={`https://wa.me/${cleanDigits}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setContextMenu(null)}
-                  className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors"
-                >
-                  <MessageCircle className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
-                  <span>Написать в WhatsApp</span>
-                </a>
-              );
-            })()}
-
-            {customRowActions && (
-              <div className="pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
-                {customRowActions(contextMenu.row)}
-              </div>
-            )}
-          </div>,
-          document.body
-        )}
+      {/* Контекстное меню ПКМ (Изолированный компонент, исключающий ре-рендер таблицы) */}
+      <DataJournalContextMenu
+        subscribe={contextMenuCtrl.subscribe}
+        onRowClick={onRowClick}
+        initialColumns={initialColumns}
+        customRowActions={customRowActions}
+      />
     </div>
   );
 }

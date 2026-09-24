@@ -1,7 +1,8 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { PlanUpdateSchema } from '@/lib/validations';
 import { roundMoney } from '@/lib/utils/money';
@@ -41,6 +42,27 @@ export interface PlanPriceItem {
 }
 
 /**
+ * Кэшированная выборка каталога тарифов через unstable_cache
+ */
+const fetchCachedPlans = unstable_cache(
+  async () => {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from('plans')
+      .select('*')
+      .order('price', { ascending: true });
+
+    if (error) {
+      return { plans: [], error: error.message };
+    }
+
+    return { plans: (data as PlanItem[]) || [] };
+  },
+  ['plans-list'],
+  { tags: ['plans'], revalidate: 300 }
+);
+
+/**
  * Получение каталога тарифов
  */
 export async function getPlans(): Promise<{
@@ -64,16 +86,8 @@ export async function getPlans(): Promise<{
     if (profile) currentUserRole = profile.role as UserRole;
   }
 
-  const { data, error } = await supabase
-    .from('plans')
-    .select('*')
-    .order('price', { ascending: true });
-
-  if (error) {
-    return { plans: [], currentUserRole, error: error.message };
-  }
-
-  return { plans: (data as PlanItem[]) || [], currentUserRole };
+  const cached = await fetchCachedPlans();
+  return { plans: cached.plans, currentUserRole, error: cached.error };
 }
 
 /**
@@ -135,6 +149,7 @@ export async function updatePlan(
       { onConflict: 'plan_id,effective_from' }
     );
 
+    revalidateTag('plans');
     revalidatePath('/plans');
     return { success: true };
   } catch (err: any) {
@@ -192,6 +207,7 @@ export async function createPlan(data: {
       created_by: profile.user_id,
     });
 
+    revalidateTag('plans');
     revalidatePath('/plans');
     return { success: true };
   } catch (err: any) {
@@ -274,6 +290,7 @@ export async function upsertPlanPrice(
       }
     }
 
+    revalidateTag('plans');
     revalidatePath('/plans');
     return { success: true };
   } catch (err: any) {
@@ -313,6 +330,7 @@ export async function deletePlanPrice(
       return { success: false, error: error.message };
     }
 
+    revalidateTag('plans');
     revalidatePath('/plans');
     return { success: true };
   } catch (err: any) {
@@ -397,6 +415,7 @@ export async function deletePlan(planId: string): Promise<{ success: boolean; er
       return { success: false, error: deleteErr.message };
     }
 
+    revalidateTag('plans');
     revalidatePath('/plans');
     return { success: true };
   } catch (err: any) {

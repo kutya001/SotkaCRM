@@ -4,10 +4,19 @@ import * as React from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type DataJournalTab, PIPELINE_STATUS_OPTIONS } from '@/components/ui/DataJournal';
+import dynamic from 'next/dynamic';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
-import { SalesScriptsSheet } from '@/components/leads/SalesScriptsSheet';
-import { LeadSellerMappingModal } from '@/components/leads/LeadSellerMappingModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+
+const SalesScriptsSheet = dynamic(
+  () => import('@/components/leads/SalesScriptsSheet').then((m) => m.SalesScriptsSheet),
+  { ssr: false }
+);
+
+const LeadSellerMappingModal = dynamic(
+  () => import('@/components/leads/LeadSellerMappingModal').then((m) => m.LeadSellerMappingModal),
+  { ssr: false }
+);
 import { useToast } from '@/components/ui/Toast';
 import {
   getLeads,
@@ -783,29 +792,34 @@ function LeadsContent() {
         />
 
         {/* 4. Единая гибридная форма сущности EntityModal */}
-        <EntityModal<LeadItem>
-          isOpen={modalState.isOpen}
-          onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))}
-          initialMode={modalState.mode}
-          title={modalState.selectedLead?.client_name || 'Новый лид'}
-          data={modalState.selectedLead}
-          fields={entityFields}
-          keyField="lead_id"
-          phoneField="phone"
-          statusField="status"
-          statusOptions={roleStatusOptions}
-          onSave={canEditCurrentLead ? handleSaveLead : undefined}
-          onCreate={handleCreateLead}
-          onStatusChange={canEditCurrentLead ? handleStatusChangeInModal : undefined}
-          onLinkSeller={handleLinkSeller}
-          createSubmitLabel="Сохранить запись"
-        />
+        {/* 4. Модальное окно редактирования лида */}
+        {modalState.isOpen && (
+          <EntityModal<LeadItem>
+            isOpen={modalState.isOpen}
+            onClose={() => setModalState((prev) => ({ ...prev, isOpen: false }))}
+            initialMode={modalState.mode}
+            title={modalState.selectedLead?.client_name || 'Новый лид'}
+            data={modalState.selectedLead}
+            fields={entityFields}
+            keyField="lead_id"
+            phoneField="phone"
+            statusField="status"
+            statusOptions={roleStatusOptions}
+            onSave={canEditCurrentLead ? handleSaveLead : undefined}
+            onCreate={handleCreateLead}
+            onStatusChange={canEditCurrentLead ? handleStatusChangeInModal : undefined}
+            onLinkSeller={handleLinkSeller}
+            createSubmitLabel="Сохранить запись"
+          />
+        )}
 
         {/* 5. Шторка базы знаний скриптов продаж */}
-        <SalesScriptsSheet
-          isOpen={isScriptsOpen}
-          onClose={() => setIsScriptsOpen(false)}
-        />
+        {isScriptsOpen && (
+          <SalesScriptsSheet
+            isOpen={isScriptsOpen}
+            onClose={() => setIsScriptsOpen(false)}
+          />
+        )}
 
         {/* 6. Диалог отмены сделки с указанием причины */}
         {cancelDialog.isOpen && (
@@ -867,18 +881,20 @@ function LeadsContent() {
         )}
 
         {/* 7. Модальное окно ручного связывания Лид -> Продавец */}
-        <LeadSellerMappingModal
-          isOpen={mappingModal.isOpen}
-          onClose={() => setMappingModal({ isOpen: false, lead: null })}
-          lead={mappingModal.lead}
-          currentUserId={currentUserId}
-          currentUserRole={currentUserRole}
-          consultants={consultants}
-          onSuccess={async () => {
-            setModalState((prev) => ({ ...prev, isOpen: false }));
-            await fetchInitialData();
-          }}
-        />
+        {mappingModal.isOpen && (
+          <LeadSellerMappingModal
+            isOpen={mappingModal.isOpen}
+            onClose={() => setMappingModal({ isOpen: false, lead: null })}
+            lead={mappingModal.lead}
+            currentUserId={currentUserId}
+            currentUserRole={currentUserRole}
+            consultants={consultants}
+            onSuccess={async () => {
+              setModalState((prev) => ({ ...prev, isOpen: false }));
+              await fetchInitialData();
+            }}
+          />
+        )}
       </div>
     </AppLayout>
   );

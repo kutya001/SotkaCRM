@@ -585,6 +585,13 @@ CREATE INDEX idx_payouts_user_month ON employee_payouts(user_id, accrual_month);
 -- Регистронезависимая уникальность логина сотрудников
 CREATE UNIQUE INDEX users_login_lower_idx ON users (LOWER(TRIM(login)));
 
+-- Композитные индексы высокой производительности (Миграция 012)
+CREATE INDEX idx_leads_status_created ON leads(status, created_at DESC);
+CREATE INDEX idx_leads_assigned_status ON leads(assigned_to, status);
+CREATE INDEX idx_sellers_moderation_reg ON sellers(moderation, registered_at DESC);
+CREATE INDEX idx_connections_seller_phone ON connections(seller_phone);
+CREATE INDEX idx_users_role_active ON users(role, is_active);
+
 ```
 
 ---

@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createCrmUser } from '@/app/auth/actions';
@@ -62,13 +62,12 @@ async function requireAdminAuth() {
 }
 
 /**
- * Получение списка сотрудников с пагинацией и фильтрацией
+ * Кэшированная выборка сотрудников через unstable_cache
  */
-export async function getEmployees(
-  params: GetEmployeesParams = {}
-): Promise<EmployeesResponse> {
-  try {
-    const { supabase } = await requireAdminAuth();
+const fetchCachedEmployees = unstable_cache(
+  async (paramsKey: string) => {
+    const params: GetEmployeesParams = JSON.parse(paramsKey);
+    const supabase = createAdminClient();
 
     const {
       page = 1,
@@ -128,6 +127,20 @@ export async function getEmployees(
       employees: (data as EmployeeItem[]) || [],
       totalCount: count || 0,
     };
+  },
+  ['employees-list'],
+  { tags: ['employees'], revalidate: 300 }
+);
+
+/**
+ * Получение списка сотрудников с пагинацией и фильтрацией
+ */
+export async function getEmployees(
+  params: GetEmployeesParams = {}
+): Promise<EmployeesResponse> {
+  try {
+    await requireAdminAuth();
+    return await fetchCachedEmployees(JSON.stringify(params));
   } catch (err: any) {
     return { employees: [], totalCount: 0, error: err.message };
   }
@@ -169,6 +182,7 @@ export async function createEmployee(input: {
         .eq('user_id', res.userId);
     }
     if (res.success) {
+      revalidateTag('employees');
       revalidatePath('/employees');
       revalidatePath('/profile');
       revalidatePath('/leads');
@@ -249,6 +263,7 @@ export async function updateEmployee(
       }
     }
 
+    revalidateTag('employees');
     revalidatePath('/employees');
     revalidatePath('/profile');
     return { success: true };
@@ -276,6 +291,7 @@ export async function toggleEmployeeActive(
       return { success: false, error: error.message };
     }
 
+    revalidateTag('employees');
     revalidatePath('/employees');
     revalidatePath('/profile');
     return { success: true };
@@ -318,6 +334,7 @@ export async function resetEmployeePassword(
       return { success: false, error: authError.message };
     }
 
+    revalidateTag('employees');
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };

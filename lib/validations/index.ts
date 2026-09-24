@@ -62,3 +62,40 @@ export const LeadCreateSchema = z.object({
     .default(null),
 });
 
+/**
+ * Валидация произвольного HEX-кода цвета (#RGB или #RRGGBB)
+ */
+export const HexColorSchema = z
+  .string()
+  .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Некорректный HEX-код цвета')
+  .nullable()
+  .optional();
+
+export const employeeSchema = z.object({
+  user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника').optional(),
+  login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
+  full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
+  phone: z.string().nullable().optional(),
+  role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
+  is_active: z.boolean().default(true),
+  color: HexColorSchema,
+});
+
+export const createEmployeeSchema = z.object({
+  login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
+  password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
+  full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
+  phone: z.string().optional().nullable(),
+  role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
+  color: HexColorSchema,
+});
+
+export const updateEmployeeSchema = z.object({
+  full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа').optional(),
+  phone: z.string().nullable().optional(),
+  role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }).optional(),
+  is_active: z.boolean().optional(),
+  color: HexColorSchema,
+});
+
+

@@ -1,7 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { getEmployeeColorConfig } from '@/lib/constants/colors';
+import {
+  EMPLOYEE_COLORS,
+  getEmployeeColorConfig,
+  isValidHex,
+  normalizeHex,
+  hexToRgba,
+  getContrastTextColor,
+} from '@/lib/constants/colors';
 
 interface EmployeeBadgeProps {
   name: string;
@@ -21,6 +28,10 @@ export function EmployeeBadge({
   className = '',
 }: EmployeeBadgeProps) {
   const colorCfg = getEmployeeColorConfig(color);
+  const isCustom = !EMPLOYEE_COLORS.some(
+    (c) => c.value.toLowerCase() === color?.trim().toLowerCase()
+  );
+  const customHex = color && isValidHex(color) ? normalizeHex(color) : null;
   const initial = name ? name.trim().charAt(0).toUpperCase() : '?';
 
   const sizeClasses = {
@@ -46,18 +57,47 @@ export function EmployeeBadge({
     },
   }[size];
 
+  // Динамические стили для кастомного HEX с расчетом YIQ-контрастности текста
+  const customPillStyle: React.CSSProperties | undefined =
+    isCustom && customHex
+      ? {
+          backgroundColor: hexToRgba(customHex, 0.12),
+          borderColor: hexToRgba(customHex, 0.28),
+        }
+      : undefined;
+
+  const customAvatarStyle: React.CSSProperties | undefined =
+    isCustom && customHex
+      ? {
+          backgroundColor: customHex,
+          color: getContrastTextColor(customHex),
+        }
+      : undefined;
+
   return (
     <div
-      className={`inline-flex items-center rounded-xl font-medium border transition-all ${colorCfg.bgLight} ${colorCfg.bgDark} ${colorCfg.borderLight} ${colorCfg.borderDark} ${sizeClasses.pill} ${className}`}
+      style={customPillStyle}
+      className={`inline-flex items-center rounded-xl font-medium border transition-all ${
+        !isCustom
+          ? `${colorCfg.bgLight} ${colorCfg.bgDark} ${colorCfg.borderLight} ${colorCfg.borderDark}`
+          : ''
+      } ${sizeClasses.pill} ${className}`}
       title={`${name}${role ? ` (${role})` : ''}`}
     >
       <span
-        className={`rounded-full flex items-center justify-center font-bold text-white shadow-xs ${colorCfg.dotClass} ${sizeClasses.avatar}`}
+        style={customAvatarStyle}
+        className={`rounded-full flex items-center justify-center font-bold shadow-xs ${
+          !isCustom ? `${colorCfg.dotClass} text-white` : ''
+        } ${sizeClasses.avatar}`}
       >
         {initial}
       </span>
       <span
-        className={`truncate font-semibold ${colorCfg.textLight} ${colorCfg.textDark}`}
+        className={`truncate font-semibold ${
+          !isCustom
+            ? `${colorCfg.textLight} ${colorCfg.textDark}`
+            : 'text-zinc-900 dark:text-zinc-100'
+        }`}
       >
         {name}
       </span>
@@ -83,6 +123,11 @@ export function EmployeeColorDot({
   className?: string;
 }) {
   const colorCfg = getEmployeeColorConfig(color);
+  const isCustom = !EMPLOYEE_COLORS.some(
+    (c) => c.value.toLowerCase() === color?.trim().toLowerCase()
+  );
+  const customHex = color && isValidHex(color) ? normalizeHex(color) : null;
+
   const sizeClasses = {
     xs: 'w-1.5 h-1.5',
     sm: 'w-2 h-2',
@@ -92,7 +137,10 @@ export function EmployeeColorDot({
 
   return (
     <span
-      className={`inline-block rounded-full flex-shrink-0 ${colorCfg.dotClass} ${sizeClasses} ${className}`}
+      style={isCustom && customHex ? { backgroundColor: customHex } : undefined}
+      className={`inline-block rounded-full flex-shrink-0 ${
+        !isCustom ? colorCfg.dotClass : ''
+      } ${sizeClasses} ${className}`}
     />
   );
 }

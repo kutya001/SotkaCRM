@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createCrmUser } from '@/app/auth/actions';
+import { createEmployeeSchema, updateEmployeeSchema } from '@/lib/validations';
+import { isValidHex, normalizeHex } from '@/lib/constants/colors';
 import type { Database, UserRole } from '@/types/database.types';
 
 export interface EmployeeItem {
@@ -144,11 +146,26 @@ export async function createEmployee(input: {
 }): Promise<{ success: boolean; userId?: string; error?: string }> {
   try {
     const { supabase } = await requireAdminAuth();
-    const res = await createCrmUser(input);
-    if (res.success && res.userId && input.color) {
+
+    const parsed = createEmployeeSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message || 'Ошибка валидации полей' };
+    }
+    const valid = parsed.data;
+    const cleanColor = valid.color && isValidHex(valid.color) ? normalizeHex(valid.color) : valid.color;
+
+    const res = await createCrmUser({
+      login: valid.login,
+      password: valid.password,
+      full_name: valid.full_name,
+      phone: valid.phone || undefined,
+      role: valid.role,
+    });
+
+    if (res.success && res.userId && cleanColor) {
       await supabase
         .from('users')
-        .update({ color: input.color })
+        .update({ color: cleanColor })
         .eq('user_id', res.userId);
     }
     if (res.success) {
@@ -179,28 +196,31 @@ export async function updateEmployee(
   try {
     const { supabase } = await requireAdminAuth();
 
+    const parsed = updateEmployeeSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message || 'Ошибка валидации полей' };
+    }
+    const valid = parsed.data;
+
     const updates: Database['public']['Tables']['users']['Update'] = {};
-    if (input.full_name !== undefined) {
-      if (input.full_name.trim().length < 2) {
-        return { success: false, error: 'ФИО должно содержать минимум 2 символа' };
-      }
-      updates.full_name = input.full_name.trim();
+    if (valid.full_name !== undefined) {
+      updates.full_name = valid.full_name.trim();
     }
 
-    if (input.phone !== undefined) {
-      updates.phone = input.phone?.trim() || null;
+    if (valid.phone !== undefined) {
+      updates.phone = valid.phone?.trim() || null;
     }
 
-    if (input.role !== undefined) {
-      updates.role = input.role;
+    if (valid.role !== undefined) {
+      updates.role = valid.role;
     }
 
-    if (input.is_active !== undefined) {
-      updates.is_active = input.is_active;
+    if (valid.is_active !== undefined) {
+      updates.is_active = valid.is_active;
     }
 
-    if (input.color !== undefined) {
-      updates.color = input.color;
+    if (valid.color !== undefined) {
+      updates.color = valid.color && isValidHex(valid.color) ? normalizeHex(valid.color) : (valid.color || '#3B82F6');
     }
 
     const { data: updated, error: updateError } = await supabase

@@ -2,6 +2,9 @@
  * Нормализаторы и утилиты трансформации данных для Sotka API
  */
 
+import type { SotkaSellerOverviewItem, NormalizedSotkaSeller } from './types';
+import type { SellerModerationStatus } from '@/types/database.types';
+
 /**
  * 1. Очистка и санитизация номера телефона
  * API Sotka строго требует 9 цифр без кода страны и без ведущего нуля
@@ -83,6 +86,9 @@ export function extractArrayData<T = any>(json: unknown): T[] {
     if (!obj.detail || typeof obj.detail !== 'string') {
       // Исключаем системные служебные ответы об ошибках
       if (!obj.error && !obj.errors) {
+        if (obj.detail && typeof obj.detail === 'object') {
+          return [obj.detail as T];
+        }
         return [obj as T];
       }
     }
@@ -276,3 +282,126 @@ export function resolveSotkaPlan(
   // для исключения нарушения внешнего ключа sellers_plan_id_fkey
   return { planId: null, planName: trimmed };
 }
+
+/**
+ * 7. Форматирование номера продавца для первичного ключа sellers.seller_phone (+996XXXXXXXXX)
+ */
+export function formatSellerPhone(phone: unknown, isoCode?: string): string {
+  if (!phone) return '';
+  const str = String(phone).trim();
+  const digits = str.replace(/\D/g, '');
+  if (!digits) return '';
+
+  // 12 цифр с кодом Кыргызстана 996...
+  if (digits.length === 12 && digits.startsWith('996')) {
+    return `+${digits}`;
+  }
+
+  // 9 цифр абонента (без кода страны) -> +996XXXXXXXXX
+  if (digits.length === 9) {
+    const rawIsoDigits = isoCode ? String(isoCode).replace(/\D/g, '') : '';
+    const prefix = rawIsoDigits || '996';
+    return `+${prefix}${digits}`;
+  }
+
+  // 10 цифр с ведущим нулем 0XXXXXXXXX -> +996XXXXXXXXX
+  if (digits.length === 10 && digits.startsWith('0')) {
+    return `+996${digits.slice(1)}`;
+  }
+
+  // Если уже начинается с плюса
+  if (str.startsWith('+')) {
+    return `+${digits}`;
+  }
+
+  return `+${digits}`;
+}
+
+/**
+ * 8. Нормализация объекта продавца из Sotka HQ API (SotkaSellerOverviewItem)
+ * Преобразует элемент внешнего API в модель NormalizedSotkaSeller, готовую для
+ * сохранения в Supabase (таблица sellers) и возврата в UI без undefined.
+ */
+export function normalizeSotkaSeller(
+  item: SotkaSellerOverviewItem,
+  options?: {
+    dbPlansMap?: Map<string, string>;
+    validPlanIds?: Set<string>;
+    preservedManagerId?: string | null;
+  }
+): NormalizedSotkaSeller {
+  const orgId =
+    item.organization_id !== undefined && item.organization_id !== null
+      ? String(item.organization_id)
+      : '';
+
+  const name = item.seller_name || 'Без имени';
+  const phone = formatSellerPhone(item.seller_phone, item.iso_code);
+
+  let store = 'Без названия';
+  if (typeof item.store === 'string' && item.store.trim()) {
+    store = item.store.trim();
+  } else if (Array.isArray(item.stores) && item.stores.length > 0) {
+    store = item.stores.filter(Boolean).join(', ') || 'Без названия';
+  } else if (typeof (item as any).stores === 'string' && (item as any).stores.trim()) {
+    store = (item as any).stores.trim();
+  }
+
+  const rawMod = String(item.moderation || 'pending').toLowerCase();
+  const validModStatus: SellerModerationStatus =
+    rawMod === 'approved' || rawMod === 'pending' || rawMod === 'rejected' || rawMod === 'blocked'
+      ? (rawMod as SellerModerationStatus)
+      : 'pending';
+
+  const rawBalance = item.balance;
+  const balanceNum =
+    typeof rawBalance === 'number'
+      ? rawBalance
+      : typeof rawBalance === 'string'
+      ? parseFloat(rawBalance) || 0
+      : 0;
+
+  const brands = Array.isArray(item.brands)
+    ? item.brands.filter(Boolean).join(', ') || null
+    : item.brands
+    ? String(item.brands)
+    : null;
+
+  const plans = Array.isArray(item.plans) ? item.plans : [];
+  const rawPlan = plans[0];
+  const { planId, planName } = resolveSotkaPlan(
+    rawPlan,
+    options?.dbPlansMap,
+    options?.validPlanIds
+  );
+
+  const registeredAt = parseDateToISO(item.registered_at);
+  const lastActivity = parseDateToISO(item.last_activity);
+
+  return {
+    sotka_id: orgId,
+    external_id: orgId,
+    organization_id: orgId,
+    name,
+    seller_name: name,
+    phone,
+    seller_phone: phone,
+    store_name: store,
+    store,
+    moderation_status: validModStatus,
+    moderation: validModStatus,
+    is_active: Boolean(item.is_active ?? true),
+    outlets_count: Number(item.outlets_count || 0),
+    employees_count: Number(item.employees_count || 0),
+    balance: Math.round(balanceNum * 100) / 100,
+    brands,
+    plans,
+    plan_id: planId,
+    plan_name: planName,
+    registered_at: registeredAt,
+    last_activity: lastActivity,
+    manager_id: options?.preservedManagerId ?? null,
+    synced_at: new Date().toISOString(),
+  };
+}
+

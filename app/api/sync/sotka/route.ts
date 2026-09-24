@@ -8,7 +8,12 @@ import {
   fetchTransactions,
 } from '@/lib/services/sotka-api';
 import { roundMoney } from '@/lib/utils/money';
-import { parseDateToISO, resolveSotkaPlan } from '@/lib/sotka';
+import {
+  parseDateToISO,
+  resolveSotkaPlan,
+  normalizeSotkaSeller,
+  formatSellerPhone,
+} from '@/lib/sotka';
 import type { Database } from '@/types/database.types';
 
 export const dynamic = 'force-dynamic';
@@ -184,67 +189,71 @@ async function handleSync(request: Request) {
         }
       }
 
-      const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] = items.map((item) => {
-        const rawDigits = item.seller_phone ? String(item.seller_phone).replace(/\D/g, '') : '';
-        const normalizedPhone = rawDigits.startsWith('996')
-          ? rawDigits
-          : `${item.iso_code || '996'}${rawDigits}`;
+      const normalizedSellers = items.map((item) => {
+        const orgKey =
+          item.organization_id !== undefined && item.organization_id !== null
+            ? `org_${item.organization_id}`
+            : '';
+        const phoneKey = item.seller_phone
+          ? `phone_${formatSellerPhone(item.seller_phone, item.iso_code)}`
+          : '';
+        const preservedManagerId =
+          (orgKey && existingManagersMap.get(orgKey)) ||
+          (phoneKey && existingManagersMap.get(phoneKey)) ||
+          null;
 
-        // Сохраняем локально назначенного менеджера
-        const preservedManagerId = existingManagersMap.get(normalizedPhone) || null;
-
-        // Безопасное сопоставление тарифа (гарантия исключения sellers_plan_id_fkey)
-        const rawPlan = item.plans?.[0];
-        const { planId: resolvedPlanId, planName: resolvedPlanName } = resolveSotkaPlan(
-          rawPlan,
+        return normalizeSotkaSeller(item, {
           dbPlansMap,
-          validPlanIds
-        );
-        const safePlanId = resolvedPlanId && validPlanIds.has(resolvedPlanId) ? resolvedPlanId : null;
-
-        // Извлечение названия магазина: внешний API передает store (строка) или массив stores
-        let resolvedStore = 'Без названия';
-        if (typeof item.store === 'string' && item.store.trim()) {
-          resolvedStore = item.store.trim();
-        } else if (Array.isArray(item.stores) && item.stores.length > 0) {
-          resolvedStore = item.stores.filter(Boolean).join(', ') || 'Без названия';
-        } else if (typeof (item as any).stores === 'string' && (item as any).stores.trim()) {
-          resolvedStore = (item as any).stores.trim();
-        }
-
-        return {
-          seller_phone: normalizedPhone,
-          seller_name: item.seller_name || 'Без имени',
-          store: resolvedStore,
-          plan_id: safePlanId,
-          plan_name: resolvedPlanName,
-          balance: roundMoney(item.balance),
-          moderation: (item.moderation as any) || 'pending',
-          is_active: item.is_active ?? true,
-          registered_at: parseDateToISO(item.registered_at),
-          last_activity: parseDateToISO(item.last_activity),
-          employees_count: item.employees_count || 0,
-          outlets_count: item.outlets_count || 0,
-          brands: Array.isArray(item.brands) ? item.brands.join(', ') : item.brands || null,
-          organization_id: item.organization_id ? String(item.organization_id) : null,
-          manager_id: preservedManagerId,
-          synced_at: new Date().toISOString(),
-        };
+          validPlanIds,
+          preservedManagerId,
+        });
       });
 
-      // Дедупликация продавцов по seller_phone в рамках текущего батча
+      const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] =
+        normalizedSellers.map((s) => ({
+          seller_phone: s.seller_phone,
+          seller_name: s.seller_name,
+          store: s.store,
+          plan_id: s.plan_id,
+          plan_name: s.plan_name,
+          balance: s.balance,
+          moderation: s.moderation,
+          is_active: s.is_active,
+          registered_at: s.registered_at,
+          last_activity: s.last_activity,
+          employees_count: s.employees_count,
+          outlets_count: s.outlets_count,
+          brands: s.brands,
+          organization_id: s.organization_id || null,
+          manager_id: s.manager_id || null,
+          synced_at: s.synced_at,
+        }));
+
+      // Дедупликация продавцов по organization_id / seller_phone в рамках текущего батча
       const sellersMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
       for (const s of sellersToUpsert) {
-        sellersMap.set(s.seller_phone, s);
+        const key = s.organization_id || s.seller_phone;
+        sellersMap.set(key, s);
       }
       const uniqueSellers = Array.from(sellersMap.values());
 
       // 3.2. Чанкинг вставки продавцов порциями по CHUNK_SIZE записей
       for (let i = 0; i < uniqueSellers.length; i += CHUNK_SIZE) {
         const chunk = uniqueSellers.slice(i, i + CHUNK_SIZE);
-        const { error: sellersUpsertError } = await adminSupabase
+        let { error: sellersUpsertError } = await adminSupabase
           .from('sellers')
-          .upsert(chunk, { onConflict: 'seller_phone' });
+          .upsert(chunk, { onConflict: 'organization_id' });
+
+        if (sellersUpsertError) {
+          console.warn(
+            '[Sotka Sync] Предупреждение upsert по organization_id, fallback на seller_phone:',
+            sellersUpsertError.message
+          );
+          const { error: phoneErr } = await adminSupabase
+            .from('sellers')
+            .upsert(chunk, { onConflict: 'seller_phone' });
+          sellersUpsertError = phoneErr;
+        }
 
         if (sellersUpsertError) {
           console.error('[Sotka Sync] Ошибка upsert продавцов:', sellersUpsertError);

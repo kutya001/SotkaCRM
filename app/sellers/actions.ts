@@ -4,6 +4,18 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
 import type { Database, UserRole, SellerModerationStatus } from '@/types/database.types';
+import {
+  authenticateSotkaAdmin,
+  fetchSellersOverview,
+  fetchSellerDetail,
+} from '@/lib/services/sotka-api';
+import {
+  normalizeSotkaSeller,
+  formatSellerPhone,
+  resolveSotkaPlan,
+  type NormalizedSotkaSeller,
+  type SotkaSellerDetail,
+} from '@/lib/sotka';
 
 export interface LinkedLeadInfo {
   lead_id: string;
@@ -568,4 +580,232 @@ export async function linkSellerToLeadAction(
     return { success: false, error: err.message || 'Сбой при связывании продавца с лидом' };
   }
 }
+
+/**
+ * Синхронизация реестра продавцов из внешнего Sotka HQ API
+ * GET /api/private/v1/admin/sellers-overview/?offset={offset}&limit={limit}
+ * Пакетный upsert в Supabase таблицу 'sellers' по уникальному ключу organization_id
+ * с сохранением существующих привязок кураторов (manager_id).
+ */
+export async function syncSellersFromSotka(
+  offset = 0,
+  limit = 50
+): Promise<{
+  success: boolean;
+  syncedCount: number;
+  sellers: NormalizedSotkaSeller[];
+  total: number;
+  error?: string;
+}> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    // 1. Авторизация во внешнем API Sotka
+    const token = await authenticateSotkaAdmin();
+
+    // 2. Выгрузка порции продавцов через HTTP-клиент
+    const { items, total } = await fetchSellersOverview(token, offset, limit);
+
+    if (!items || items.length === 0) {
+      return {
+        success: true,
+        syncedCount: 0,
+        sellers: [],
+        total: total || 0,
+      };
+    }
+
+    // 3. Сохранение локальных назначений менеджеров (manager_id)
+    const { data: existingSellers } = await supabase
+      .from('sellers')
+      .select('organization_id, seller_phone, manager_id');
+
+    const existingManagersMap = new Map<string, string | null>();
+    if (existingSellers) {
+      for (const s of existingSellers) {
+        if (s.manager_id) {
+          if (s.organization_id) {
+            existingManagersMap.set(`org_${s.organization_id}`, s.manager_id);
+          }
+          if (s.seller_phone) {
+            existingManagersMap.set(`phone_${s.seller_phone}`, s.manager_id);
+          }
+        }
+      }
+    }
+
+    // 4. Справочник тарифов (защита foreign key constraint sellers_plan_id_fkey)
+    const { data: dbPlans } = await supabase
+      .from('plans')
+      .select('plan_id, plan_name');
+
+    const dbPlansMap = new Map<string, string>();
+    const validPlanIds = new Set<string>();
+    if (dbPlans) {
+      for (const p of dbPlans) {
+        validPlanIds.add(p.plan_id);
+        dbPlansMap.set(p.plan_id.toLowerCase(), p.plan_id);
+        dbPlansMap.set(p.plan_name.toLowerCase(), p.plan_id);
+      }
+    }
+
+    // 4.1. Автоматическая предварительная регистрация новых тарифов
+    const plansToUpsertMap = new Map<string, Database['public']['Tables']['plans']['Insert']>();
+    for (const item of items) {
+      const rawPlan = item.plans?.[0];
+      if (
+        rawPlan &&
+        typeof rawPlan === 'string' &&
+        rawPlan.trim() &&
+        rawPlan.trim().toLowerCase() !== 'без тарифа'
+      ) {
+        const cleanName = rawPlan.trim();
+        const resolved = resolveSotkaPlan(cleanName, dbPlansMap, validPlanIds);
+        if (!resolved.planId || !validPlanIds.has(resolved.planId)) {
+          const cleanSlug = cleanName
+            .toUpperCase()
+            .replace(/[^A-Z0-9А-ЯЁ]/gi, '')
+            .slice(0, 16);
+          const newPlanId = `PLN-${cleanSlug || 'CUSTOM'}`;
+          plansToUpsertMap.set(newPlanId, {
+            plan_id: newPlanId,
+            plan_name: cleanName,
+            price: 2500.0,
+            billing_period: 'Месяц',
+            description: 'Автоматически зарегистрирован при синхронизации Sotka API',
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          });
+          validPlanIds.add(newPlanId);
+          dbPlansMap.set(newPlanId.toLowerCase(), newPlanId);
+          dbPlansMap.set(cleanName.toLowerCase(), newPlanId);
+        }
+      }
+    }
+
+    if (plansToUpsertMap.size > 0) {
+      try {
+        await supabase
+          .from('plans')
+          .upsert(Array.from(plansToUpsertMap.values()), { onConflict: 'plan_id' });
+      } catch (planErr) {
+        console.warn('[syncSellersFromSotka] Не удалось предварительно зарегистрировать тарифы:', planErr);
+      }
+    }
+
+    // 5. Нормализация полученных продавцов
+    const normalizedSellers: NormalizedSotkaSeller[] = items.map((item) => {
+      const orgKey =
+        item.organization_id !== undefined && item.organization_id !== null
+          ? `org_${item.organization_id}`
+          : '';
+      const phoneKey = item.seller_phone
+        ? `phone_${formatSellerPhone(item.seller_phone, item.iso_code)}`
+        : '';
+      const preservedManagerId =
+        (orgKey && existingManagersMap.get(orgKey)) ||
+        (phoneKey && existingManagersMap.get(phoneKey)) ||
+        null;
+
+      return normalizeSotkaSeller(item, {
+        dbPlansMap,
+        validPlanIds,
+        preservedManagerId,
+      });
+    });
+
+    // 6. Подготовка записей для таблицы sellers Supabase
+    const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] =
+      normalizedSellers.map((s) => ({
+        seller_phone: s.seller_phone,
+        seller_name: s.seller_name,
+        store: s.store,
+        plan_id: s.plan_id,
+        plan_name: s.plan_name,
+        balance: s.balance,
+        moderation: s.moderation,
+        is_active: s.is_active,
+        registered_at: s.registered_at,
+        last_activity: s.last_activity,
+        employees_count: s.employees_count,
+        outlets_count: s.outlets_count,
+        brands: s.brands,
+        organization_id: s.organization_id || null,
+        manager_id: s.manager_id || null,
+        synced_at: s.synced_at,
+      }));
+
+    // Дедупликация в рамках текущего пакета
+    const uniqueMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
+    for (const row of sellersToUpsert) {
+      const key = row.organization_id || row.seller_phone;
+      uniqueMap.set(key, row);
+    }
+    const uniqueSellers = Array.from(uniqueMap.values());
+
+    // 7. Пакетный upsert в Supabase
+    // Сначала пробуем по уникальному ключу organization_id, при необходимости - fallback на seller_phone
+    let upsertError = null;
+    const { error: orgUpsertErr } = await supabase
+      .from('sellers')
+      .upsert(uniqueSellers, { onConflict: 'organization_id' });
+
+    if (orgUpsertErr) {
+      console.warn(
+        '[syncSellersFromSotka] Предупреждение upsert по organization_id, fallback на seller_phone:',
+        orgUpsertErr.message
+      );
+      const { error: phoneUpsertErr } = await supabase
+        .from('sellers')
+        .upsert(uniqueSellers, { onConflict: 'seller_phone' });
+      upsertError = phoneUpsertErr;
+    }
+
+    if (upsertError) {
+      throw new Error(`Ошибка сохранения продавцов в базу данных: ${upsertError.message}`);
+    }
+
+    revalidatePath('/sellers');
+    revalidatePath('/leads');
+    revalidatePath('/analytics');
+    revalidatePath('/');
+
+    return {
+      success: true,
+      syncedCount: uniqueSellers.length,
+      sellers: normalizedSellers,
+      total,
+    };
+  } catch (err: any) {
+    console.error('[syncSellersFromSotka] Сбой синхронизации продавцов:', err);
+    return {
+      success: false,
+      syncedCount: 0,
+      sellers: [],
+      total: 0,
+      error: err.message || 'Ошибка синхронизации продавцов с Sotka API',
+    };
+  }
+}
+
+/**
+ * Получение детальной карточки продавца напрямую из внешнего API Sotka HQ
+ * GET /api/private/v1/admin/sellers-overview/{organization_id}/
+ */
+export async function getSellerDetailFromSotka(
+  organizationId: number | string
+): Promise<{ success: boolean; detail?: SotkaSellerDetail; error?: string }> {
+  try {
+    await requireAdmin();
+    const token = await authenticateSotkaAdmin();
+    const detail = await fetchSellerDetail(token, organizationId);
+    return { success: true, detail };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Ошибка получения детальной информации продавца из Sotka API',
+    };
+  }
+}
+
 

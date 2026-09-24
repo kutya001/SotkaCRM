@@ -199,7 +199,7 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 | `brands` | `TEXT` | `NULL` | Торговые бренды магазина (через запятую).
 
  |
-| `organization_id` | `VARCHAR(100)` | `NULL` | Идентификатор юридической организации во внешней системе.
+| `organization_id` | `VARCHAR(100)` | `NULL, UNIQUE` | Идентификатор юридической организации во внешней системе (Sotka HQ). Используется для безопасного upsert (`sellers_organization_id_key`).
 
  |
 | `manager_id` | `UUID` | `NULL, REFERENCES users(user_id)` | Назначенный менеджер (сохраняется при синхронизации API).

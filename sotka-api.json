@@ -109,7 +109,7 @@
         }
       },
       "crm_db_mapping": {
-        "seller_phone": "CONCAT(item.iso_code, item.seller_phone)",
+        "seller_phone": "formatSellerPhone(item.seller_phone, item.iso_code)",
         "seller_name": "item.seller_name",
         "store": "item.store || (item.stores && item.stores[0]) || 'Без названия'",
         "plan_id": "resolveSotkaPlan(item.plans[0]).planId",
@@ -117,12 +117,75 @@
         "balance": "item.balance",
         "moderation": "item.moderation || 'pending'",
         "is_active": "item.is_active",
-        "registered_at": "item.registered_at",
-        "last_activity": "item.last_activity",
+        "registered_at": "parseDateToISO(item.registered_at)",
+        "last_activity": "parseDateToISO(item.last_activity)",
         "employees_count": "item.employees_count",
         "outlets_count": "item.outlets_count",
-        "brands": "item.brands.join(', ')",
+        "brands": "Array.isArray(item.brands) ? item.brands.join(', ') : item.brands",
         "organization_id": "String(item.organization_id)"
+      }
+    },
+
+    "seller_detail": {
+      "method": "GET",
+      "path": "/api/private/v1/admin/sellers-overview/{organization_id}/",
+      "description": "Детальная карточка продавца и профиль организации платформы Sotka HQ",
+      "headers": {
+        "Authorization": "Bearer <ACCESS_TOKEN>",
+        "Accept": "application/json"
+      },
+      "path_parameters": {
+        "organization_id": {
+          "type": "integer",
+          "required": true,
+          "example": 22
+        }
+      },
+      "response_example": {
+        "status": "ok",
+        "detail": {
+          "contacts": {
+            "name": "Asim",
+            "phone": "553428002",
+            "iso_code": "+996"
+          },
+          "store": {
+            "name": "AsimTest3",
+            "address": "ЦУМ 1 этаж",
+            "region": "г. Бишкек",
+            "points": 1,
+            "employees": 0,
+            "moderation": "approved",
+            "is_active": true
+          },
+          "legal_data": {
+            "form": "ИП",
+            "inn": "12345678976543",
+            "tax_address": "Бишкек, Западный 18"
+          },
+          "platform": {
+            "tariff": null,
+            "subscription_status": null,
+            "last_activity": null,
+            "registered_at": null
+          },
+          "brands": ["Apple"],
+          "moderation_history": [
+            {
+              "status": "approved",
+              "comment": "Одобрено модератором",
+              "created_by": "admin",
+              "created_at": "2026-09-12T10:00:00Z"
+            }
+          ],
+          "transactions": {
+            "items": [],
+            "total": 0,
+            "total_topups": 0,
+            "total_charges": 0,
+            "total_amount": 0
+          }
+        }
       }
     },
 

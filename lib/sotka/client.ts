@@ -103,7 +103,7 @@ export async function logoutSotka(token: string): Promise<void> {
 export async function fetchSotkaApi<T = any>(
   endpoint: string,
   options: FetchParams = {}
-): Promise<{ data: T[]; total: number; raw: any }> {
+): Promise<{ data: T[]; total: number; raw: any; detail?: any }> {
   let resolvedUrl = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
   // 1. Интерполяция параметров пути: /{id}/ или /:id
@@ -171,5 +171,98 @@ export async function fetchSotkaApi<T = any>(
   const data = extractArrayData<T>(rawJson);
   const total = extractTotalCount(rawJson, data.length);
 
-  return { data, total, raw: rawJson };
+  return {
+    data,
+    total,
+    raw: rawJson,
+    detail:
+      rawJson && typeof rawJson === 'object' && 'detail' in rawJson
+        ? rawJson.detail
+        : undefined,
+  };
 }
+
+/**
+ * Выполнение HTTP-запроса к эндпоинтам с одиночным объектом полезной нагрузки
+ * (например, детальная карточка продавца GET /api/private/v1/admin/sellers-overview/{id}/)
+ * Безопасно распаковывает response.data.detail || response.data
+ */
+export async function fetchSotkaDetail<T = any>(
+  endpoint: string,
+  options: FetchParams = {}
+): Promise<{ data: T; raw: any }> {
+  let resolvedUrl = endpoint.startsWith('http')
+    ? endpoint
+    : `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+
+  if (options.pathParams) {
+    for (const [paramKey, paramValue] of Object.entries(options.pathParams)) {
+      resolvedUrl = resolvedUrl
+        .replace(new RegExp(`/{${paramKey}}/`, 'g'), `/${encodeURIComponent(String(paramValue))}/`)
+        .replace(new RegExp(`/:${paramKey}(?=/|$)`, 'g'), `/${encodeURIComponent(String(paramValue))}`);
+    }
+  }
+
+  if (options.params) {
+    const urlObj = new URL(resolvedUrl);
+    for (const [qKey, qValue] of Object.entries(options.params)) {
+      if (qValue !== undefined && qValue !== null && qValue !== '') {
+        urlObj.searchParams.set(qKey, String(qValue));
+      }
+    }
+    resolvedUrl = urlObj.toString();
+  }
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...(options.headers || {}),
+  };
+
+  if (options.token) {
+    headers['Authorization'] = `Bearer ${options.token}`;
+  }
+
+  if (options.body && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const response = await fetch(resolvedUrl, {
+    method: options.method || 'GET',
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    cache: options.cache || 'no-store',
+  });
+
+  if (!response.ok) {
+    let errorDetail = '';
+    try {
+      const errorJson = await response.json();
+      if (typeof errorJson.detail === 'string') {
+        errorDetail = errorJson.detail;
+      } else if (typeof errorJson.detail === 'object') {
+        errorDetail = JSON.stringify(errorJson.detail);
+      } else {
+        errorDetail = JSON.stringify(errorJson);
+      }
+    } catch {
+      errorDetail = await response.text();
+    }
+    const err = new Error(
+      `Ошибка запроса к Sotka API [${response.status}] (${resolvedUrl}): ${errorDetail}`
+    );
+    (err as any).status = response.status;
+    throw err;
+  }
+
+  const rawJson = await response.json();
+  const data: T =
+    rawJson &&
+    typeof rawJson === 'object' &&
+    'detail' in rawJson &&
+    rawJson.detail !== undefined
+      ? (rawJson.detail as T)
+      : (rawJson as T);
+
+  return { data, raw: rawJson };
+}
+

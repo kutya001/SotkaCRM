@@ -117,9 +117,12 @@ export default function SellersPage() {
 
   // Поиск и Фильтры (ЯРУС 1)
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [filterModeration, setFilterModeration] = React.useState<string>('all');
+  const [filterModeration, setFilterModeration] = React.useState<string>(
+    user.role === 'consultant' ? 'approved' : 'all'
+  );
   const [filterActive, setFilterActive] = React.useState<string>('all');
   const [filterManager, setFilterManager] = React.useState<string>('all');
+  const [hasAvailableLeads, setHasAvailableLeads] = React.useState<boolean>(false);
 
   const formatPhone = (p?: string | null) => {
     if (!p) return '—';
@@ -161,6 +164,10 @@ export default function SellersPage() {
         setStats(statsRes);
         setManagers(managersRes);
 
+        if (sellersRes.hasAvailableLeads !== undefined) {
+          setHasAvailableLeads(sellersRes.hasAvailableLeads);
+        }
+
         if (sellersRes.currentUserRole) {
           setCurrentUserRole(sellersRes.currentUserRole);
         }
@@ -177,13 +184,20 @@ export default function SellersPage() {
   );
 
   // Вкладки статуса модерации для DataJournal
-  const sellerTabs: DataJournalTab[] = React.useMemo(() => [
-    { id: 'all', label: 'Все продавцы', count: stats.total },
-    { id: 'pending', label: 'На модерации', count: stats.pendingModeration },
-    { id: 'approved', label: 'Одобрен', count: stats.active },
-    { id: 'rejected', label: 'Отклонен' },
-    { id: 'blocked', label: 'Заблокирован' },
-  ], [stats]);
+  const sellerTabs: DataJournalTab[] = React.useMemo(() => {
+    if (currentUserRole === 'consultant') {
+      return [
+        { id: 'approved', label: 'Одобрено', count: stats.total },
+      ];
+    }
+    return [
+      { id: 'all', label: 'Все продавцы', count: stats.total },
+      { id: 'pending', label: 'На модерации', count: stats.pendingModeration },
+      { id: 'approved', label: 'Одобрен', count: stats.active },
+      { id: 'rejected', label: 'Отклонен' },
+      { id: 'blocked', label: 'Заблокирован' },
+    ];
+  }, [stats, currentUserRole]);
 
   const handleTabChange = (tabId: string) => {
     setFilterModeration(tabId);
@@ -498,7 +512,7 @@ export default function SellersPage() {
             );
           }
 
-          if (currentUserRole === 'admin' || currentUserRole === 'consultant') {
+          if (hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) {
             return (
               <button
                 type="button"
@@ -519,7 +533,7 @@ export default function SellersPage() {
         },
       },
     ],
-    [currentUserRole, managers, handleAssignManager]
+    [currentUserRole, managers, handleAssignManager, hasAvailableLeads]
   );
 
   // Конфигурация полей для EntityModal
@@ -714,29 +728,31 @@ export default function SellersPage() {
 
   // Расчет количества активных фильтров (ЯРУС 1)
   const activeFilterCount =
-    (filterModeration !== 'all' ? 1 : 0) +
+    (currentUserRole !== 'consultant' && filterModeration !== 'all' ? 1 : 0) +
     (filterActive !== 'all' ? 1 : 0) +
     (filterManager !== 'all' ? 1 : 0);
 
   // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
   const filterContent = (
     <div className="space-y-3.5">
-      <div>
-        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
-          Модерация
-        </label>
-        <select
-          value={filterModeration}
-          onChange={(e) => setFilterModeration(e.target.value)}
-          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
-        >
-          <option value="all">Любая модерация</option>
-          <option value="approved">● Одобрен</option>
-          <option value="pending">● На модерации</option>
-          <option value="rejected">● Отклонен</option>
-          <option value="blocked">● Заблокирован</option>
-        </select>
-      </div>
+      {currentUserRole !== 'consultant' && (
+        <div>
+          <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+            Модерация
+          </label>
+          <select
+            value={filterModeration}
+            onChange={(e) => setFilterModeration(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+          >
+            <option value="all">Любая модерация</option>
+            <option value="approved">● Одобрен</option>
+            <option value="pending">● На модерации</option>
+            <option value="rejected">● Отклонен</option>
+            <option value="blocked">● Заблокирован</option>
+          </select>
+        </div>
+      )}
 
       <div>
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
@@ -786,7 +802,7 @@ export default function SellersPage() {
         <button
           type="button"
           onClick={() => {
-            setFilterModeration('all');
+            setFilterModeration(currentUserRole === 'consultant' ? 'approved' : 'all');
             setFilterActive('all');
             setFilterManager('all');
           }}
@@ -1002,7 +1018,7 @@ export default function SellersPage() {
                   </span>
                 </div>
               </div>
-            ) : (currentUserRole === 'admin' || currentUserRole === 'consultant') ? (
+            ) : (hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) ? (
               <button
                 type="button"
                 onClick={() => setLinkLeadModal({ isOpen: true, seller })}
@@ -1019,6 +1035,31 @@ export default function SellersPage() {
       </div>
     );
   };
+
+  const renderCustomRowActions = React.useCallback(
+    (row: SellerItem) => {
+      if (!hasAvailableLeads || (currentUserRole !== 'admin' && currentUserRole !== 'consultant')) {
+        return null;
+      }
+      if (row.linked_lead) {
+        return null;
+      }
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setLinkLeadModal({ isOpen: true, seller: row });
+          }}
+          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 flex items-center gap-2.5 transition-colors"
+        >
+          <Plus className="w-4 h-4 text-blue-500" strokeWidth={1.75} />
+          <span>Связать с лидом</span>
+        </button>
+      );
+    },
+    [hasAvailableLeads, currentUserRole]
+  );
 
   return (
     <AppLayout
@@ -1132,6 +1173,7 @@ export default function SellersPage() {
             activeTab={filterModeration}
             onTabChange={handleTabChange}
             customActions={sellerActions}
+            customRowActions={renderCustomRowActions}
             renderCard={renderSellerCard}
             onRowClick={(seller) =>
               setModalState({

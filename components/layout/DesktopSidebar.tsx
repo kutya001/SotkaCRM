@@ -43,49 +43,49 @@ const NAV_ITEMS: NavItem[] = [
     title: 'Главная',
     href: '/',
     icon: LayoutDashboard,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Лиды',
     href: '/leads',
     icon: UserCheck,
-    roles: ['admin', 'consultant', 'smm'],
+    roles: ['admin', 'supervisor', 'consultant', 'smm'],
   },
   {
     title: 'Продавцы',
     href: '/sellers',
     icon: Store,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Подключения',
     href: '/connections',
     icon: Link2,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Выплаты',
     href: '/payouts',
     icon: Banknote,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Сотрудники',
     href: '/employees',
     icon: Users,
-    roles: ['admin'],
+    roles: ['admin', 'supervisor'],
   },
   {
     title: 'Тарифы',
     href: '/plans',
     icon: BookOpen,
-    roles: ['admin'],
+    roles: ['admin', 'supervisor'],
   },
   {
     title: 'Аналитика',
     href: '/analytics',
     icon: BarChart3,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
 ];
 
@@ -109,17 +109,22 @@ export function DesktopSidebar({
     item.roles.includes(effectiveRole)
   );
 
-  const roleLabel = {
+  const roleLabel: Record<UserRole, string> = {
     admin: 'Администратор',
+    supervisor: 'Руководитель',
     consultant: 'Консультант',
     smm: 'SMM-оператор',
-  }[effectiveRole];
+  };
 
-  const RoleIcon = {
+  const RoleIcon: Record<UserRole, React.ElementType> = {
     admin: ShieldAlert,
+    supervisor: ShieldAlert,
     consultant: ShieldCheck,
     smm: Shield,
-  }[effectiveRole];
+  };
+
+  const currentRoleLabel = roleLabel[effectiveRole] || 'Сотрудник';
+  const CurrentRoleIcon = RoleIcon[effectiveRole] || ShieldCheck;
 
   return (
     <aside
@@ -221,8 +226,8 @@ export function DesktopSidebar({
                   {effectiveName}
                 </span>
                 <span className="text-[10px] text-zinc-500 flex items-center gap-1 truncate">
-                  <RoleIcon className="w-3 h-3 flex-shrink-0" strokeWidth={1.75} />
-                  {roleLabel}
+                  <CurrentRoleIcon className="w-3 h-3 flex-shrink-0" strokeWidth={1.75} />
+                  {currentRoleLabel}
                 </span>
               </div>
             </Link>
@@ -243,7 +248,7 @@ export function DesktopSidebar({
             <Link
               href="/profile"
               className="w-9 h-9 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 hover:ring-2 hover:ring-blue-500 transition-all"
-              title={`Профиль: ${effectiveName} (${roleLabel})`}
+              title={`Профиль: ${effectiveName} (${currentRoleLabel})`}
             >
               {effectiveName.slice(0, 2).toUpperCase()}
             </Link>

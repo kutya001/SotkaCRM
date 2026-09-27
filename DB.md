@@ -808,18 +808,32 @@ WITH CHECK (
 ```sql
 ALTER TABLE sellers ENABLE ROW LEVEL SECURITY;
 
--- Просмотр: Администратор и Консультанты. Роли SMM доступ закрыт.
+-- Просмотр: Администраторы и Руководители видят всех продавцов.
+-- Консультанты видят исключительно одобренных продавцов (moderation = 'approved'). Роли SMM доступ закрыт.
 CREATE POLICY "sellers_select_policy" ON sellers
 FOR SELECT TO authenticated
 USING (
-    get_current_user_role() IN ('admin', 'consultant')
+    (
+        COALESCE(
+            (SELECT public.get_current_user_role())::text,
+            (SELECT role::text FROM public.users WHERE auth_id = (SELECT auth.uid()) OR user_id = (SELECT auth.uid()) LIMIT 1)
+        ) IN ('admin', 'supervisor')
+    )
+    OR
+    (
+        COALESCE(
+            (SELECT public.get_current_user_role())::text,
+            (SELECT role::text FROM public.users WHERE auth_id = (SELECT auth.uid()) OR user_id = (SELECT auth.uid()) LIMIT 1)
+        ) = 'consultant'
+        AND moderation = 'approved'
+    )
 );
 
 -- Изменение/Синхронизация: Доступно строго администратору
 CREATE POLICY "sellers_admin_write_policy" ON sellers
 FOR ALL TO authenticated
-USING (get_current_user_role() = 'admin')
-WITH CHECK (get_current_user_role() = 'admin');
+USING ((SELECT public.get_current_user_role()) = 'admin')
+WITH CHECK ((SELECT public.get_current_user_role()) = 'admin');
 
 ```
 
@@ -1164,5 +1178,22 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 **12.4. Специализированные B-Tree индексы для продавцов:**
 * `idx_sellers_manager_synced` на `public.sellers (manager_id, synced_at DESC)` — ускорение фильтрации продавцов по менеджеру с сортировкой по времени синхронизации.
 * `idx_sellers_unassigned_synced` на `public.sellers (synced_at DESC) WHERE manager_id IS NULL` — частичный индекс для мгновенной выборки свободных продавцов без куратора.
+
+---
+
+### 13. Изоляция базы продавцов для роли Консультант и представление employees (Миграция `013_consultant_seller_visibility.sql`)
+
+**13.1. Ограничение видимости продавцов по статусу модерации (RBAC):**
+* В RLS-политике `sellers_select_policy`:
+  * Роли `admin` и `supervisor` сохраняют полный доступ ко всем продавцам в любых статусах модерации (`approved`, `pending`, `rejected`, `blocked`).
+  * Роль `consultant` видит **строго и только** продавцов со статусом `moderation = 'approved'`. Доступ к продавцам на модерации (`pending`) и заблокированным/отклоненным (`rejected`, `blocked`) закрыт на уровне СУБД.
+  * Роли `smm` доступ к таблице `sellers` закрыт полностью.
+
+**13.2. Представление `public.employees`:**
+* Создано представление `CREATE OR REPLACE VIEW public.employees AS SELECT ... FROM public.users` для совместимости запросов внешних и внутренних модулей с сохранением ролей и идентификаторов CRM.
+
+**13.3. Серверная агрегация KPI продавцов:**
+* Функция `get_sellers_kpi_stats()` оптимизирована: для консультанта подсчет метрик ведется исключительно по одобренным продавцам (`moderation = 'approved'`), исключая утечку данных о модерации.
+
 
 

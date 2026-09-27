@@ -56,6 +56,11 @@
   .island-interactive:active {
     transform: scale(0.97);
   }
+
+  /* Safe area padding for mobile notches and gesture indicators */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
 }
 
 /* Custom minimal scrollbar */

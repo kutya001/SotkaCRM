@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
+import { requireAdmin, requireAuth, requireRoles } from '@/lib/auth/check-role';
 import type { Database, UserRole, SellerModerationStatus } from '@/types/database.types';
 import {
   authenticateSotkaAdmin,
@@ -67,6 +67,7 @@ export interface SellersResponse {
   totalCount: number;
   currentUserRole?: UserRole;
   currentUserId?: string;
+  hasAvailableLeads?: boolean;
   error?: string;
 }
 
@@ -134,8 +135,11 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     { count: 'exact' }
   );
 
-  // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только не назначенных продавцов либо назначенных на него
+  // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только не назначенных продавцов либо назначенных на него,
+  // и СТРОГО только одобренных продавцов (moderation = 'approved')
   if (profile.role === 'consultant') {
+    query = query.eq('moderation', 'approved');
+
     if (managerId === 'unassigned') {
       query = query.is('manager_id', null);
     } else if (managerId === profile.user_id || managerId === 'my') {
@@ -143,12 +147,18 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     } else {
       query = query.or(`manager_id.is.null,manager_id.eq.${profile.user_id}`);
     }
-  } else if (managerId && managerId !== 'all') {
-    // Для администратора доступен произвольный фильтр по куратору
-    if (managerId === 'unassigned') {
-      query = query.is('manager_id', null);
-    } else {
-      query = query.eq('manager_id', managerId);
+  } else {
+    // Для администратора и руководителя доступен произвольный фильтр по модерации
+    if (moderation && moderation !== 'all') {
+      query = query.eq('moderation', moderation as SellerModerationStatus);
+    }
+
+    if (managerId && managerId !== 'all') {
+      if (managerId === 'unassigned') {
+        query = query.is('manager_id', null);
+      } else {
+        query = query.eq('manager_id', managerId);
+      }
     }
   }
 
@@ -158,11 +168,6 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     query = query.or(
       `seller_phone.ilike.%${cleanSearch}%,seller_name.ilike.%${cleanSearch}%,store.ilike.%${cleanSearch}%`
     );
-  }
-
-  // Фильтр по модерации
-  if (moderation && moderation !== 'all') {
-    query = query.eq('moderation', moderation as SellerModerationStatus);
   }
 
   // Фильтр по активности
@@ -181,7 +186,23 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
   const to = from + pageSize - 1;
   query = query.range(from, to);
 
-  const { data: sellersData, count, error } = await query;
+  // Параллельная проверка наличия свободных лидов для привязки
+  let availableLeadsQuery = supabase
+    .from('leads')
+    .select('lead_id', { count: 'exact', head: true })
+    .is('seller_phone', null)
+    .neq('status', 'Отмена');
+
+  if (profile.role === 'consultant') {
+    availableLeadsQuery = availableLeadsQuery.eq('assigned_to', profile.user_id);
+  }
+
+  const [{ data: sellersData, count, error }, { count: availableLeadsCount }] = await Promise.all([
+    query,
+    availableLeadsQuery,
+  ]);
+
+  const hasAvailableLeads = (availableLeadsCount || 0) > 0;
 
   if (error) {
     console.error('Ошибка при получении продавцов:', error);
@@ -190,6 +211,7 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
       totalCount: 0,
       currentUserRole: profile.role as UserRole,
       currentUserId: profile.user_id,
+      hasAvailableLeads,
       error: error.message,
     };
   }
@@ -245,7 +267,43 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     totalCount: count || 0,
     currentUserRole: profile.role as UserRole,
     currentUserId: profile.user_id,
+    hasAvailableLeads,
   };
+}
+
+/**
+ * Проверка наличия свободных лидов, доступных для привязки к продавцу
+ */
+export async function checkAvailableLeadsExist(): Promise<boolean> {
+  try {
+    const authCtx = await requireAuth();
+    const { profile, supabase } = authCtx;
+
+    if (profile.role === 'smm') {
+      return false;
+    }
+
+    let query = supabase
+      .from('leads')
+      .select('lead_id', { count: 'exact', head: true })
+      .is('seller_phone', null)
+      .neq('status', 'Отмена');
+
+    if (profile.role === 'consultant') {
+      query = query.eq('assigned_to', profile.user_id);
+    }
+
+    const { count, error } = await query;
+    if (error) {
+      console.error('Ошибка проверки наличия доступных лидов:', error);
+      return false;
+    }
+
+    return (count || 0) > 0;
+  } catch (err) {
+    console.error('Ошибка в checkAvailableLeadsExist:', err);
+    return false;
+  }
 }
 
 /**
@@ -330,7 +388,7 @@ export async function getManagersList(): Promise<
     .from('users')
     .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
-    .in('role', ['admin', 'consultant'])
+    .in('role', ['admin', 'consultant', 'supervisor'])
     .order('full_name', { ascending: true });
 
   if (error) {
@@ -489,7 +547,7 @@ export async function getAvailableLeadsForSellerLinking(
   error?: string;
 }> {
   try {
-    const { supabase } = await requireAdmin();
+    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
 
     let query = supabase
       .from('leads')
@@ -504,6 +562,10 @@ export async function getAvailableLeadsForSellerLinking(
       `)
       .is('seller_phone', null)
       .neq('status', 'Отмена');
+
+    if (profile.role === 'consultant') {
+      query = query.eq('assigned_to', profile.user_id);
+    }
 
     if (onlySigned) {
       query = query.eq('status', 'Подписан');
@@ -530,7 +592,7 @@ export async function getAvailableLeadsForSellerLinking(
 }
 
 /**
- * Ручное связывание продавца с лидом администратором с автоматическим
+ * Ручное связывание продавца с лидом администратором/консультантом с автоматическим
  * назначением куратора из лида и мгновенным расчетом выплат в connections
  */
 export async function linkSellerToLeadAction(
@@ -538,7 +600,7 @@ export async function linkSellerToLeadAction(
   leadId: string
 ): Promise<{ success: boolean; error?: string; connectionFeeAmount?: number }> {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
 
     if (!sellerPhone || !leadId) {
       return { success: false, error: 'Не указан продавец или лид' };

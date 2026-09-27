@@ -41,55 +41,55 @@ const ALL_NAV_ITEMS: NavItem[] = [
     title: 'Главная',
     href: '/',
     icon: LayoutDashboard,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Лиды',
     href: '/leads',
     icon: UserCheck,
-    roles: ['admin', 'consultant', 'smm'],
+    roles: ['admin', 'supervisor', 'consultant', 'smm'],
   },
   {
     title: 'Продавцы',
     href: '/sellers',
     icon: Store,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Подключения',
     href: '/connections',
     icon: Link2,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Выплаты',
     href: '/payouts',
     icon: Banknote,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Сотрудники',
     href: '/employees',
     icon: Users,
-    roles: ['admin'],
+    roles: ['admin', 'supervisor'],
   },
   {
     title: 'Тарифы',
     href: '/plans',
     icon: BookOpen,
-    roles: ['admin'],
+    roles: ['admin', 'supervisor'],
   },
   {
     title: 'Аналитика',
     href: '/analytics',
     icon: BarChart3,
-    roles: ['admin', 'consultant'],
+    roles: ['admin', 'supervisor', 'consultant'],
   },
   {
     title: 'Профиль',
     href: '/profile',
     icon: User,
-    roles: ['admin', 'consultant', 'smm'],
+    roles: ['admin', 'supervisor', 'consultant', 'smm'],
   },
 ];
 
@@ -102,17 +102,22 @@ export function MobileMenuDrawer({ isOpen, onClose }: MobileMenuDrawerProps) {
     item.roles.includes(effectiveRole)
   );
 
-  const roleLabel = {
+  const roleLabel: Record<UserRole, string> = {
     admin: 'Администратор',
+    supervisor: 'Руководитель',
     consultant: 'Консультант',
     smm: 'SMM-оператор',
-  }[effectiveRole];
+  };
 
-  const RoleIcon = {
+  const RoleIcon: Record<UserRole, React.ElementType> = {
     admin: ShieldAlert,
+    supervisor: ShieldAlert,
     consultant: ShieldCheck,
     smm: Shield,
-  }[effectiveRole];
+  };
+
+  const currentRoleLabel = roleLabel[effectiveRole] || 'Сотрудник';
+  const CurrentRoleIcon = RoleIcon[effectiveRole] || ShieldCheck;
 
   if (!isOpen) return null;
 
@@ -168,8 +173,8 @@ export function MobileMenuDrawer({ isOpen, onClose }: MobileMenuDrawerProps) {
                   {user.userName || 'Пользователь'}
                 </p>
                 <div className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
-                  <RoleIcon className="w-3 h-3 text-blue-500" strokeWidth={2} />
-                  <span>{roleLabel}</span>
+                  <CurrentRoleIcon className="w-3 h-3 text-blue-500" strokeWidth={2} />
+                  <span>{currentRoleLabel}</span>
                 </div>
               </div>
             </div>

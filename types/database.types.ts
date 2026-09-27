@@ -62,6 +62,13 @@ export type Database = {
             foreignKeyName: "client_maintenance_accrued_by_fkey"
             columns: ["accrued_by"]
             isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "client_maintenance_accrued_by_fkey"
+            columns: ["accrued_by"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["user_id"]
           },
@@ -71,6 +78,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "connections"
             referencedColumns: ["connection_id"]
+          },
+          {
+            foreignKeyName: "client_maintenance_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
           },
           {
             foreignKeyName: "client_maintenance_manager_id_fkey"
@@ -155,7 +169,21 @@ export type Database = {
             foreignKeyName: "connections_assigned_by_fkey"
             columns: ["assigned_by"]
             isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "connections_assigned_by_fkey"
+            columns: ["assigned_by"]
+            isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "connections_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
             referencedColumns: ["user_id"]
           },
           {
@@ -223,7 +251,21 @@ export type Database = {
             foreignKeyName: "employee_payouts_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "employee_payouts_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "employee_payouts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
             referencedColumns: ["user_id"]
           },
           {
@@ -268,7 +310,21 @@ export type Database = {
             foreignKeyName: "employee_rates_created_by_fkey"
             columns: ["created_by"]
             isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "employee_rates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "employee_rates_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
             referencedColumns: ["user_id"]
           },
           {
@@ -331,7 +387,21 @@ export type Database = {
             foreignKeyName: "leads_assigned_to_fkey"
             columns: ["assigned_to"]
             isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "leads_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "leads_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "employees"
             referencedColumns: ["user_id"]
           },
           {
@@ -379,6 +449,13 @@ export type Database = {
           store_name?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "outlets_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
           {
             foreignKeyName: "outlets_manager_id_fkey"
             columns: ["manager_id"]
@@ -460,6 +537,13 @@ export type Database = {
           price_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "plan_prices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
           {
             foreignKeyName: "plan_prices_created_by_fkey"
             columns: ["created_by"]
@@ -604,6 +688,13 @@ export type Database = {
             foreignKeyName: "sellers_manager_id_fkey"
             columns: ["manager_id"]
             isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "sellers_manager_id_fkey"
+            columns: ["manager_id"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["user_id"]
           },
@@ -654,7 +745,42 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      employees: {
+        Row: {
+          auth_id: string | null
+          color: string | null
+          created_at: string | null
+          full_name: string | null
+          is_active: boolean | null
+          login: string | null
+          phone: string | null
+          role: Database["public"]["Enums"]["user_role"] | null
+          user_id: string | null
+        }
+        Insert: {
+          auth_id?: string | null
+          color?: string | null
+          created_at?: string | null
+          full_name?: string | null
+          is_active?: boolean | null
+          login?: string | null
+          phone?: string | null
+          role?: Database["public"]["Enums"]["user_role"] | null
+          user_id?: string | null
+        }
+        Update: {
+          auth_id?: string | null
+          color?: string | null
+          created_at?: string | null
+          full_name?: string | null
+          is_active?: boolean | null
+          login?: string | null
+          phone?: string | null
+          role?: Database["public"]["Enums"]["user_role"] | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       create_crm_user: {
@@ -735,7 +861,7 @@ export type Database = {
         | "прочие начисления"
         | "удержание"
       seller_moderation_status: "approved" | "pending" | "rejected" | "blocked"
-      user_role: "admin" | "consultant" | "smm"
+      user_role: "admin" | "consultant" | "smm" | "supervisor"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -880,7 +1006,7 @@ export const Constants = {
         "удержание",
       ],
       seller_moderation_status: ["approved", "pending", "rejected", "blocked"],
-      user_role: ["admin", "consultant", "smm"],
+      user_role: ["admin", "consultant", "smm", "supervisor"],
     },
   },
 } as const

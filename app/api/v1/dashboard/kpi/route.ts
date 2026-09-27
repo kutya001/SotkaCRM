@@ -9,6 +9,29 @@ export async function GET(req: NextRequest) {
     // Запрашиваем ключевые счетчики параллельно
     const currentMonth = new Date().toISOString().substring(0, 7);
 
+    // 1. Попытка вызова высокопроизводительного SQL-агрегата в СУБД (1 раундтрип)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_dashboard_kpi', {
+      p_user_id: profile.user_id,
+      p_role: profile.role,
+      p_month: currentMonth,
+    });
+
+    if (!rpcError && rpcData) {
+      const res = rpcData as Record<string, any>;
+      return apiSuccess({
+        total_leads: Number(res.total_leads) || 0,
+        open_leads: Number(res.open_leads) || 0,
+        signed_leads: Number(res.signed_leads) || 0,
+        cancelled_leads: Number(res.cancelled_leads) || 0,
+        conversion_rate: Number(res.conversion_rate) || 0,
+        active_sellers: Number(res.active_sellers) || 0,
+        total_sellers_balance: Number(res.total_sellers_balance) || 0,
+        total_connections: Number(res.total_connections) || 0,
+        month_payouts: Number(res.month_payouts) || 0,
+      });
+    }
+
+    // Fallback: Быстрые параллельные агрегатные запросы
     let leadsQuery = supabase.from('leads').select('status, assigned_to');
     if (profile.role === 'consultant') {
       leadsQuery = leadsQuery.eq('assigned_to', profile.user_id);

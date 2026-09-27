@@ -15,6 +15,25 @@ export async function POST(req: NextRequest) {
     const currentMonth = body.accrual_month || new Date().toISOString().substring(0, 7);
     const employeeId = body.employee_id;
 
+    // 1. Попытка вызова высокопроизводительного SQL-агрегата в СУБД (1 раундтрип)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('calculate_payout_accruals', {
+      p_accrual_month: currentMonth,
+      p_employee_id: employeeId || undefined,
+    });
+
+    if (!rpcError && rpcData) {
+      const res = rpcData as Record<string, any>;
+      return apiSuccess({
+        accrual_month: res.accrual_month,
+        employee_id: res.employee_id || null,
+        total_connection_bonus: Number(res.total_connection_bonus) || 0,
+        total_maintenance_bonus: Number(res.total_maintenance_bonus) || 0,
+        total_accrued: Number(res.total_accrued) || 0,
+        calculated_records: Number(res.calculated_records) || 0,
+      });
+    }
+
+    // Fallback: Подсчет на уровне сервера
     // 1. Считаем бонусы за первичное подключение из connections
     let connQuery = supabase
       .from('connections')

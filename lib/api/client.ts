@@ -1,6 +1,7 @@
 /**
  * SotkaCRM API SDK Client
- * Единый типизированный клиент для обращения к REST API v1.
+ * Единый типизированный клиент для обращения к REST API v1 с поддержкой
+ * In-Memory SWR-кэширования (0ms latency на cache hit) и автоматической инвалидации.
  */
 
 export interface ApiResponse<T = any> {
@@ -10,9 +11,45 @@ export interface ApiResponse<T = any> {
   details?: any;
 }
 
-async function request<T>(
+export interface RequestOptions extends RequestInit {
+  bypassCache?: boolean;
+  ttl?: number; // кастомный TTL в миллисекундах (по умолчанию 30 000 мс)
+}
+
+interface CacheEntry<T = any> {
+  data: T;
+  timestamp: number;
+}
+
+const memoryCache = new Map<string, CacheEntry>();
+const DEFAULT_TTL = 30_000; // 30 секунд
+
+/**
+ * Инвалидация кэша по префиксу или регулярному выражению
+ */
+export function invalidateCache(pattern?: string | RegExp): void {
+  if (!pattern) {
+    memoryCache.clear();
+    return;
+  }
+  const regex = typeof pattern === 'string' ? new RegExp(pattern) : pattern;
+  for (const key of Array.from(memoryCache.keys())) {
+    if (regex.test(key)) {
+      memoryCache.delete(key);
+    }
+  }
+}
+
+function invalidateNamespaces(...namespaces: string[]): void {
+  for (const ns of namespaces) {
+    invalidateCache(ns);
+  }
+}
+
+async function executeFetch<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestOptions,
+  cacheKey?: string
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
@@ -62,13 +99,54 @@ async function request<T>(
     throw err;
   }
 
+  // Обновляем кэш при успешном GET
+  if (cacheKey && (!options.method || options.method === 'GET')) {
+    memoryCache.set(cacheKey, {
+      data,
+      timestamp: Date.now(),
+    });
+  }
+
   return data as T;
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const isGet = !options.method || options.method === 'GET';
+  const isBlob = endpoint.includes('/export');
+  const cacheKey = `GET:${endpoint}`;
+
+  // SWR Кэш для GET-запросов (0ms cache hit)
+  if (isGet && !isBlob && !options.bypassCache) {
+    const cached = memoryCache.get(cacheKey);
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
+      const ttl = options.ttl ?? DEFAULT_TTL;
+
+      if (age < ttl) {
+        // Фоновая фоновая ревалидация (SWR) если прошло более 5с
+        if (age > 5_000) {
+          executeFetch<T>(endpoint, options, cacheKey).catch(() => {});
+        }
+        return cached.data as T;
+      } else {
+        // Данные устарели: фоновая ревалидация с отдачей stale-данных
+        executeFetch<T>(endpoint, options, cacheKey).catch(() => {});
+        return cached.data as T;
+      }
+    }
+  }
+
+  return executeFetch<T>(endpoint, options, isGet && !isBlob ? cacheKey : undefined);
 }
 
 function buildQuery(params?: Record<string, any>): string {
   if (!params) return '';
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
+    if (key === 'bypassCache' || key === 'ttl') continue;
     if (value !== undefined && value !== null && value !== '') {
       searchParams.set(key, String(value));
     }
@@ -78,6 +156,16 @@ function buildQuery(params?: Record<string, any>): string {
 }
 
 export const api = {
+  // Управление кэшем
+  cache: {
+    invalidate: (pattern?: string | RegExp) => invalidateCache(pattern),
+    clear: () => memoryCache.clear(),
+    get: (key: string) => memoryCache.get(key),
+    get size() {
+      return memoryCache.size;
+    },
+  },
+
   // 1. Авторизация
   auth: {
     login: (credentials: { login: string; password: string }) =>
@@ -85,29 +173,35 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(credentials),
       }),
-    logout: () =>
-      request<{ success: boolean }>('/api/v1/auth/logout', {
+    logout: () => {
+      invalidateCache();
+      return request<{ success: boolean }>('/api/v1/auth/logout', {
         method: 'POST',
-      }),
-    me: () =>
+      });
+    },
+    me: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/auth/me', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
   },
 
   // 2. Главная панель
   dashboard: {
-    getKpi: () =>
+    getKpi: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/dashboard/kpi', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    getFunnel: () =>
+    getFunnel: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/dashboard/funnel', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    getActivity: () =>
+    getActivity: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/dashboard/activity', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
   },
 
@@ -121,53 +215,78 @@ export const api = {
       assigned_to?: string;
       sort_by?: string;
       sort_order?: 'asc' | 'desc';
+      bypassCache?: boolean;
     }) =>
       request<any>(`/api/v1/leads${buildQuery(params)}`, {
         method: 'GET',
+        bypassCache: params?.bypassCache,
       }),
-    getById: (id: string) =>
+    getById: (id: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/leads/${encodeURIComponent(id)}`, {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/leads', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/leads', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/leads/${encodeURIComponent(id)}`, {
+      });
+      invalidateNamespaces('leads', 'dashboard', 'analytics');
+      return res;
+    },
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    updateStatus: (id: string, status: string, cancelReason?: string) =>
-      request<any>(`/api/v1/leads/${encodeURIComponent(id)}/status`, {
+      });
+      invalidateNamespaces('leads', 'dashboard', 'analytics');
+      return res;
+    },
+    updateStatus: async (id: string, status: string, cancelReason?: string) => {
+      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status, cancel_reason: cancelReason }),
-      }),
-    updateAssigned: (id: string, assignedTo: string | null) =>
-      request<any>(`/api/v1/leads/${encodeURIComponent(id)}/assigned`, {
+      });
+      invalidateNamespaces('leads', 'dashboard', 'analytics');
+      return res;
+    },
+    updateAssigned: async (id: string, assignedTo: string | null) => {
+      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/assigned`, {
         method: 'PATCH',
         body: JSON.stringify({ assigned_to: assignedTo }),
-      }),
-    delete: (id: string) =>
-      request<{ success: boolean; deleted_id: string }>(
+      });
+      invalidateNamespaces('leads', 'dashboard', 'analytics');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(
         `/api/v1/leads/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
         }
-      ),
-    linkSeller: (id: string, sellerPhone: string, managerId?: string) =>
-      request<any>(`/api/v1/leads/${encodeURIComponent(id)}/link-seller`, {
+      );
+      invalidateNamespaces('leads', 'dashboard', 'analytics');
+      return res;
+    },
+    linkSeller: async (id: string, sellerPhone: string, managerId?: string) => {
+      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/link-seller`, {
         method: 'POST',
         body: JSON.stringify({ seller_phone: sellerPhone, manager_id: managerId }),
-      }),
-    unlinkSeller: (id: string) =>
-      request<any>(`/api/v1/leads/${encodeURIComponent(id)}/link-seller`, {
+      });
+      invalidateNamespaces('leads', 'sellers', 'connections', 'dashboard', 'analytics');
+      return res;
+    },
+    unlinkSeller: async (id: string) => {
+      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/link-seller`, {
         method: 'DELETE',
-      }),
-    getScripts: (stage?: string) =>
+      });
+      invalidateNamespaces('leads', 'sellers', 'connections', 'dashboard', 'analytics');
+      return res;
+    },
+    getScripts: (stage?: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/leads/scripts${buildQuery({ stage })}`, {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
     getWhatsAppLink: (id: string) =>
       request<{ phone: string; client_name: string; direct_url: string }>(
@@ -189,51 +308,70 @@ export const api = {
       managerId?: string;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
+      bypassCache?: boolean;
     }) =>
       request<any>(`/api/v1/sellers${buildQuery(params)}`, {
         method: 'GET',
+        bypassCache: params?.bypassCache,
       }),
-    getById: (id: string) =>
+    getById: (id: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/sellers/${encodeURIComponent(id)}`, {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/sellers', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/sellers', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/sellers/${encodeURIComponent(id)}`, {
+      });
+      invalidateNamespaces('sellers', 'dashboard', 'analytics');
+      return res;
+    },
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/sellers/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    delete: (id: string) =>
-      request<{ success: boolean; deleted_id: string }>(
+      });
+      invalidateNamespaces('sellers', 'dashboard', 'analytics');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(
         `/api/v1/sellers/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
         }
-      ),
-    checkAvailableLeads: () =>
+      );
+      invalidateNamespaces('sellers', 'dashboard', 'analytics');
+      return res;
+    },
+    checkAvailableLeads: (options?: { bypassCache?: boolean }) =>
       request<{ has_available_leads: boolean; available_count: number }>(
         '/api/v1/sellers/available-leads-check',
         {
           method: 'GET',
+          bypassCache: options?.bypassCache,
         }
       ),
-    linkLead: (sellerPhone: string, leadId: string) =>
-      request<any>(`/api/v1/sellers/${encodeURIComponent(sellerPhone)}/link-lead`, {
+    linkLead: async (sellerPhone: string, leadId: string) => {
+      const res = await request<any>(`/api/v1/sellers/${encodeURIComponent(sellerPhone)}/link-lead`, {
         method: 'POST',
         body: JSON.stringify({ lead_id: leadId }),
-      }),
-    syncSotka: (offset = 0, limit = 50) =>
-      request<{ synced_count: number; total_available: number; duration_ms: number }>(
+      });
+      invalidateNamespaces('sellers', 'leads', 'connections', 'dashboard', 'analytics');
+      return res;
+    },
+    syncSotka: async (offset = 0, limit = 50) => {
+      const res = await request<{ synced_count: number; total_available: number; duration_ms: number }>(
         '/api/v1/sellers/sync',
         {
           method: 'POST',
           body: JSON.stringify({ offset, limit }),
         }
-      ),
+      );
+      invalidateNamespaces('sellers', 'dashboard', 'analytics');
+      return res;
+    },
   },
 
   // 5. Подключения
@@ -247,32 +385,46 @@ export const api = {
       managerId?: string;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
+      bypassCache?: boolean;
     }) =>
       request<any>(`/api/v1/connections${buildQuery(params)}`, {
         method: 'GET',
+        bypassCache: params?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/connections', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/connections', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/connections/${encodeURIComponent(id)}`, {
+      });
+      invalidateNamespaces('connections', 'sellers', 'leads', 'payouts', 'dashboard', 'analytics');
+      return res;
+    },
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/connections/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    delete: (id: string) =>
-      request<{ success: boolean; deleted_id: string }>(
+      });
+      invalidateNamespaces('connections', 'sellers', 'leads', 'payouts', 'dashboard', 'analytics');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(
         `/api/v1/connections/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
         }
-      ),
-    runMaintenance: (targetMonth?: string) =>
-      request<any>('/api/v1/connections/maintenance/fk', {
+      );
+      invalidateNamespaces('connections', 'sellers', 'leads', 'payouts', 'dashboard', 'analytics');
+      return res;
+    },
+    runMaintenance: async (targetMonth?: string) => {
+      const res = await request<any>('/api/v1/connections/maintenance/fk', {
         method: 'POST',
         body: JSON.stringify({ target_month: targetMonth }),
-      }),
+      });
+      invalidateNamespaces('connections', 'payouts', 'dashboard', 'analytics');
+      return res;
+    },
   },
 
   // 6. Выплаты
@@ -286,30 +438,41 @@ export const api = {
       userId?: string;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
+      bypassCache?: boolean;
     }) =>
       request<any>(`/api/v1/payouts${buildQuery(params)}`, {
         method: 'GET',
+        bypassCache: params?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/payouts', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/payouts', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
+      });
+      invalidateNamespaces('payouts', 'dashboard', 'analytics');
+      return res;
+    },
     calculate: (params: { accrual_month?: string; employee_id?: string }) =>
       request<any>('/api/v1/payouts/calculate', {
         method: 'POST',
         body: JSON.stringify(params),
       }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/payouts/${encodeURIComponent(id)}`, {
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/payouts/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    updateStatus: (id: string, status: string, transactionRef?: string) =>
-      request<any>(`/api/v1/payouts/${encodeURIComponent(id)}/status`, {
+      });
+      invalidateNamespaces('payouts', 'dashboard', 'analytics');
+      return res;
+    },
+    updateStatus: async (id: string, status: string, transactionRef?: string) => {
+      const res = await request<any>(`/api/v1/payouts/${encodeURIComponent(id)}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status, transaction_ref: transactionRef }),
-      }),
+      });
+      invalidateNamespaces('payouts', 'dashboard', 'analytics');
+      return res;
+    },
   },
 
   // 7. Сотрудники
@@ -322,97 +485,134 @@ export const api = {
       isActive?: string;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
+      bypassCache?: boolean;
     }) =>
       request<any>(`/api/v1/employees${buildQuery(params)}`, {
         method: 'GET',
+        bypassCache: params?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/employees', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/employees', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/employees/${encodeURIComponent(id)}`, {
+      });
+      invalidateNamespaces('employees', 'profile', 'analytics');
+      return res;
+    },
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/employees/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    updateColor: (id: string, color: string) =>
-      request<any>(`/api/v1/employees/${encodeURIComponent(id)}/color`, {
+      });
+      invalidateNamespaces('employees', 'profile', 'analytics');
+      return res;
+    },
+    updateColor: async (id: string, color: string) => {
+      const res = await request<any>(`/api/v1/employees/${encodeURIComponent(id)}/color`, {
         method: 'PATCH',
         body: JSON.stringify({ color }),
-      }),
-    delete: (id: string) =>
-      request<{ success: boolean; deactivated_id: string }>(
+      });
+      invalidateNamespaces('employees', 'profile', 'analytics');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deactivated_id: string }>(
         `/api/v1/employees/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
         }
-      ),
+      );
+      invalidateNamespaces('employees', 'profile', 'analytics');
+      return res;
+    },
   },
 
   // 8. Тарифы
   rates: {
-    getAll: () =>
+    getAll: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/rates', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/rates', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/rates', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/rates/${encodeURIComponent(id)}`, {
+      });
+      invalidateNamespaces('rates');
+      return res;
+    },
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/rates/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    delete: (id: string) =>
-      request<{ success: boolean; deleted_id: string }>(
+      });
+      invalidateNamespaces('rates');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(
         `/api/v1/rates/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
         }
-      ),
+      );
+      invalidateNamespaces('rates');
+      return res;
+    },
   },
 
   // 9. Бизнес-планы
   plans: {
-    getAll: () =>
+    getAll: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/plans', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    create: (data: any) =>
-      request<any>('/api/v1/plans', {
+    create: async (data: any) => {
+      const res = await request<any>('/api/v1/plans', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    update: (id: string, data: any) =>
-      request<any>(`/api/v1/plans/${encodeURIComponent(id)}`, {
+      });
+      invalidateNamespaces('plans');
+      return res;
+    },
+    update: async (id: string, data: any) => {
+      const res = await request<any>(`/api/v1/plans/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
-      }),
-    delete: (id: string) =>
-      request<{ success: boolean; deleted_id: string }>(
+      });
+      invalidateNamespaces('plans');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(
         `/api/v1/plans/${encodeURIComponent(id)}`,
         {
           method: 'DELETE',
         }
-      ),
+      );
+      invalidateNamespaces('plans');
+      return res;
+    },
   },
 
   // 10. Аналитика
   analytics: {
-    getSummary: (startDate?: string, endDate?: string) =>
+    getSummary: (startDate?: string, endDate?: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/analytics/summary${buildQuery({ startDate, endDate })}`, {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    getFunnel: () =>
+    getFunnel: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/analytics/funnel', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    getEmployees: () =>
+    getEmployees: (options?: { bypassCache?: boolean }) =>
       request<any>('/api/v1/analytics/employees', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
     exportData: async () => {
       const blob = await request<Blob>('/api/v1/analytics/export', {
@@ -431,21 +631,28 @@ export const api = {
 
   // 11. Профиль
   profile: {
-    get: (userId?: string) =>
+    get: (userId?: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/profile${buildQuery({ userId })}`, {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
-    changePassword: (data: { newPassword: string; targetUserId?: string }) =>
-      request<any>('/api/v1/profile/change-password', {
+    changePassword: async (data: { newPassword: string; targetUserId?: string }) => {
+      const res = await request<any>('/api/v1/profile/change-password', {
         method: 'POST',
         body: JSON.stringify(data),
-      }),
-    updatePreferences: (preferences: { theme?: string; layout_wide?: boolean }) =>
-      request<any>('/api/v1/profile/preferences', {
+      });
+      invalidateNamespaces('profile', 'auth/me');
+      return res;
+    },
+    updatePreferences: async (preferences: { theme?: string; layout_wide?: boolean }) => {
+      const res = await request<any>('/api/v1/profile/preferences', {
         method: 'PATCH',
         body: JSON.stringify(preferences),
-      }),
-    getPermissions: () =>
+      });
+      invalidateNamespaces('profile', 'auth/me');
+      return res;
+    },
+    getPermissions: (options?: { bypassCache?: boolean }) =>
       request<{
         role: string;
         is_admin: boolean;
@@ -456,6 +663,7 @@ export const api = {
         can_manage_employees: boolean;
       }>('/api/v1/profile/permissions', {
         method: 'GET',
+        bypassCache: options?.bypassCache,
       }),
   },
 };

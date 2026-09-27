@@ -9,7 +9,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    await requireRoles(['admin', 'supervisor', 'consultant']);
+    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
     const body = await req.json();
 
     const sellerPhone = body.seller_phone;
@@ -17,6 +17,37 @@ export async function POST(
       return apiError('Номер телефона продавца обязателен', 'MISSING_SELLER_PHONE', 400);
     }
 
+    // Вызов атомарной процедуры в СУБД с блокировкой FOR UPDATE
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
+      p_lead_id: id,
+      p_seller_phone: sellerPhone,
+      p_user_id: profile.user_id,
+      p_manager_id: body.manager_id || undefined,
+      p_assigned_by: profile.user_id,
+    });
+
+    if (!rpcErr && rpcRes) {
+      const res = rpcRes as {
+        success: boolean;
+        error?: string;
+        connection_id?: string;
+        connection_fee_amount?: number;
+      };
+
+      if (!res.success) {
+        return apiError(res.error || 'Ошибка связывания лида с продавцом', 'LINK_FAILED', 400);
+      }
+
+      return apiSuccess({
+        success: true,
+        lead_id: id,
+        seller_phone: sellerPhone,
+        connection_id: res.connection_id,
+        connection_fee_amount: res.connection_fee_amount,
+      });
+    }
+
+    // Fallback на серверный экшен при недоступности RPC
     const result = await linkLeadToSeller({
       leadId: id,
       sellerPhone,

@@ -110,6 +110,8 @@ export interface DataJournalProps<T extends Record<string, any>> {
   createTooltip?: string;
   onRowClick?: (row: T) => void;
   onStatusChange?: (row: T, newStatus: string) => void;
+  onAssignedChange?: (row: T, newAssigned: string | null) => void;
+  onContextMenuOpen?: (row: T) => void;
   onCreateClick?: () => void;
   renderCard?: (row: T) => React.ReactNode;
   emptyMessage?: string;
@@ -474,6 +476,7 @@ interface DataJournalTableRowProps<T extends Record<string, any>> {
   initialColumns: ColumnDef<T>[];
   onRowClick?: (row: T) => void;
   onStatusChange?: (row: T, newStatus: string) => void;
+  onAssignedChange?: (row: T, newAssigned: string | null) => void;
   customRowActions?: (row: T) => React.ReactNode;
   handleCopy: (text: string, rowKey: string) => void;
   copiedKey: string | null;
@@ -491,6 +494,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   initialColumns,
   onRowClick,
   onStatusChange,
+  onAssignedChange,
   customRowActions,
   handleCopy,
   copiedKey,
@@ -795,10 +799,12 @@ interface DataJournalCardProps<T extends Record<string, any>> {
   initialColumns: ColumnDef<T>[];
   onRowClick?: (row: T) => void;
   onStatusChange?: (row: T, newStatus: string) => void;
+  onAssignedChange?: (row: T, newAssigned: string | null) => void;
   customRowActions?: (row: T) => React.ReactNode;
   handleCopy: (text: string, rowKey: string) => void;
   copiedKey: string | null;
   showToast: (msg: string, type?: ToastType) => void;
+  onRowContextMenu?: (e: React.MouseEvent, row: T) => void;
 }
 
 const DataJournalCardInner = <T extends Record<string, any>>({
@@ -808,8 +814,10 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   initialColumns,
   onRowClick,
   onStatusChange,
+  onAssignedChange,
   customRowActions,
   showToast,
+  onRowContextMenu,
 }: DataJournalCardProps<T>) => {
   const phoneCol = initialColumns.find((c) => c.type === 'phone');
   const rawPhone = phoneCol?.phoneAccessor
@@ -840,6 +848,12 @@ const DataJournalCardInner = <T extends Record<string, any>>({
     <div
       key={rowKey}
       onClick={() => onRowClick && onRowClick(row)}
+      onContextMenu={(e) => {
+        if (onRowContextMenu) {
+          e.preventDefault();
+          onRowContextMenu(e, row);
+        }
+      }}
       className="rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
     >
       <div className="flex items-start justify-between gap-2">
@@ -941,8 +955,56 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   );
 };
 
+export function areCardPropsEqual<T extends Record<string, any>>(
+  prevProps: DataJournalCardProps<T>,
+  nextProps: DataJournalCardProps<T>
+): boolean {
+  if (prevProps.rowKey !== nextProps.rowKey) return false;
+
+  const prev = prevProps.row;
+  const next = nextProps.row;
+
+  const prevId =
+    prev.id ??
+    prev.lead_id ??
+    prev.seller_phone ??
+    prev.user_id ??
+    prev.payment_id ??
+    prev.connection_id;
+  const nextId =
+    next.id ??
+    next.lead_id ??
+    next.seller_phone ??
+    next.user_id ??
+    next.payment_id ??
+    next.connection_id;
+  if (prevId !== nextId) return false;
+
+  if (prev.status !== next.status) return false;
+  if (prev.assigned_to !== next.assigned_to) return false;
+  if (prev.updated_at !== next.updated_at) return false;
+  if (prev.manager_id !== next.manager_id) return false;
+  if (prev.is_active !== next.is_active) return false;
+  if (prev.moderation !== next.moderation) return false;
+
+  const wasCopied = Boolean(
+    prevProps.copiedKey && prevProps.copiedKey.startsWith(`${prevProps.rowKey}_`)
+  );
+  const isCopied = Boolean(
+    nextProps.copiedKey && nextProps.copiedKey.startsWith(`${nextProps.rowKey}_`)
+  );
+  if (wasCopied !== isCopied) return false;
+
+  if (prevProps.orderedColumns !== nextProps.orderedColumns) {
+    if (prevProps.orderedColumns.length !== nextProps.orderedColumns.length) return false;
+  }
+
+  return true;
+}
+
 export const DataJournalCard = React.memo(
-  DataJournalCardInner
+  DataJournalCardInner,
+  areCardPropsEqual
 ) as typeof DataJournalCardInner;
 
 interface ContextMenuPayload<T> {
@@ -955,21 +1017,27 @@ interface ContextMenuPayload<T> {
  * Изолированный контроллер контекстного меню ПКМ.
  * Позволяет открывать/закрывать контекстное меню без повторного рендера всей таблицы DataJournal.
  */
-function useContextMenuController<T>() {
+function useContextMenuController<T>(onContextMenuOpen?: (row: T) => void) {
   const listenersRef = React.useRef<Set<(data: ContextMenuPayload<T> | null) => void>>(new Set());
 
-  const open = React.useCallback((e: React.MouseEvent, row: T) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const menuW = 200;
-    const menuH = 150;
-    const x =
-      e.clientX + menuW > window.innerWidth ? window.innerWidth - menuW - 12 : e.clientX;
-    const y =
-      e.clientY + menuH > window.innerHeight ? window.innerHeight - menuH - 12 : e.clientY;
+  const open = React.useCallback(
+    (e: React.MouseEvent, row: T) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const menuW = 200;
+      const menuH = 150;
+      const x =
+        e.clientX + menuW > window.innerWidth ? window.innerWidth - menuW - 12 : e.clientX;
+      const y =
+        e.clientY + menuH > window.innerHeight ? window.innerHeight - menuH - 12 : e.clientY;
 
-    listenersRef.current.forEach((cb) => cb({ x, y, row }));
-  }, []);
+      listenersRef.current.forEach((cb) => cb({ x, y, row }));
+      if (onContextMenuOpen) {
+        onContextMenuOpen(row);
+      }
+    },
+    [onContextMenuOpen]
+  );
 
   const close = React.useCallback(() => {
     listenersRef.current.forEach((cb) => cb(null));
@@ -1102,6 +1170,8 @@ export function DataJournal<T extends Record<string, any>>({
   createTooltip,
   onRowClick,
   onStatusChange,
+  onAssignedChange,
+  onContextMenuOpen,
   onCreateClick,
   renderCard,
   emptyMessage = 'Записи не найдены',
@@ -1114,8 +1184,37 @@ export function DataJournal<T extends Record<string, any>>({
 }: DataJournalProps<T>) {
   const { showToast } = useToast();
 
+  // Стабилизация коллбэков через useCallback для исключения ре-рендеров строк и карточек
+  const onRowClickStable = React.useCallback(
+    (row: T) => {
+      onRowClick?.(row);
+    },
+    [onRowClick]
+  );
+
+  const onStatusChangeStable = React.useCallback(
+    (row: T, newStatus: string) => {
+      onStatusChange?.(row, newStatus);
+    },
+    [onStatusChange]
+  );
+
+  const onAssignedChangeStable = React.useCallback(
+    (row: T, newAssigned: string | null) => {
+      onAssignedChange?.(row, newAssigned);
+    },
+    [onAssignedChange]
+  );
+
+  const onContextMenuOpenStable = React.useCallback(
+    (row: T) => {
+      onContextMenuOpen?.(row);
+    },
+    [onContextMenuOpen]
+  );
+
   // Изолированный контроллер контекстного меню ПКМ
-  const contextMenuCtrl = useContextMenuController<T>();
+  const contextMenuCtrl = useContextMenuController<T>(onContextMenuOpenStable);
 
   // 1. Режим отображения: Таблица / Карточки
   const [viewMode, setViewMode] = React.useState<'table' | 'cards'>('table');
@@ -2486,8 +2585,9 @@ export function DataJournal<T extends Record<string, any>>({
                           rowKey={rowKey}
                           orderedColumns={orderedColumns}
                           initialColumns={initialColumns}
-                          onRowClick={onRowClick}
-                          onStatusChange={onStatusChange}
+                          onRowClick={onRowClickStable}
+                          onStatusChange={onStatusChangeStable}
+                          onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
                           handleCopy={handleCopy}
                           copiedKey={copiedKey}
@@ -2609,12 +2709,14 @@ export function DataJournal<T extends Record<string, any>>({
                           rowKey={rowKey}
                           orderedColumns={orderedColumns}
                           initialColumns={initialColumns}
-                          onRowClick={onRowClick}
-                          onStatusChange={onStatusChange}
+                          onRowClick={onRowClickStable}
+                          onStatusChange={onStatusChangeStable}
+                          onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
                           handleCopy={handleCopy}
                           copiedKey={copiedKey}
                           showToast={showToast}
+                          onRowContextMenu={contextMenuCtrl.open}
                         />
                       );
                     })}
@@ -2694,12 +2796,14 @@ export function DataJournal<T extends Record<string, any>>({
                     rowKey={rowKey}
                     orderedColumns={orderedColumns}
                     initialColumns={initialColumns}
-                    onRowClick={onRowClick}
-                    onStatusChange={onStatusChange}
+                    onRowClick={onRowClickStable}
+                    onStatusChange={onStatusChangeStable}
+                    onAssignedChange={onAssignedChangeStable}
                     customRowActions={customRowActions}
                     handleCopy={handleCopy}
                     copiedKey={copiedKey}
                     showToast={showToast}
+                    onRowContextMenu={contextMenuCtrl.open}
                   />
                 );
               })

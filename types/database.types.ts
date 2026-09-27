@@ -809,6 +809,21 @@ export type Database = {
           maintenance_percent: number
         }[]
       }
+      calculate_payout_accruals: {
+        Args: {
+          p_accrual_month: string
+          p_employee_id?: string
+        }
+        Returns: Json
+      }
+      get_dashboard_kpi: {
+        Args: {
+          p_month?: string
+          p_role?: string
+          p_user_id?: string
+        }
+        Returns: Json
+      }
       get_leads_funnel_stats: { Args: never; Returns: Json }
       get_payouts_summary: {
         Args: { p_accrual_month?: string; p_user_id?: string }
@@ -826,6 +841,7 @@ export type Database = {
           p_lead_id: string
           p_manager_id?: string
           p_seller_phone: string
+          p_user_id?: string
         }
         Returns: Json
       }

@@ -384,19 +384,18 @@ export default function PayoutsPage() {
 
   // Контекстные действия тулбара реестра выплат (ЯРУС 3)
   const payoutActions = (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
       <button
         type="button"
         onClick={() => fetchData()}
-        className="min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
+        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
         title="Обновить журнал"
         aria-label="Обновить журнал"
       >
         <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-        <span className="hidden sm:inline">Обновить</span>
+        <span className="hidden md:inline">Обновить</span>
       </button>
-
-      </div>
+    </div>
   );
 
   return (

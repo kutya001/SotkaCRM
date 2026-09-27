@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   Search,
   Table2,
@@ -23,10 +24,23 @@ import {
   X,
   Phone,
   GripVertical,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useToast, type ToastType } from '@/components/ui/Toast';
 import { useVirtualizer } from '@tanstack/react-virtual';
+
+function UrlSearchParamsSync({ onQuery }: { onQuery: (q: string) => void }) {
+  const searchParams = useSearchParams();
+  React.useEffect(() => {
+    if (!searchParams) return;
+    const q = searchParams.get('q') || searchParams.get('search') || '';
+    if (q) {
+      onQuery(q);
+    }
+  }, [searchParams, onQuery]);
+  return null;
+}
 
 export type FilterOperator = 'equals' | 'contains' | 'gt' | 'lt' | 'neq';
 
@@ -1269,6 +1283,8 @@ export function DataJournal<T extends Record<string, any>>({
   const [isCardFiltersOpen, setIsCardFiltersOpen] = React.useState(false);
   const [expandedCardFilterCol, setExpandedCardFilterCol] = React.useState<string | null>(null);
   const cardFiltersRef = React.useRef<HTMLDivElement | null>(null);
+  const [isMobileGroupByOpen, setIsMobileGroupByOpen] = React.useState(false);
+  const mobileGroupByRef = React.useRef<HTMLDivElement | null>(null);
 
   const [groupByField, setGroupByField] = React.useState<string | null>(() => {
     if (typeof window === 'undefined') return defaultGroupBy || null;
@@ -1307,6 +1323,9 @@ export function DataJournal<T extends Record<string, any>>({
       if (cardFiltersRef.current && !cardFiltersRef.current.contains(target)) {
         setIsCardFiltersOpen(false);
       }
+      if (mobileGroupByRef.current && !mobileGroupByRef.current.contains(target)) {
+        setIsMobileGroupByOpen(false);
+      }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -1314,6 +1333,7 @@ export function DataJournal<T extends Record<string, any>>({
         setActiveDropdown(null);
         setActiveFilterColumnKey(null);
         setIsCardFiltersOpen(false);
+        setIsMobileGroupByOpen(false);
       }
     }
 
@@ -1366,9 +1386,32 @@ export function DataJournal<T extends Record<string, any>>({
     });
   };
 
+  const [urlSearchQuery, setUrlSearchQuery] = React.useState('');
+
+  const handleUrlQueryChange = React.useCallback((q: string) => {
+    setUrlSearchQuery(q);
+    if (onSearchChange) {
+      onSearchChange(q);
+    }
+  }, [onSearchChange]);
+
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('q') || params.get('search') || '';
+      if (q && !urlSearchQuery) {
+        setUrlSearchQuery(q);
+        if (onSearchChange) {
+          onSearchChange(q);
+        }
+      }
+    }
+  }, [onSearchChange, urlSearchQuery]);
+
   const resetAllFilters = () => {
     setColumnFilters({});
     setSearchQuery('');
+    setUrlSearchQuery('');
     if (onSearchChange) onSearchChange('');
     if (onResetAllFilters) onResetAllFilters();
     try {
@@ -1386,6 +1429,7 @@ export function DataJournal<T extends Record<string, any>>({
 
   const clearSearch = () => {
     setSearchQuery('');
+    setUrlSearchQuery('');
     if (onSearchChange) {
       onSearchChange('');
     }
@@ -1393,7 +1437,9 @@ export function DataJournal<T extends Record<string, any>>({
 
   // Вычисление отфильтрованных и отсортированных данных
   const effectiveSearch =
-    externalSearchQuery !== undefined ? externalSearchQuery : searchQuery;
+    externalSearchQuery !== undefined
+      ? externalSearchQuery
+      : (searchQuery || urlSearchQuery);
 
   const totalActiveFilterCount = React.useMemo(() => {
     let count = 0;
@@ -1617,29 +1663,33 @@ export function DataJournal<T extends Record<string, any>>({
 
   return (
     <div className="w-full space-y-4">
+      <React.Suspense fallback={null}>
+        <UrlSearchParamsSync onQuery={handleUrlQueryChange} />
+      </React.Suspense>
+
       {/* 1. Верхний управляющий тулбар реестра (ЯРУС 3) */}
       <div
         ref={toolbarRef}
-        className="relative z-30 flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl sm:rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm min-h-[56px]"
+        className="relative z-30 flex items-center justify-between gap-1.5 sm:gap-2.5 p-2 sm:p-3 rounded-2xl sm:rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm min-h-[48px] sm:min-h-[56px] w-full"
       >
         {/* ТАБЛИЧНЫЙ ВИД: Действия + Поиск + Сброс */}
         {viewMode === 'table' ? (
-          <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[260px]">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
             {customActions}
             {onCreateClick && !customActions && (
               <button
                 type="button"
                 onClick={onCreateClick}
-                className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
+                className="h-9 w-9 md:w-11 md:h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
                 title={createTooltip || 'Добавить запись'}
                 aria-label={createTooltip || 'Добавить запись'}
               >
-                <Plus className="w-5 h-5" strokeWidth={2.25} />
+                <Plus className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.25} />
               </button>
             )}
 
-            {/* Строка глобального поиска */}
-            <div className="relative flex-1 min-w-[180px] max-w-xs sm:max-w-sm md:max-w-md">
+            {/* Строка глобального поиска (скрыта на экранах < md, т.к. поиск доступен в MobileHeader) */}
+            <div className="relative hidden md:flex flex-1 min-w-[180px] max-w-xs sm:max-w-sm md:max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
               <input
                 type="text"
@@ -1660,16 +1710,16 @@ export function DataJournal<T extends Record<string, any>>({
               )}
             </div>
 
-            {/* Кнопка «Сбросить все фильтры» (появляется только при наличии активных условий) */}
+            {/* Кнопка «Сбросить все фильтры» */}
             {totalActiveFilterCount > 0 && (
               <button
                 type="button"
                 onClick={resetAllFilters}
-                className="min-h-[44px] h-11 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-95 flex-shrink-0 shadow-sm"
+                className="h-9 md:h-11 px-2.5 md:px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 flex-shrink-0 shadow-sm"
                 title="Сбросить все активные фильтры"
               >
                 <RotateCcw className="w-3.5 h-3.5" strokeWidth={2} />
-                <span className="hidden sm:inline">Сбросить фильтры</span>
+                <span className="hidden md:inline">Сбросить фильтры</span>
                 <span className="w-5 h-5 rounded-full bg-rose-500/20 text-[10px] font-bold flex items-center justify-center">
                   {totalActiveFilterCount}
                 </span>
@@ -1677,25 +1727,100 @@ export function DataJournal<T extends Record<string, any>>({
             )}
           </div>
         ) : (
-          /* КАРТОЧНЫЙ ВИД: [ Группировка: {Select} ] [ Фильтры {Icon + Badge} ] [ Поиск ] */
-          <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
+          /* КАРТОЧНЫЙ ВИД: [ Группировка ] [ Фильтры ] [ Поиск ] */
+          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
             {customActions}
             {onCreateClick && !customActions && (
               <button
                 type="button"
                 onClick={onCreateClick}
-                className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
+                className="h-9 w-9 md:w-11 md:h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
                 title={createTooltip || 'Добавить запись'}
                 aria-label={createTooltip || 'Добавить запись'}
               >
-                <Plus className="w-5 h-5" strokeWidth={2.25} />
+                <Plus className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.25} />
               </button>
             )}
 
-            {/* [ Группировка: {Select} ] */}
-            <div className="flex items-center gap-1.5 bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 rounded-xl px-2.5 h-11">
+            {/* [ Группировка: мобильная кнопка Icon-Only с точкой активности и поповером ] */}
+            <div className="relative md:hidden flex-shrink-0" ref={mobileGroupByRef}>
+              <button
+                type="button"
+                onClick={() => setIsMobileGroupByOpen((prev) => !prev)}
+                className={`h-9 w-9 p-0 rounded-xl border flex items-center justify-center relative transition-all island-interactive ${
+                  groupByField
+                    ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400 shadow-sm'
+                    : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
+                }`}
+                title={
+                  groupByField
+                    ? `Группировка: ${initialColumns.find((c) => c.key === groupByField)?.label || groupByField}`
+                    : 'Группировка колонок'
+                }
+                aria-label="Группировка"
+              >
+                <Layers className="w-4 h-4" strokeWidth={groupByField ? 2.25 : 1.75} />
+                {groupByField && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white dark:ring-zinc-900" />
+                )}
+              </button>
+
+              {isMobileGroupByOpen && (
+                <div className="absolute left-0 top-11 z-50 w-52 p-2 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-2 py-1 text-[11px] font-bold text-zinc-500 dark:text-zinc-400 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                    <span>Группировка</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsMobileGroupByOpen(false)}
+                      className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleGroupByChange(null);
+                      setIsMobileGroupByOpen(false);
+                    }}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                      !groupByField
+                        ? 'bg-zinc-100 dark:bg-zinc-800 font-semibold text-zinc-900 dark:text-zinc-100'
+                        : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                    }`}
+                  >
+                    <span>Без группировки</span>
+                    {!groupByField && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+                  </button>
+                  {groupableColumns.map((col) => {
+                    const isSelected = groupByField === col.key;
+                    return (
+                      <button
+                        key={col.key}
+                        type="button"
+                        onClick={() => {
+                          handleGroupByChange(col.key);
+                          setIsMobileGroupByOpen(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                          isSelected
+                            ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 font-semibold'
+                            : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                        }`}
+                      >
+                        <span className="truncate">{col.label}</span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* [ Группировка: десктопный селектор ] */}
+            <div className="hidden md:flex items-center gap-1.5 bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 rounded-xl px-2.5 h-11 flex-shrink-0">
               <Layers className="w-4 h-4 text-zinc-400 flex-shrink-0" strokeWidth={1.75} />
-              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap hidden sm:inline">
+              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                 Группировка:
               </span>
               <select
@@ -1713,28 +1838,29 @@ export function DataJournal<T extends Record<string, any>>({
             </div>
 
             {/* [ Фильтры {Icon + Badge} ] */}
-            <div className="relative">
+            <div className="relative flex-shrink-0">
               <button
                 type="button"
                 onClick={() => setIsCardFiltersOpen(!isCardFiltersOpen)}
-                className={`min-h-[44px] h-11 px-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-all island-interactive ${
+                className={`h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl border text-xs font-semibold flex items-center justify-center md:gap-2 transition-all island-interactive relative ${
                   totalActiveFilterCount > 0
                     ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400 shadow-sm'
                     : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
                 }`}
                 title="Фильтры записей"
+                aria-label="Фильтры"
               >
                 <Filter
                   className="w-4 h-4"
                   strokeWidth={totalActiveFilterCount > 0 ? 2.25 : 1.75}
                 />
-                <span>Фильтры</span>
+                <span className="hidden md:inline">Фильтры</span>
                 {totalActiveFilterCount > 0 && (
-                  <span className="min-w-[18px] h-4.5 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
+                  <span className="min-w-[18px] h-4.5 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center md:static absolute -top-1.5 -right-1.5 md:top-auto md:right-auto ring-2 md:ring-0 ring-white dark:ring-zinc-900">
                     {totalActiveFilterCount}
                   </span>
                 )}
-                <ChevronDown className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
+                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 hidden md:inline" strokeWidth={1.75} />
               </button>
 
               {/* Выпадающее меню фильтров карточного режима */}
@@ -1971,8 +2097,8 @@ export function DataJournal<T extends Record<string, any>>({
               )}
             </div>
 
-            {/* [ Поиск ] */}
-            <div className="relative flex-1 min-w-[160px] max-w-xs sm:max-w-sm">
+            {/* [ Поиск ] (скрыт на экранах < md, т.к. доступен в MobileHeader) */}
+            <div className="relative hidden md:flex flex-1 min-w-[160px] max-w-xs sm:max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
               <input
                 type="text"
@@ -1997,24 +2123,27 @@ export function DataJournal<T extends Record<string, any>>({
               <button
                 type="button"
                 onClick={resetAllFilters}
-                className="min-h-[44px] h-11 px-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-all flex-shrink-0"
+                className="h-9 md:h-11 px-2.5 md:px-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all flex-shrink-0 shadow-sm"
                 title="Сбросить все активные фильтры"
               >
                 <RotateCcw className="w-3.5 h-3.5" strokeWidth={2} />
-                <span className="hidden sm:inline">Сбросить</span>
+                <span className="hidden md:inline">Сбросить</span>
+                <span className="w-5 h-5 rounded-full bg-rose-500/20 text-[10px] font-bold flex items-center justify-center md:hidden">
+                  {totalActiveFilterCount}
+                </span>
               </button>
             )}
           </div>
         )}
 
         {/* Справа: [Колонки] и [Таблица / Карточки] */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           {/* Меню настройки видимости колонок */}
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <button
               type="button"
               onClick={() => toggleDropdown('columns')}
-              className={`min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all island-interactive ${
+              className={`h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl border text-xs font-semibold flex items-center justify-center md:gap-1.5 transition-all island-interactive flex-shrink-0 ${
                 activeDropdown === 'columns'
                   ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent shadow-sm'
                   : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
@@ -2022,9 +2151,9 @@ export function DataJournal<T extends Record<string, any>>({
               title="Настройка отображаемых колонок"
               aria-label="Колонки"
             >
-              <Table2 className="w-4 h-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Колонки</span>
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
+              <SlidersHorizontal className="w-4 h-4" strokeWidth={1.75} />
+              <span className="hidden md:inline">Колонки</span>
+              <ChevronDown className="w-3.5 h-3.5 text-zinc-400 hidden md:inline" strokeWidth={1.75} />
             </button>
 
             {activeDropdown === 'columns' && (
@@ -2062,10 +2191,10 @@ export function DataJournal<T extends Record<string, any>>({
           </div>
 
           {/* Переключатель вида (Таблица / Карточки) */}
-          <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-11">
+          <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-0.5 md:p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-9 md:h-11 flex-shrink-0">
             <button
               onClick={() => handleToggleView('table')}
-              className={`min-w-[36px] min-h-[36px] p-2 rounded-lg transition-all flex items-center justify-center ${
+              className={`w-8 h-8 md:w-9 md:h-9 p-1 md:p-2 rounded-lg transition-all flex items-center justify-center ${
                 viewMode === 'table'
                   ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
@@ -2077,7 +2206,7 @@ export function DataJournal<T extends Record<string, any>>({
             </button>
             <button
               onClick={() => handleToggleView('cards')}
-              className={`min-w-[36px] min-h-[36px] p-2 rounded-lg transition-all flex items-center justify-center ${
+              className={`w-8 h-8 md:w-9 md:h-9 p-1 md:p-2 rounded-lg transition-all flex items-center justify-center ${
                 viewMode === 'cards'
                   ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
@@ -2150,7 +2279,7 @@ export function DataJournal<T extends Record<string, any>>({
 
       {/* Горизонтальные вкладки статусов/категорий */}
       {tabs && tabs.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 w-full shrink-0 whitespace-nowrap">
           {tabs.map((tab) => {
             const isActive = (activeTab ?? 'all') === tab.id;
             return (

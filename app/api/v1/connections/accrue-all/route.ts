@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
           connection_id,
           seller_phone,
           seller_name,
+          store,
           manager_id,
           status,
           assigned_at,
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
 
       const activeSellersSet = new Set((sellers || []).map((s) => s.seller_phone));
 
-      // Получаем существующие начисления для предотвращения дублирования
+      // Получаем существующие начисления из connection_accruals для дедупликации
       const { data: existingAccruals, error: accErr } = await supabase
         .from('connection_accruals')
         .select('connection_id, accrual_type, settlement_month');
@@ -103,11 +104,27 @@ export async function POST(req: NextRequest) {
           .map((a) => a.connection_id)
       );
 
+      // Дополнительная дедупликация по employee_payouts
+      const { data: existingPayouts } = await supabase
+        .from('employee_payouts')
+        .select('connection_id, operation_type, settlement_month')
+        .in('operation_type', ['accrual_connection', 'accrual_maintenance']);
+
+      const existingPayoutsMap = new Set(
+        (existingPayouts || []).map(
+          (p: any) => `${p.connection_id}_${p.operation_type}_${p.settlement_month || ''}`
+        )
+      );
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+
       let connectionBonusesCreated = 0;
       let maintenanceBonusesCreated = 0;
 
       for (const conn of conns || []) {
         if (!activeSellersSet.has(conn.seller_phone)) continue;
+
+        const sellerLabel = conn.seller_name || (conn as any).store || conn.seller_phone;
 
         // А. Бонус за подключение
         if (accrualType === 'all' || accrualType === 'connection') {
@@ -119,8 +136,14 @@ export async function POST(req: NextRequest) {
               ((Number(conn.plan_price) || 0) * (Number(conn.connection_fee_percent) || 30)) / 100
             );
 
-          if (!alreadyHasConnBonus && fee > 0) {
+          const payoutKey = `${conn.connection_id}_accrual_connection_`;
+          const alreadyInPayouts = existingPayoutsMap.has(payoutKey) ||
+            Array.from(existingPayoutsMap).some((k) => k.startsWith(`${conn.connection_id}_accrual_connection`));
+
+          if (!alreadyHasConnBonus && !alreadyInPayouts && fee > 0) {
             const monthForConn = conn.accrual_month || targetMonth;
+
+            // Запись в connection_accruals (реестр подключений)
             const { error: insErr } = await supabase.from('connection_accruals').insert({
               connection_id: conn.connection_id,
               seller_phone: conn.seller_phone,
@@ -129,10 +152,30 @@ export async function POST(req: NextRequest) {
               settlement_month: monthForConn,
               amount: fee,
               is_paid: false,
-              notes: 'Бонус за подключение контрагента',
+              notes: `Бонус за подключение кон.: ${sellerLabel}`,
             });
 
             if (!insErr) {
+              // Синхронная запись в employee_payouts (журнал ЗП)
+              await supabase.from('employee_payouts').insert({
+                user_id: conn.manager_id,
+                employee_id: conn.manager_id,
+                connection_id: conn.connection_id,
+                seller_phone: conn.seller_phone,
+                operation_sign: '+',
+                operation_type: 'accrual_connection',
+                payout_category: 'бонус',
+                amount: fee,
+                settlement_month: monthForConn,
+                accrual_month: monthForConn,
+                actual_date: todayStr,
+                payout_date: todayStr,
+                status: 'completed',
+                note: `Бонус за подключение кон.: ${sellerLabel}`,
+                comment: `Бонус за подключение кон.: ${sellerLabel}`,
+                created_by: conn.manager_id,
+              } as any);
+
               connectionBonusesCreated++;
               existingConnBonusSet.add(conn.connection_id);
             }
@@ -143,6 +186,9 @@ export async function POST(req: NextRequest) {
         if (accrualType === 'all' || accrualType === 'maintenance') {
           const maintKey = `${conn.connection_id}_maintenance_${targetMonth}`;
           const alreadyHasMaintThisMonth = existingMap.has(maintKey);
+
+          const payoutMaintKey = `${conn.connection_id}_accrual_maintenance_${targetMonth}`;
+          const alreadyMaintInPayouts = existingPayoutsMap.has(payoutMaintKey);
 
           const totalMonths = Number(conn.maintenance_months_total) || 2;
           const accruedMonths = Number(conn.maintenance_months_accrued) || 0;
@@ -156,11 +202,13 @@ export async function POST(req: NextRequest) {
 
           if (
             !alreadyHasMaintThisMonth &&
+            !alreadyMaintInPayouts &&
             maintFee > 0 &&
             conn.status !== 'готов' &&
             accruedMonths < totalMonths &&
             canStartMaint
           ) {
+            // Запись в connection_accruals (реестр подключений)
             const { error: insMaintErr } = await supabase.from('connection_accruals').insert({
               connection_id: conn.connection_id,
               seller_phone: conn.seller_phone,
@@ -169,10 +217,30 @@ export async function POST(req: NextRequest) {
               settlement_month: targetMonth,
               amount: maintFee,
               is_paid: false,
-              notes: `Бонус за сопровождение за месяц ${targetMonth}`,
+              notes: `Бонус за сопровождение (${targetMonth}): ${sellerLabel}`,
             });
 
             if (!insMaintErr) {
+              // Синхронная запись в employee_payouts (журнал ЗП)
+              await supabase.from('employee_payouts').insert({
+                user_id: conn.manager_id,
+                employee_id: conn.manager_id,
+                connection_id: conn.connection_id,
+                seller_phone: conn.seller_phone,
+                operation_sign: '+',
+                operation_type: 'accrual_maintenance',
+                payout_category: 'бонус',
+                amount: maintFee,
+                settlement_month: targetMonth,
+                accrual_month: targetMonth,
+                actual_date: todayStr,
+                payout_date: todayStr,
+                status: 'completed',
+                note: `Бонус за сопровождение (${targetMonth}): ${sellerLabel}`,
+                comment: `Бонус за сопровождение (${targetMonth}): ${sellerLabel}`,
+                created_by: conn.manager_id,
+              } as any);
+
               maintenanceBonusesCreated++;
               existingMap.add(maintKey);
 

@@ -162,7 +162,7 @@ export async function getPayouts(
 
   // Фильтр по категории
   if (category && category !== 'all') {
-    query = query.eq('payout_category', category as PayoutCategoryType);
+    query = query.eq('operation_type', category as any);
   }
 
   // Фильтр по виду операции

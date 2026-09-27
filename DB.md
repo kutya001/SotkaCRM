@@ -2787,6 +2787,22 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 ### 21.4. Исправление RLS-политики видимости выплат для администратора:
 * Обновлена политика `employee_payouts_select_policy`:
   * Администраторы и супервайзеры (`public.get_current_user_role() IN ('admin', 'supervisor')`) видят все операции по ЗП без принудительной фильтрации по сотруднику.
-  * Консультанты и SMM видят только собственные проводки (`employee_id = auth.uid() OR user_id = auth.uid()`).
+  * Консультанты и SMM видят только собственные проводки (`employee_id = get_current_crm_user_id() OR user_id = get_current_crm_user_id()`).
+  * **Дефект миграции 022:** Политика ошибочно использовала несуществующую функцию `get_current_user_id()` — **исправлено в миграции 023**.
+
+## 22. Спецификация Миграции 023 (`023_fix_rls_and_sync_accruals_to_payouts.sql`)
+
+### 22.1. Исправление RLS-политики `employee_payouts_select_policy`:
+* Удалены устаревшие и конфликтующие политики: `employee_payouts_select_policy`, `employee_payouts_read_policy`, `payouts_select_role_isolated`.
+* Пересоздана единая политика `employee_payouts_select_policy` с корректной функцией `get_current_crm_user_id()` (вместо несуществующей `get_current_user_id()`).
+
+### 22.2. Консолидация политики модификации:
+* Удалены устаревшие политики `payouts_admin_modify` и `employee_payouts_modify_policy`.
+* Создана единая политика `employee_payouts_modify_policy` (FOR ALL) с доступом только для ролей `admin` и `supervisor`.
+
+### 22.3. Backfill: синхронизация `connection_accruals` → `employee_payouts`:
+* Вставка недостающих записей из `connection_accruals` в `employee_payouts` для всех начислений, которые были записаны только в промежуточную таблицу `connection_accruals` эндпоинтом `POST /api/v1/connections/accrue-all`, но не попадали в журнал ЗП.
+* Маппинг типов: `connection` → `accrual_connection`, `maintenance` → `accrual_maintenance`.
+* Дедупликация по `(connection_id, operation_type, settlement_month)`.
 
 

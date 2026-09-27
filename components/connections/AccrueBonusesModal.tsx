@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Sparkles, Calendar, RotateCcw, CheckCircle2, X } from 'lucide-react';
+import { Coins, Calendar, RotateCcw, CheckCircle2, X } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
 
@@ -51,7 +51,7 @@ export function AccrueBonusesModal({
       const res = await api.connections.accrueAll(selectedMonth);
       setResult(res);
       showToast(
-        `Начисление выполнено: подключений +${res.connection_bonuses_created}, сопровождений +${res.maintenance_bonuses_created}`,
+        `Начислено бонусов за подключение: ${res.connection_bonuses_created}, за сопровождение: ${res.maintenance_bonuses_created}`,
         'success'
       );
       onSuccess();
@@ -75,14 +75,14 @@ export function AccrueBonusesModal({
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-              <Sparkles className="w-5 h-5" strokeWidth={1.75} />
+              <Coins className="w-5 h-5" strokeWidth={1.75} />
             </div>
             <div>
               <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                Начислить бонусы
+                Начисления
               </h3>
               <p className="text-xs text-zinc-400">
-                Пакетное начисление бонусов за подключение и сопровождение
+                Пакетный расчет бонусов за подключение и сопровождение
               </p>
             </div>
           </div>
@@ -120,7 +120,7 @@ export function AccrueBonusesModal({
               <Calendar className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
             </div>
             <p className="text-[11px] text-zinc-400 mt-1.5 leading-relaxed">
-              Система автоматически проверит все активные подключения и создаст недостающие начисления кураторам за подключения и ежемесячное сопровождение.
+              Будет проверен каждый подключенный продавец. Автоматически начислится бонус за первичное подключение (если отсутствовал) и ежемесячный бонус за сопровождение за выбранный месяц (если отсутствовал).
             </p>
           </div>
 
@@ -156,7 +156,7 @@ export function AccrueBonusesModal({
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4" />
+                  <Coins className="w-4 h-4" />
                   <span>Начислить</span>
                 </>
               )}

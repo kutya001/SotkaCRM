@@ -1013,6 +1013,12 @@ export type Database = {
         }
         Returns: Json
       }
+      process_unified_connection_accruals: {
+        Args: {
+          p_settlement_month?: string
+        }
+        Returns: Json
+      }
       run_maintenance_billing: {
         Args: {
           p_billing_month?: string

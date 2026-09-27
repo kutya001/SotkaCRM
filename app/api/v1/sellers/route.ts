@@ -60,8 +60,14 @@ export async function GET(req: NextRequest) {
     }
 
     const validSortColumns = ['balance', 'registered_at', 'synced_at', 'store', 'seller_name', 'outlets_count'];
-    const orderColumn = validSortColumns.includes(sortBy) ? sortBy : 'synced_at';
-    query = query.order(orderColumn, { ascending: sortOrder === 'asc', nullsFirst: false });
+    if (sortBy && validSortColumns.includes(sortBy) && sortBy !== 'registered_at') {
+      query = query.order(sortBy, { ascending: sortOrder === 'asc', nullsFirst: false });
+    } else {
+      // Детерминированный порядок: продавцы по дате регистрации всегда на своем месте
+      query = query
+        .order('registered_at', { ascending: sortOrder === 'asc', nullsFirst: false })
+        .order('created_at', { ascending: false });
+    }
 
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;

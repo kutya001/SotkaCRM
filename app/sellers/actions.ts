@@ -175,11 +175,16 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     query = query.eq('is_active', isActive === 'true');
   }
 
-  // Сортировка
+  // Сортировка: детерминированный порядок по дате регистрации
   const ascending = sortOrder === 'asc';
   const validSortColumns = ['balance', 'registered_at', 'synced_at', 'store', 'seller_name', 'outlets_count'];
-  const orderColumn = validSortColumns.includes(sortBy) ? sortBy : 'synced_at';
-  query = query.order(orderColumn, { ascending, nullsFirst: false });
+  if (sortBy && validSortColumns.includes(sortBy) && sortBy !== 'registered_at') {
+    query = query.order(sortBy, { ascending, nullsFirst: false });
+  } else {
+    query = query
+      .order('registered_at', { ascending, nullsFirst: false })
+      .order('created_at', { ascending: false });
+  }
 
   // Пагинация
   const from = (page - 1) * pageSize;

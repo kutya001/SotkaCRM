@@ -129,7 +129,7 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 
 * **Назначение:** Реестр потенциальных клиентов, карточки первого контакта, фиксация канала лидогенерации и последующего связывания с продавцом платформы.
 * **Источник наполнения:** SMM-специалисты и администраторы через мобильный интерфейс CRM.
-* **Целостность:** Физическое удаление запрещено триггером `prevent_lead_delete`.
+* **Целостность:** Физическое удаление разрешено исключительно для роли `admin` через триггер `trg_check_lead_delete`. Для остальных ролей удаление заблокировано (перевод в статус `Отмена`).
 
 | Поле | Тип данных | Ограничения | Описание |
 | --- | --- | --- | --- |
@@ -588,18 +588,22 @@ CREATE INDEX idx_users_role_active ON users(role, is_active);
 **5.1. Защита от физического удаления лидов**
 
 ```sql
-CREATE OR REPLACE FUNCTION trg_lock_lead_delete()
-RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION check_lead_deletion_permission()
+RETURNS TRIGGER AS $
 BEGIN
-    RAISE EXCEPTION 'Физическое удаление лида запрещено бизнес-правилами. Установите статус "Отмена".';
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
+    IF public.get_current_user_role() = 'admin' THEN
+        RETURN OLD;
+    END IF;
 
-CREATE TRIGGER prevent_lead_delete
+    RAISE EXCEPTION '���������� �������� ����� ��������� ������ ��������������� �������. ����������� ������ ������.'
+        USING ERRCODE = '42501';
+END;
+$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER trg_check_lead_delete
 BEFORE DELETE ON leads
 FOR EACH ROW
-EXECUTE FUNCTION trg_lock_lead_delete();
+EXECUTE FUNCTION check_lead_deletion_permission();
 
 ```
 
@@ -1344,9 +1348,29 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
   * `closing_balance`: исходящий остаток (К выплате): `opening_balance + total_accrued - total_deductions - total_paid`.
   * Массивы детальных операций: `accruals`, `deductions_and_advances`, `payouts` (с полями `Дата`, `Месяц`, `Вид операции`, `Сумма`).
 
+---
+
+## 19. Спецификация Миграции 020 (`020_hard_delete_leads_and_unified_accruals.sql`)
+
+### 19.1. Физическое удаление лидов администратором (Hard-Delete Leads):
+* Удален безусловный триггер `prevent_lead_delete` и функция `trg_lock_lead_delete()`, запрещавшие физическое удаление лидов.
+* Создана функция `check_lead_deletion_permission()` и триггер `trg_check_lead_delete BEFORE DELETE ON leads FOR EACH ROW`:
+  * Физическое удаление (`DELETE FROM leads WHERE lead_id = ...`) разрешено исключительно для роли `admin` (`public.get_current_user_role() = 'admin'`).
+  * Для любых других ролей (`consultant`, `smm`) или анонимных сессий операция блокируется исключением `Физическое удаление лидов разрешено только администраторам системы. Используйте статус 'Отмена'.`
+* Добавлена политика RLS `leads_delete_policy ON leads FOR DELETE TO authenticated USING (public.get_current_user_role() = 'admin')`.
+
+### 19.2. Атомарная хранимая функция пакетного начисления («Начисления»):
+* Процедура: `process_unified_connection_accruals(p_settlement_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Синоним/алиас: `accrue_all_connections_bonuses(p_settlement_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Проверяет каждого подключенного активного продавца (`sellers.is_active = true`):
+  1. Первичное подключение (`accrual_connection`): начисляет бонус куратору за месяц подключения (если запись начисления отсутствовала).
+  2. Ежемесячное сопровождение (`accrual_maintenance`): начисляет бонус куратору за указанный расчетный месяц (если отсутствовала запись за этот месяц), инкрементирует `maintenance_months_accrued`, переводит статус в `'сопровождение'` или `'готов'`.
+
+
 
 
 
 
 
 
+

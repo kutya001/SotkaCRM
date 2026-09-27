@@ -14,6 +14,7 @@ import {
   Loader2,
   Plus,
   RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { PIPELINE_STATUS_OPTIONS, type StatusOption } from './DataJournal';
@@ -63,6 +64,8 @@ export interface EntityModalProps<T extends Record<string, any>> {
   onCreate?: (newData: Partial<T>) => Promise<void> | void;
   onStatusChange?: (newStatus: string) => Promise<void> | void;
   onLinkSeller?: (data: T) => void;
+  onDelete?: (data: T) => void;
+  deleteLabel?: string;
   createSubmitLabel?: string;
 }
 
@@ -81,6 +84,8 @@ export function EntityModal<T extends Record<string, any>>({
   onCreate,
   onStatusChange,
   onLinkSeller,
+  onDelete,
+  deleteLabel = 'Удалить навсегда',
   createSubmitLabel = 'Сохранить запись',
 }: EntityModalProps<T>) {
   const { showToast } = useToast();
@@ -499,68 +504,83 @@ export function EntityModal<T extends Record<string, any>>({
         </form>
 
         {/* 4. ПОДВАЛ (Footer) */}
-        <div className="px-6 py-4 border-t border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/80 dark:bg-zinc-900/80 flex items-center justify-end gap-2.5">
-          {mode === 'view' ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-9 px-4 rounded-xl bg-zinc-200/80 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold transition-colors"
-            >
-              Закрыть
-            </button>
-          ) : mode === 'edit' ? (
-            <>
+        <div className="px-6 py-4 border-t border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/80 dark:bg-zinc-900/80 flex items-center justify-between gap-2.5">
+          <div>
+            {mode !== 'create' && onDelete && data && (
               <button
                 type="button"
-                onClick={handleCancelEdit}
-                disabled={isSubmitting}
-                className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                onClick={() => onDelete(data)}
+                className="h-9 px-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
-                <span>Отмена</span>
+                <Trash2 className="w-3.5 h-3.5 text-rose-500" strokeWidth={1.75} />
+                <span>{deleteLabel}</span>
               </button>
+            )}
+          </div>
 
-              <button
-                type="submit"
-                form="entity-modal-form"
-                disabled={isSubmitting}
-                className="h-9 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
-                ) : (
-                  <Save className="w-3.5 h-3.5" strokeWidth={2} />
-                )}
-                <span>Сохранить</span>
-              </button>
-            </>
-          ) : (
-            /* Mode === 'create' */
-            <>
+          <div className="flex items-center gap-2.5">
+            {mode === 'view' ? (
               <button
                 type="button"
                 onClick={onClose}
-                disabled={isSubmitting}
-                className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                className="h-9 px-4 rounded-xl bg-zinc-200/80 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold transition-colors"
               >
-                Отмена
+                Закрыть
               </button>
+            ) : mode === 'edit' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  disabled={isSubmitting}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>Отмена</span>
+                </button>
 
-              <button
-                type="submit"
-                form="entity-modal-form"
-                disabled={isSubmitting}
-                className="h-9 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
-                ) : (
-                  <Save className="w-3.5 h-3.5" strokeWidth={2} />
-                )}
-                <span>{createSubmitLabel}</span>
-              </button>
-            </>
-          )}
+                <button
+                  type="submit"
+                  form="entity-modal-form"
+                  disabled={isSubmitting}
+                  className="h-9 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" strokeWidth={2} />
+                  )}
+                  <span>Сохранить</span>
+                </button>
+              </>
+            ) : (
+              /* Mode === 'create' */
+              <>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={isSubmitting}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                >
+                  Отмена
+                </button>
+
+                <button
+                  type="submit"
+                  form="entity-modal-form"
+                  disabled={isSubmitting}
+                  className="h-9 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" strokeWidth={2} />
+                  )}
+                  <span>{createSubmitLabel}</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

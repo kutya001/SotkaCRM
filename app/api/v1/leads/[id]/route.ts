@@ -147,12 +147,12 @@ export async function DELETE(
     const { supabase, profile } = await requireAuth();
 
     if (profile.role !== 'admin') {
-      return apiError('Исключительное право на удаление/исключение лидов имеет только администратор', 'FORBIDDEN', 403);
+      return apiError('Исключительное право на удаление лидов имеет только администратор', 'FORBIDDEN', 403);
     }
 
     const { data: existingLead } = await supabase
       .from('leads')
-      .select('lead_id, assigned_to, comment')
+      .select('lead_id')
       .eq('lead_id', id)
       .single();
 
@@ -160,26 +160,15 @@ export async function DELETE(
       return apiError('Лид не найден', 'NOT_FOUND', 404);
     }
 
-    // ВАЖНО: Физический DELETE запрещен триггером prevent_lead_delete (GEMINI.md).
-    // Переводим лид в статус 'Отмена'
-    const now = new Date().toLocaleDateString('ru-RU');
-    const cancellationNote = `[Отмена (${now})]: Исключен пользователем ${profile.full_name}`;
-    const updatedComment = existingLead.comment
-      ? `${existingLead.comment}\n${cancellationNote}`
-      : cancellationNote;
-
+    // Физическое удаление (Hard Delete) для роли admin
     const { error } = await supabase
       .from('leads')
-      .update({
-        status: 'Отмена',
-        comment: updatedComment,
-        updated_at: new Date().toISOString(),
-      })
+      .delete()
       .eq('lead_id', id);
 
     if (error) throw error;
 
-    return apiSuccess({ success: true, deleted_id: id, status: 'Отмена' });
+    return apiSuccess({ success: true, deleted_id: id });
   } catch (err) {
     return handleApiError(err);
   }

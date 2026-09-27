@@ -38,6 +38,7 @@ import {
   Link2,
   Store,
   Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -112,6 +113,34 @@ function LeadsContent() {
     isOpen: false,
     lead: null,
   });
+
+  // Диалог безвозвратного удаления лида (Admin Only)
+  const [leadToDelete, setLeadToDelete] = React.useState<LeadItem | null>(null);
+  const [isDeletingLead, setIsDeletingLead] = React.useState(false);
+
+  const handleConfirmDeleteLead = async () => {
+    if (!leadToDelete) return;
+    if (currentUserRole !== 'admin') {
+      showToast('Удаление лидов разрешено только администраторам', 'error');
+      return;
+    }
+
+    setIsDeletingLead(true);
+    try {
+      await api.leads.delete(leadToDelete.lead_id);
+      showToast('Лид безвозвратно удален из базы', 'success');
+      setLeads((prev) => prev.filter((l) => l.lead_id !== leadToDelete.lead_id));
+      setLeadToDelete(null);
+      if (modalState.selectedLead?.lead_id === leadToDelete.lead_id) {
+        setModalState({ isOpen: false, mode: 'view', selectedLead: null });
+      }
+      getLeadsStats().then(setStats);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка удаления лида', 'error');
+    } finally {
+      setIsDeletingLead(false);
+    }
+  };
 
   // Загрузка начальных данных и профиля
   const fetchInitialData = React.useCallback(async () => {
@@ -760,44 +789,65 @@ function LeadsContent() {
   // Быстрые действия в строках таблицы и карточках DataJournal
   const renderCustomRowActions = React.useCallback(
     (row: LeadItem) => {
-      if (currentUserRole === 'smm') return null;
+      const actions: React.ReactNode[] = [];
 
-      if (!row.seller_phone && row.status !== 'Отмена') {
-        return (
+      if (currentUserRole !== 'smm') {
+        if (!row.seller_phone && row.status !== 'Отмена') {
+          actions.push(
+            <button
+              key="link"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLinkSeller(row);
+              }}
+              className="p-1.5 rounded-lg text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 bg-purple-500/10 border border-purple-500/20 transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
+              title="Быстро связать с продавцом платформы"
+            >
+              <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
+              <span className="hidden xl:inline text-[11px] font-semibold">Связать</span>
+            </button>
+          );
+        } else if (row.seller_phone) {
+          actions.push(
+            <span
+              key="linked"
+              className="p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-mono flex items-center gap-1"
+              title={`Привязан к продавцу +${row.seller_phone}`}
+            >
+              <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
+              <span className="hidden xl:inline font-semibold">Связан</span>
+            </span>
+          );
+        }
+      }
+
+      if (currentUserRole === 'admin') {
+        actions.push(
           <button
+            key="delete"
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              handleLinkSeller(row);
+              setLeadToDelete(row);
             }}
-            className="p-1.5 rounded-lg text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 bg-purple-500/10 border border-purple-500/20 transition-all active:scale-95 flex items-center gap-1"
-            title="Быстро связать с продавцом платформы"
+            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+            title="Удалить навсегда"
           >
-            <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
-            <span className="hidden xl:inline text-[11px] font-semibold">Связать</span>
+            <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
+            <span>Удалить навсегда</span>
           </button>
         );
       }
 
-      if (row.seller_phone) {
-        return (
-          <span
-            className="p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-mono flex items-center gap-1"
-            title={`Привязан к продавцу +${row.seller_phone}`}
-          >
-            <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
-            <span className="hidden xl:inline font-semibold">Связан</span>
-          </span>
-        );
-      }
-
-      return null;
+      if (actions.length === 0) return null;
+      return <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">{actions}</div>;
     },
     [currentUserRole, handleLinkSeller]
   );
 
   const isAnyModalOpen =
-    modalState.isOpen || mappingModal.isOpen || isScriptsOpen || cancelDialog.isOpen;
+    modalState.isOpen || mappingModal.isOpen || isScriptsOpen || cancelDialog.isOpen || leadToDelete !== null;
 
   // Вкладки воронки продаж для DataJournal
   const leadTabs: DataJournalTab[] = React.useMemo(() => {
@@ -927,6 +977,7 @@ function LeadsContent() {
             onCreate={handleCreateLead}
             onStatusChange={canEditCurrentLead ? handleStatusChangeInModal : undefined}
             onLinkSeller={handleLinkSeller}
+            onDelete={currentUserRole === 'admin' ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
           />
         )}
@@ -1012,6 +1063,66 @@ function LeadsContent() {
               await fetchInitialData();
             }}
           />
+        )}
+
+        {/* 8. Диалог подтверждения безвозвратного удаления лида (Admin Only) */}
+        {leadToDelete && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Удалить лид навсегда?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {leadToDelete.client_name} ({leadToDelete.phone ? `+${leadToDelete.phone}` : 'без телефона'})
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 space-y-1.5">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                  <span>Внимание: действие необратимо</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  Вы действительно хотите безвозвратно удалить этот лид из базы? Запись будет физически удалена без возможности восстановления.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingLead}
+                  onClick={() => setLeadToDelete(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingLead}
+                  onClick={handleConfirmDeleteLead}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isDeletingLead ? (
+                    <span>Удаление...</span>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Удалить навсегда</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AppLayout>

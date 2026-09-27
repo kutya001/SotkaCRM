@@ -515,7 +515,7 @@ export const api = {
         message: string;
       }>('/api/v1/connections/accrue-all', {
         method: 'POST',
-        body: JSON.stringify({ month }),
+        body: JSON.stringify({ month, settlement_month: month }),
       });
       invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
       return res;

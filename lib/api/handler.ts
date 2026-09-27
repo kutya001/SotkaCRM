@@ -15,7 +15,8 @@ export function apiError(
   message: string,
   code = 'BAD_REQUEST',
   status = 400,
-  details?: any
+  details?: any,
+  headers?: HeadersInit
 ) {
   return NextResponse.json<ApiErrorBody>(
     {
@@ -23,7 +24,7 @@ export function apiError(
       code,
       details,
     },
-    { status }
+    { status, headers }
   );
 }
 

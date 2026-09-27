@@ -36,12 +36,29 @@ async function request<T>(
     data = await response.text();
   }
 
+  const serverTiming = response.headers.get('Server-Timing');
+  if (process.env.NODE_ENV !== 'production' && serverTiming) {
+    console.debug(
+      `[API SDK] ${options.method || 'GET'} ${endpoint} | Server-Timing: ${serverTiming}`
+    );
+  }
+
   if (!response.ok) {
     const errorMsg = data?.error || response.statusText || 'Ошибка сетевого запроса';
-    const err = new Error(errorMsg) as Error & { code?: string; details?: any; status: number };
+    const err = new Error(errorMsg) as Error & {
+      code?: string;
+      details?: any;
+      status: number;
+      retryAfter?: number;
+    };
     err.code = data?.code || 'HTTP_ERROR';
     err.details = data?.details;
     err.status = response.status;
+    if (response.status === 429) {
+      err.retryAfter = data?.retry_after
+        ? Number(data.retry_after)
+        : Number(response.headers.get('Retry-After')) || 60;
+    }
     throw err;
   }
 

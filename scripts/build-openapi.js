@@ -70,7 +70,18 @@ const openapi = {
               }
             }
           },
-          400: { description: "Неверный логин или пароль", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } }
+          400: { description: "Неверный логин или пароль", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          429: {
+            description: "Превышен лимит запросов на авторизацию (максимум 5 запросов в минуту)",
+            headers: {
+              "Retry-After": { "$ref": "#/components/headers/Retry-After" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/X-RateLimit-Limit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/X-RateLimit-Remaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/X-RateLimit-Reset" },
+              "Server-Timing": { "$ref": "#/components/headers/Server-Timing" }
+            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/RateLimitErrorResponse" } } }
+          }
         }
       }
     },
@@ -1089,7 +1100,18 @@ const openapi = {
           content: { "application/json": { schema: { $ref: "#/components/schemas/SyncWebhookPayload" } } }
         },
         responses: {
-          200: { description: "Событие обработано" }
+          200: { description: "Событие обработано" },
+          429: {
+            description: "Превышен лимит входящих вебхуков (максимум 30 запросов в минуту)",
+            headers: {
+              "Retry-After": { "$ref": "#/components/headers/Retry-After" },
+              "X-RateLimit-Limit": { "$ref": "#/components/headers/X-RateLimit-Limit" },
+              "X-RateLimit-Remaining": { "$ref": "#/components/headers/X-RateLimit-Remaining" },
+              "X-RateLimit-Reset": { "$ref": "#/components/headers/X-RateLimit-Reset" },
+              "Server-Timing": { "$ref": "#/components/headers/Server-Timing" }
+            },
+            content: { "application/json": { schema: { $ref: "#/components/schemas/RateLimitErrorResponse" } } }
+          }
         }
       }
     },
@@ -1127,7 +1149,37 @@ const openapi = {
     }
   },
   components: {
+    headers: {
+      "Server-Timing": {
+        description: "Метрики задержки обработки запроса сервером (W3C Server-Timing)",
+        schema: { type: "string", example: "app;dur=45.2;desc=\"Application Processing\", total;dur=48.6" }
+      },
+      "X-RateLimit-Limit": {
+        description: "Максимальное количество разрешенных запросов в текущем окне",
+        schema: { type: "integer", example: 5 }
+      },
+      "X-RateLimit-Remaining": {
+        description: "Оставшееся количество разрешенных запросов в окне",
+        schema: { type: "integer", example: 0 }
+      },
+      "X-RateLimit-Reset": {
+        description: "Unix-метка времени (в секундах), когда окно лимита будет сброшено",
+        schema: { type: "integer", example: 1790510400 }
+      },
+      "Retry-After": {
+        description: "Количество секунд, которые клиенту необходимо подождать перед повторным запросом",
+        schema: { type: "integer", example: 60 }
+      }
+    },
     schemas: {
+      RateLimitErrorResponse: {
+        type: "object",
+        properties: {
+          error: { type: "string", example: "Слишком много запросов. Пожалуйста, подождите перед повторной попыткой." },
+          code: { type: "string", example: "RATE_LIMIT_EXCEEDED" },
+          retry_after: { type: "integer", example: 60 }
+        }
+      },
       ErrorResponse: {
         type: "object",
         properties: {

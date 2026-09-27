@@ -293,7 +293,7 @@ export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsSta
       if (r.operation_type === 'payout' || r.payout_category === 'выплата зп') {
         totalPaid += amt;
       }
-      if (r.payout_category === 'аванс') {
+      if (r.payout_category === 'аванс' || r.operation_type === 'advance') {
         totalAdvances += amt;
       }
       if (r.operation_type === 'deduction' || r.operation_type === 'fine' || r.payout_category === 'удержание') {
@@ -340,12 +340,17 @@ export async function createPayout(
         ? '+'
         : '-');
 
+    const effCategory =
+      valid.operation_type === 'advance'
+        ? 'аванс'
+        : (valid.payout_category || 'выплата зп');
+
     const { data, error } = await supabase.rpc('process_employee_payout_atomic', {
       p_user_id: valid.user_id,
       p_accrual_month: effMonth,
       p_payout_date: effDate,
       p_amount: roundMoney(valid.amount),
-      p_payout_category: valid.payout_category || 'выплата зп',
+      p_payout_category: effCategory,
       p_payment_method: valid.payment_method ? valid.payment_method.trim() : null,
       p_comment: (valid.note || valid.comment || valid.description || '').trim(),
       p_created_by: profile.user_id,
@@ -383,12 +388,51 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
     return { success: false, error: 'Пользователь не аутентифицирован' };
   }
 
-  // 1. Все операции до этого месяца (сальдо на начало)
-  const { data: prevData } = await supabase
+  // 1. Попытка вызвать RPC процедуру get_employee_payroll_sheet
+  try {
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('get_employee_payroll_sheet', {
+      p_employee_id: employeeId,
+      p_month: month,
+    });
+
+    if (!rpcErr && rpcData) {
+      const sheetData = rpcData as any;
+      return {
+        success: true,
+        sheet: {
+          employee_id: employeeId,
+          settlement_month: month,
+          opening_balance: roundMoney(Number(sheetData.opening_balance) || 0),
+          total_accrued: roundMoney(Number(sheetData.total_accrued) || 0),
+          total_deductions: roundMoney(Number(sheetData.total_deductions) || 0),
+          total_paid: roundMoney(Number(sheetData.total_paid) || 0),
+          closing_balance: roundMoney(Number(sheetData.closing_balance) || 0),
+          accruals: sheetData.accruals || [],
+          deductions_and_advances: sheetData.deductions_and_advances || sheetData.deductions || [],
+          payouts: sheetData.payouts || [],
+          operations: sheetData.operations || [],
+        },
+      };
+    }
+  } catch (err) {
+    console.warn('RPC get_employee_payroll_sheet not available, using direct query fallback');
+  }
+
+  // 2. Fallback: расчет через прямые запросы к employee_payouts с защитой от отсутствия employee_id
+  let prevQuery = supabase
     .from('employee_payouts')
     .select('amount, operation_sign, operation_type')
-    .or(`user_id.eq.${employeeId},employee_id.eq.${employeeId}`)
     .lt('settlement_month', month);
+
+  let { data: prevData, error: prevErr } = await prevQuery.or(`user_id.eq.${employeeId},employee_id.eq.${employeeId}`);
+  if (prevErr) {
+    const res = await supabase
+      .from('employee_payouts')
+      .select('amount, operation_sign, operation_type')
+      .eq('user_id', employeeId)
+      .lt('settlement_month', month);
+    prevData = res.data;
+  }
 
   let openingBalance = 0;
   (prevData || []).forEach((row: any) => {
@@ -402,21 +446,31 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
     else openingBalance -= amt;
   });
 
-  // 2. Все операции за выбранный месяц
-  const { data: currentData, error: currErr } = await supabase
+  // Все операции за выбранный месяц
+  let currentQuery = supabase
     .from('employee_payouts')
     .select('*')
-    .or(`user_id.eq.${employeeId},employee_id.eq.${employeeId}`)
     .eq('settlement_month', month)
     .order('actual_date', { ascending: true });
 
+  let { data: currentData, error: currErr } = await currentQuery.or(`user_id.eq.${employeeId},employee_id.eq.${employeeId}`);
   if (currErr) {
-    return { success: false, error: currErr.message };
+    const res = await supabase
+      .from('employee_payouts')
+      .select('*')
+      .eq('user_id', employeeId)
+      .eq('settlement_month', month)
+      .order('actual_date', { ascending: true });
+    currentData = res.data;
   }
 
   let totalAccrued = 0;
   let totalDeductions = 0;
   let totalPaid = 0;
+
+  const accrualsList: any[] = [];
+  const deductionsAndAdvancesList: any[] = [];
+  const payoutsList: any[] = [];
 
   (currentData || []).forEach((row: any) => {
     const amt = Number(row.amount) || 0;
@@ -428,15 +482,14 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
 
     if (sign === '+') {
       totalAccrued += amt;
+      accrualsList.push(row);
     } else {
-      if (
-        row.operation_type === 'payout' ||
-        row.payout_category === 'выплата зп' ||
-        row.payout_category === 'аванс'
-      ) {
+      if (row.operation_type === 'payout' || row.payout_category === 'выплата зп') {
         totalPaid += amt;
+        payoutsList.push(row);
       } else {
         totalDeductions += amt;
+        deductionsAndAdvancesList.push(row);
       }
     }
   });
@@ -453,6 +506,9 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
       total_deductions: roundMoney(totalDeductions),
       total_paid: roundMoney(totalPaid),
       closing_balance: roundMoney(closingBalance),
+      accruals: accrualsList,
+      deductions_and_advances: deductionsAndAdvancesList,
+      payouts: payoutsList,
       operations: currentData || [],
     },
   };

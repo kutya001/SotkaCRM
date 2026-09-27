@@ -502,66 +502,6 @@
         }
       }
     },
-    "/api/v1/leads/batch": {
-      "post": {
-        "tags": [
-          "Leads"
-        ],
-        "summary": "Массовые групповые действия с лидами (Admin Only)",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "lead_ids",
-                  "action"
-                ],
-                "properties": {
-                  "lead_ids": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "action": {
-                    "type": "string",
-                    "enum": [
-                      "change_status",
-                      "change_assigned",
-                      "delete"
-                    ]
-                  },
-                  "status": {
-                    "type": "string"
-                  },
-                  "assigned_to": {
-                    "type": "string",
-                    "format": "uuid",
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Пакетная операция успешно выполнена"
-          },
-          "403": {
-            "description": "Только администратор имеет доступ к пакетным операциям"
-          }
-        }
-      }
-    },
     "/api/v1/leads/{id}": {
       "get": {
         "tags": [
@@ -1103,61 +1043,6 @@
         }
       }
     },
-    "/api/v1/sellers/batch": {
-      "post": {
-        "tags": [
-          "Sellers"
-        ],
-        "summary": "Массовые групповые действия с продавцами (Admin Only)",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "seller_ids",
-                  "action"
-                ],
-                "properties": {
-                  "seller_ids": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "action": {
-                    "type": "string",
-                    "enum": [
-                      "change_manager",
-                      "delete"
-                    ]
-                  },
-                  "manager_id": {
-                    "type": "string",
-                    "format": "uuid",
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Пакетная операция с продавцами успешно выполнена"
-          },
-          "403": {
-            "description": "Только администратор имеет доступ к пакетным операциям"
-          }
-        }
-      }
-    },
     "/api/v1/sellers/{id}": {
       "get": {
         "tags": [
@@ -1546,8 +1431,7 @@
         "tags": [
           "Connections"
         ],
-        "summary": "Удаление подключения (Admin Only)",
-        "description": "Удаление подключения администратором с автоматическим сбросом куратора продавца (sellers.manager_id = NULL) и каскадным удалением начислений из connection_accruals.",
+        "summary": "Удаление подключения",
         "parameters": [
           {
             "name": "id",
@@ -1561,13 +1445,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Подключение успешно удалено, куратор продавца сброшен"
-          },
-          "403": {
-            "description": "Доступ запрещен (только admin)"
-          },
-          "404": {
-            "description": "Подключение не найдено"
+            "description": "Подключение удалено"
           }
         }
       }
@@ -1611,6 +1489,63 @@
                     },
                     "total_amount": {
                       "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connections/accrue-all": {
+      "post": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Пакетное начисление бонусов подключений и сопровождения",
+        "description": "Проверяет все активные подключения и формирует недостающие начисления за подключения и сопровождение за указанный месяц.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "month": {
+                    "type": "string",
+                    "example": "2026-09"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Бонусы успешно начислены",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "settlement_month": {
+                      "type": "string"
+                    },
+                    "connection_bonuses_created": {
+                      "type": "integer"
+                    },
+                    "maintenance_bonuses_created": {
+                      "type": "integer"
+                    },
+                    "total_created": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
                     }
                   }
                 }
@@ -1722,6 +1657,87 @@
         }
       }
     },
+    "/api/v1/payouts/payroll-sheet": {
+      "get": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Расчётный лист сотрудника (Payslip)",
+        "description": "Возвращает сводный финансовый баланс за расчетный месяц с детализацией начислений, удержаний и выплат.",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "2026-09"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Расчётный лист сотрудника",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "employee_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "settlement_month": {
+                      "type": "string"
+                    },
+                    "opening_balance": {
+                      "type": "number"
+                    },
+                    "total_accrued": {
+                      "type": "number"
+                    },
+                    "total_deductions": {
+                      "type": "number"
+                    },
+                    "total_paid": {
+                      "type": "number"
+                    },
+                    "closing_balance": {
+                      "type": "number"
+                    },
+                    "accruals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "deductions_and_advances": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "payouts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payouts/calculate": {
       "post": {
         "tags": [
@@ -1788,69 +1804,6 @@
         }
       }
     },
-    "/api/v1/payouts/payroll-sheet": {
-      "get": {
-        "tags": [
-          "Payouts"
-        ],
-        "summary": "Интерактивный расчетный лист сотрудника за месяц",
-        "description": "Формирует сводный бухгалтерский расчетный лист с входящим сальдо, начислениями (+), удержаниями/штрафами (-) и исходящим сальдо к выплате.",
-        "parameters": [
-          {
-            "name": "employeeId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "month",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "example": "2026-09"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Сводный расчетный лист",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "opening_balance": {
-                      "type": "number",
-                      "example": 0
-                    },
-                    "total_accrued": {
-                      "type": "number",
-                      "example": 15000
-                    },
-                    "total_deductions": {
-                      "type": "number",
-                      "example": 500
-                    },
-                    "total_paid": {
-                      "type": "number",
-                      "example": 10000
-                    },
-                    "closing_balance": {
-                      "type": "number",
-                      "example": 4500
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/payouts/{id}": {
       "patch": {
         "tags": [
@@ -1888,8 +1841,7 @@
         "tags": [
           "Payouts"
         ],
-        "summary": "Удаление выплаты (Admin Only)",
-        "description": "Удаление выплаты администратором с каскадной разблокировкой связанных начислений кураторам (connection_accruals.is_paid = false, payout_id = NULL, paid_at = NULL).",
+        "summary": "Удаление выплаты",
         "parameters": [
           {
             "name": "id",
@@ -1903,13 +1855,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Выплата удалена, связанные начисления успешно разблокированы"
-          },
-          "403": {
-            "description": "Доступ запрещен (только admin)"
-          },
-          "404": {
-            "description": "Выплата не найдена"
+            "description": "Выплата удалена"
           }
         }
       }
@@ -3167,15 +3113,47 @@
             "type": "string",
             "format": "uuid"
           },
+          "employee_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
           "accrual_month": {
+            "type": "string"
+          },
+          "settlement_month": {
             "type": "string"
           },
           "payout_date": {
             "type": "string",
             "format": "date"
           },
+          "actual_date": {
+            "type": "string",
+            "format": "date"
+          },
           "amount": {
             "type": "number"
+          },
+          "operation_sign": {
+            "type": "string",
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "operation_type": {
+            "type": "string",
+            "enum": [
+              "accrual_connection",
+              "accrual_maintenance",
+              "salary_base",
+              "bonus_other",
+              "deduction",
+              "fine",
+              "payout",
+              "advance"
+            ]
           },
           "payout_category": {
             "type": "string",
@@ -3188,7 +3166,8 @@
             ]
           },
           "payment_method": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "status": {
             "type": "string",
@@ -3208,15 +3187,22 @@
         "type": "object",
         "required": [
           "user_id",
-          "amount",
-          "payout_category"
+          "amount"
         ],
         "properties": {
           "user_id": {
             "type": "string",
             "format": "uuid"
           },
+          "employee_id": {
+            "type": "string",
+            "format": "uuid"
+          },
           "accrual_month": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "settlement_month": {
             "type": "string",
             "example": "2026-09"
           },
@@ -3225,9 +3211,35 @@
             "format": "date",
             "example": "2026-09-27"
           },
+          "actual_date": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-09-27"
+          },
           "amount": {
             "type": "number",
             "example": 15000
+          },
+          "operation_sign": {
+            "type": "string",
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "operation_type": {
+            "type": "string",
+            "enum": [
+              "accrual_connection",
+              "accrual_maintenance",
+              "salary_base",
+              "bonus_other",
+              "deduction",
+              "fine",
+              "payout",
+              "advance"
+            ],
+            "default": "payout"
           },
           "payout_category": {
             "type": "string",
@@ -3241,7 +3253,13 @@
           },
           "payment_method": {
             "type": "string",
-            "default": "Mbank"
+            "enum": [
+              "mbank",
+              "odengi",
+              "bakai",
+              "abank",
+              "cash"
+            ]
           },
           "comment": {
             "type": "string"

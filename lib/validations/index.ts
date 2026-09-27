@@ -28,6 +28,7 @@ export const salaryOperationTypeSchema = z.enum([
   'deduction',
   'fine',
   'payout',
+  'advance',
 ]);
 export type SalaryOperationType = z.infer<typeof salaryOperationTypeSchema>;
 
@@ -39,9 +40,41 @@ export const SALARY_OPERATION_TYPE_LABELS: Record<SalaryOperationType, string> =
   deduction: 'Удержание',
   fine: 'Штраф',
   payout: 'Выплата',
+  advance: 'Аванс',
 };
 
-export const PayoutSchema = z.object({
+export const PayoutSchema = z.preprocess((raw: any) => {
+  if (!raw || typeof raw !== 'object') return raw;
+  const clone = { ...raw };
+  if (!clone.user_id && clone.userId) clone.user_id = clone.userId;
+  if (!clone.user_id && clone.employeeId) clone.user_id = clone.employeeId;
+  if (!clone.user_id && clone.employee_id) clone.user_id = clone.employee_id;
+  if (!clone.employee_id && clone.employeeId) clone.employee_id = clone.employeeId;
+  if (!clone.employee_id && clone.user_id) clone.employee_id = clone.user_id;
+
+  if (!clone.settlement_month && clone.settlementMonth) clone.settlement_month = clone.settlementMonth;
+  if (!clone.accrual_month && clone.accrualMonth) clone.accrual_month = clone.accrualMonth;
+  if (!clone.settlement_month && clone.accrual_month) clone.settlement_month = clone.accrual_month;
+
+  if (!clone.actual_date && clone.actualDate) clone.actual_date = clone.actualDate;
+  if (!clone.payout_date && clone.payoutDate) clone.payout_date = clone.payoutDate;
+  if (!clone.actual_date && clone.payout_date) clone.actual_date = clone.payoutDate;
+
+  if (!clone.operation_type && clone.operationType) clone.operation_type = clone.operationType;
+  if (!clone.operation_sign && clone.operationSign) clone.operation_sign = clone.operationSign;
+  if (!clone.payment_method && clone.paymentMethod) clone.payment_method = clone.paymentMethod;
+  if (!clone.payout_category && clone.payoutCategory) clone.payout_category = clone.payoutCategory;
+  if (!clone.connection_id && clone.connectionId) clone.connection_id = clone.connectionId;
+  if (!clone.seller_phone && clone.sellerPhone) clone.seller_phone = clone.sellerPhone;
+  if (!clone.accrual_ids && clone.accrualIds) clone.accrual_ids = clone.accrualIds;
+
+  // Если операция advance, а категория не задана
+  if (clone.operation_type === 'advance' && !clone.payout_category) {
+    clone.payout_category = 'аванс';
+  }
+
+  return clone;
+}, z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
   employee_id: z.string().regex(PG_UUID_REGEX).optional().nullable(),
   accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ').optional(),
@@ -59,7 +92,15 @@ export const PayoutSchema = z.object({
   connection_id: z.string().regex(PG_UUID_REGEX).optional().nullable(),
   seller_phone: z.string().optional().nullable(),
   accrual_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional().nullable(),
-});
+}).refine((data) => {
+  if (data.operation_type === 'payout' || data.operation_type === 'advance' || data.payout_category === 'аванс') {
+    return !!data.payment_method && ['mbank', 'odengi', 'bakai', 'abank', 'cash'].includes(data.payment_method);
+  }
+  return true;
+}, {
+  message: 'Для выплат и авансов необходимо выбрать кошелек (метод оплаты)',
+  path: ['payment_method'],
+}));
 
 export const LeadStatusSchema = z.enum(['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'], {
   message: 'Недопустимый статус лида',

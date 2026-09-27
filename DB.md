@@ -407,7 +407,7 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 | `user_id` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Сотрудник-получатель (псевдоним `employee_id`). |
 | `employee_id` | `UUID` | `NULL, REFERENCES users(user_id)` | Идентификатор сотрудника. |
 | `operation_sign` | `VARCHAR(1)` | `NOT NULL, CHECK (operation_sign IN ('+', '-'))` | Знак операции (`+` начисление/бонус/оклад, `-` выплата/удержание/штраф). |
-| `operation_type` | `VARCHAR(30)` | `NOT NULL, CHECK (operation_type IN ('accrual_connection', 'accrual_maintenance', 'salary_base', 'bonus_other', 'deduction', 'fine', 'payout'))` | Вид операции по ЗП. |
+| `operation_type` | `VARCHAR(30)` | `NOT NULL, CHECK (operation_type IN ('accrual_connection', 'accrual_maintenance', 'salary_base', 'bonus_other', 'deduction', 'fine', 'payout', 'advance'))` | Вид операции по ЗП (включая аванс со знаком '-'). |
 | `amount` | `NUMERIC(12,2)` | `NOT NULL, CHECK (amount > 0)` | Сумма операции в сомах. |
 | `actual_date` | `DATE` | `NOT NULL, DEFAULT CURRENT_DATE` | Дата фактической операции (выдачи/начисления). |
 | `settlement_month` | `VARCHAR(7)` | `NOT NULL` | Расчетный месяц начисления (`YYYY-MM`). |
@@ -1309,6 +1309,41 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * **Продавцы (`sellers`) и подключения (`connections`):**
   * `sellers_select_policy`: роль `consultant` видит исключительно закрепленных за собой продавцов со статусом модерации `approved` (`manager_id = auth.uid() AND moderation = 'approved'`).
   * `connections_select_policy`: консультант видит исключительно свои подключения (`manager_id = auth.uid()`).
+
+---
+
+## 18. Спецификация Миграции 019 (`019_fix_payroll_accruals_and_advance.sql`)
+
+### 18.1. Изоляция и синхронизация колонок сотрудника (`employee_payouts`):
+* Добавлена колонка `employee_id UUID REFERENCES users(user_id) ON DELETE CASCADE` в таблицу `employee_payouts`.
+* Установлен двусторонний триггер `trg_sync_employee_payouts_ids`, автоматически выравнивающий `user_id` и `employee_id` при любых операциях INSERT/UPDATE:
+  ```sql
+  NEW.employee_id := COALESCE(NEW.employee_id, NEW.user_id);
+  NEW.user_id := COALESCE(NEW.user_id, NEW.employee_id);
+  ```
+* Создано представление `CREATE OR REPLACE VIEW public.payouts AS SELECT * FROM public.employee_payouts;` для обратной совместимости легаси-запросов.
+
+### 18.2. Вид операции «Аванс» (`advance`):
+* Ограничение `employee_payouts_operation_type_check` расширено типом `'advance'`.
+* Операция `'advance'` автоматически получает знак `'-'` (уменьшает баланс к выплате) и привязана к категории `аванс`.
+* Для авансов и выплат поле `payment_method` (`mbank`, `odengi`, `bakai`, `abank`, `cash`) является строго обязательным.
+
+### 18.3. Хранимая процедура пакетного начисления бонусов (`accrue_all_connections_bonuses`):
+* Сигнатура: `accrue_all_connections_bonuses(p_settlement_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Выполняет транзакционную сверку всех активных подключений с активными продавцами (`sellers.is_active = true`):
+  1. Бонусы за подключение (`accrual_connection`, `+`): начисляет недостающие вознаграждения консультантам за текущий месяц создания подключения.
+  2. Бонусы за сопровождение (`accrual_maintenance`, `+`): начисляет ежемесячное сопровождение, переводит статус подключения в `'сопровождение'` или `'готов'` при достижении 2-месячного лимита.
+
+### 18.4. Обновленная процедура расчётного листа (`get_employee_payroll_sheet`):
+* Сигнатура: `get_employee_payroll_sheet(p_employee_id UUID, p_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Возвращает:
+  * `opening_balance`: непрерывное входящее сальдо на 1-е число расчетного месяца.
+  * `total_accrued`: сумма всех начислений за месяц со знаком `+`.
+  * `total_deductions`: сумма всех удержаний, штрафов и авансов за месяц со знаком `-`.
+  * `total_paid`: сумма выплат заработной платы за месяц со знаком `-`.
+  * `closing_balance`: исходящий остаток (К выплате): `opening_balance + total_accrued - total_deductions - total_paid`.
+  * Массивы детальных операций: `accruals`, `deductions_and_advances`, `payouts` (с полями `Дата`, `Месяц`, `Вид операции`, `Сумма`).
+
 
 
 

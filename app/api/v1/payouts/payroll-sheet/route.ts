@@ -8,8 +8,12 @@ export async function GET(req: NextRequest) {
     const { profile } = await requireAuth();
     const { searchParams } = new URL(req.url);
 
-    let employeeId = searchParams.get('employeeId');
-    const month = searchParams.get('month') || new Date().toISOString().substring(0, 7);
+    let employeeId = searchParams.get('employeeId') || searchParams.get('employee_id');
+    const month =
+      searchParams.get('month') ||
+      searchParams.get('settlementMonth') ||
+      searchParams.get('settlement_month') ||
+      new Date().toISOString().substring(0, 7);
 
     // Консультант и SMM могут запрашивать расчетный лист только для себя
     if (profile.role !== 'admin' && profile.role !== 'supervisor') {

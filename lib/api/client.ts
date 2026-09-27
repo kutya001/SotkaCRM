@@ -505,6 +505,21 @@ export const api = {
       invalidateNamespaces('connections', 'payouts', 'dashboard', 'analytics');
       return res;
     },
+    accrueAll: async (month?: string) => {
+      const res = await request<{
+        success: boolean;
+        settlement_month: string;
+        connection_bonuses_created: number;
+        maintenance_bonuses_created: number;
+        total_created: number;
+        message: string;
+      }>('/api/v1/connections/accrue-all', {
+        method: 'POST',
+        body: JSON.stringify({ month }),
+      });
+      invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
+      return res;
+    },
   },
 
   // 6. Выплаты

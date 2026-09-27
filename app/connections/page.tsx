@@ -20,6 +20,7 @@ import {
 } from './actions';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { MaintenanceBillingModal } from '@/components/connections/MaintenanceBillingModal';
+import { AccrueBonusesModal } from '@/components/connections/AccrueBonusesModal';
 import { ConnectionAccrualsSection } from '@/components/connections/ConnectionAccrualsSection';
 import {
   Link2,
@@ -39,6 +40,7 @@ import {
   Clock,
   Trash2,
   Receipt,
+  Sparkles,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -131,6 +133,7 @@ export default function ConnectionsPage() {
 
   // Модальное окно биллинга сопровождения
   const [isBillingModalOpen, setIsBillingModalOpen] = React.useState(false);
+  const [isAccrueBonusesModalOpen, setIsAccrueBonusesModalOpen] = React.useState(false);
 
   // Удаление подключения (Admin Only)
   const [connectionToDelete, setConnectionToDelete] = React.useState<ConnectionItem | null>(null);
@@ -702,16 +705,29 @@ export default function ConnectionsPage() {
       </button>
 
       {currentUserRole === 'admin' && (
-        <button
-          type="button"
-          onClick={() => setIsBillingModalOpen(true)}
-          className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center justify-center md:gap-2 shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
-          title="Биллинг сопровождения"
-          aria-label="Биллинг сопровождения"
-        >
-          <Banknote className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-          <span className="hidden md:inline">Биллинг сопровождения</span>
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => setIsAccrueBonusesModalOpen(true)}
+            className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center md:gap-2 shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
+            title="Начислить бонусы"
+            aria-label="Начислить бонусы"
+          >
+            <Sparkles className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+            <span className="hidden md:inline">Начислить бонусы</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsBillingModalOpen(true)}
+            className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center justify-center md:gap-2 shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
+            title="Биллинг сопровождения"
+            aria-label="Биллинг сопровождения"
+          >
+            <Banknote className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+            <span className="hidden md:inline">Биллинг сопровождения</span>
+          </button>
+        </>
       )}
     </div>
   );
@@ -1114,6 +1130,14 @@ export default function ConnectionsPage() {
           isOpen={isBillingModalOpen}
           onClose={() => setIsBillingModalOpen(false)}
           onSuccess={fetchData}
+        />
+
+        {/* 5.1. Модальное окно пакетного начисления бонусов (Admin Only) */}
+        <AccrueBonusesModal
+          isOpen={isAccrueBonusesModalOpen}
+          onClose={() => setIsAccrueBonusesModalOpen(false)}
+          onSuccess={fetchData}
+          months={accrualMonths}
         />
 
         {/* 6. Диалог подтверждения удаления подключения (Admin Only) */}

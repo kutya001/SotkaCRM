@@ -242,7 +242,10 @@ export default function PayoutsPage() {
         amount: Number(formData.amount),
         actual_date: formData.actual_date,
         settlement_month: formData.settlement_month,
-        payment_method: formData.operation_type === 'payout' ? formData.payment_method : null,
+        payment_method:
+          formData.operation_type === 'payout' || formData.operation_type === 'advance'
+            ? formData.payment_method
+            : null,
         note: formData.note.trim() || undefined,
       });
 
@@ -345,6 +348,8 @@ export default function PayoutsPage() {
             colorClass = 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
           } else if (row.operation_type === 'fine') {
             colorClass = 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20';
+          } else if (row.operation_type === 'advance') {
+            colorClass = 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20';
           } else if (row.operation_type === 'payout') {
             colorClass = 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20';
           }
@@ -854,6 +859,7 @@ export default function PayoutsPage() {
                     <option value="salary_base">Оклад (+ Начисление)</option>
                     <option value="bonus_other">Прочая надбавка / Премия (+ Начисление)</option>
                     <option value="payout">Выплата ЗП (- Выплата)</option>
+                    <option value="advance">Аванс (- Выплата)</option>
                     <option value="deduction">Удержание (- Удержание)</option>
                     <option value="fine">Штраф (- Удержание)</option>
                   </select>
@@ -913,15 +919,15 @@ export default function PayoutsPage() {
                     />
                   </div>
 
-                  {/* Кошелек (только если выплата) */}
+                  {/* Кошелек (только если выплата или аванс) */}
                   <div className="space-y-1">
                     <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Кошелек {formData.operation_type === 'payout' ? '*' : '(не требуется)'}
+                      Кошелек {formData.operation_type === 'payout' || formData.operation_type === 'advance' ? '*' : '(не требуется)'}
                     </label>
                     <select
                       value={formData.payment_method}
                       onChange={(e) => setFormData((p) => ({ ...p, payment_method: e.target.value }))}
-                      disabled={formData.operation_type !== 'payout'}
+                      disabled={formData.operation_type !== 'payout' && formData.operation_type !== 'advance'}
                       className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                     >
                       <option value="mbank">МБанк</option>

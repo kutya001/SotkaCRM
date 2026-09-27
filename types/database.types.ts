@@ -312,6 +312,7 @@ export type Database = {
             | "deduction"
             | "fine"
             | "payout"
+            | "advance"
           payment_method: string | null
           payout_category: Database["public"]["Enums"]["payout_category_type"]
           payout_date: string
@@ -341,6 +342,7 @@ export type Database = {
             | "deduction"
             | "fine"
             | "payout"
+            | "advance"
           payment_method?: string | null
           payout_category?: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
@@ -370,6 +372,7 @@ export type Database = {
             | "deduction"
             | "fine"
             | "payout"
+            | "advance"
           payment_method?: string | null
           payout_category?: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
@@ -941,6 +944,12 @@ export type Database = {
           connection_percent: number
           maintenance_percent: number
         }[]
+      }
+      accrue_all_connections_bonuses: {
+        Args: {
+          p_settlement_month?: string
+        }
+        Returns: Json
       }
       calculate_payout_accruals: {
         Args: {

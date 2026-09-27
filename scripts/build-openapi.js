@@ -682,6 +682,46 @@ const openapi = {
         }
       }
     },
+    "/api/v1/connections/accrue-all": {
+      post: {
+        tags: ["Connections"],
+        summary: "Пакетное начисление бонусов подключений и сопровождения",
+        description: "Проверяет все активные подключения и формирует недостающие начисления за подключения и сопровождение за указанный месяц.",
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  month: { type: "string", example: "2026-09" }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: {
+            description: "Бонусы успешно начислены",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean" },
+                    settlement_month: { type: "string" },
+                    connection_bonuses_created: { type: "integer" },
+                    maintenance_bonuses_created: { type: "integer" },
+                    total_created: { type: "integer" },
+                    message: { type: "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
 
     // 6. PAYOUTS
     "/api/v1/payouts": {
@@ -721,6 +761,41 @@ const openapi = {
           content: { "application/json": { schema: { $ref: "#/components/schemas/PayoutCreatePayload" } } }
         },
         responses: { 201: { description: "Выплата создана" } }
+      }
+    },
+    "/api/v1/payouts/payroll-sheet": {
+      get: {
+        tags: ["Payouts"],
+        summary: "Расчётный лист сотрудника (Payslip)",
+        description: "Возвращает сводный финансовый баланс за расчетный месяц с детализацией начислений, удержаний и выплат.",
+        parameters: [
+          { name: "employeeId", in: "query", schema: { type: "string", format: "uuid" } },
+          { name: "month", in: "query", schema: { type: "string", example: "2026-09" } }
+        ],
+        responses: {
+          200: {
+            description: "Расчётный лист сотрудника",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    employee_id: { type: "string", format: "uuid" },
+                    settlement_month: { type: "string" },
+                    opening_balance: { type: "number" },
+                    total_accrued: { type: "number" },
+                    total_deductions: { type: "number" },
+                    total_paid: { type: "number" },
+                    closing_balance: { type: "number" },
+                    accruals: { type: "array", items: { type: "object" } },
+                    deductions_and_advances: { type: "array", items: { type: "object" } },
+                    payouts: { type: "array", items: { type: "object" } }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/payouts/calculate": {
@@ -1307,25 +1382,35 @@ const openapi = {
         properties: {
           payout_id: { type: "string", format: "uuid" },
           user_id: { type: "string", format: "uuid" },
+          employee_id: { type: "string", format: "uuid", nullable: true },
           accrual_month: { type: "string" },
+          settlement_month: { type: "string" },
           payout_date: { type: "string", format: "date" },
+          actual_date: { type: "string", format: "date" },
           amount: { type: "number" },
+          operation_sign: { type: "string", enum: ["+", "-"] },
+          operation_type: { type: "string", enum: ["accrual_connection", "accrual_maintenance", "salary_base", "bonus_other", "deduction", "fine", "payout", "advance"] },
           payout_category: { type: "string", enum: ["выплата зп", "аванс", "бонус", "прочие начисления", "удержание"] },
-          payment_method: { type: "string" },
+          payment_method: { type: "string", nullable: true },
           status: { type: "string", enum: ["pending", "paid", "cancelled"] },
           comment: { type: "string", nullable: true }
         }
       },
       PayoutCreatePayload: {
         type: "object",
-        required: ["user_id", "amount", "payout_category"],
+        required: ["user_id", "amount"],
         properties: {
           user_id: { type: "string", format: "uuid" },
+          employee_id: { type: "string", format: "uuid" },
           accrual_month: { type: "string", example: "2026-09" },
+          settlement_month: { type: "string", example: "2026-09" },
           payout_date: { type: "string", format: "date", example: "2026-09-27" },
+          actual_date: { type: "string", format: "date", example: "2026-09-27" },
           amount: { type: "number", example: 15000 },
+          operation_sign: { type: "string", enum: ["+", "-"] },
+          operation_type: { type: "string", enum: ["accrual_connection", "accrual_maintenance", "salary_base", "bonus_other", "deduction", "fine", "payout", "advance"], default: "payout" },
           payout_category: { type: "string", enum: ["выплата зп", "аванс", "бонус", "прочие начисления", "удержание"] },
-          payment_method: { type: "string", default: "Mbank" },
+          payment_method: { type: "string", enum: ["mbank", "odengi", "bakai", "abank", "cash"] },
           comment: { type: "string" }
         }
       },

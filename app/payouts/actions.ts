@@ -19,6 +19,8 @@ export interface PayoutItem {
   payment_method: string;
   comment: string | null;
   description?: string | null;
+  status?: string | null;
+  employee_id?: string | null;
   created_by: string;
   created_at: string;
   recipient?: {
@@ -110,10 +112,14 @@ export async function getPayouts(
       { count: 'exact' }
     );
 
-  // RBAC фильтрация
-  if (profile.role !== 'admin') {
+  // Строгая ролевая RBAC изоляция:
+  // admin и supervisor видят выплаты всех сотрудников
+  // consultant и smm видят ТОЛЬКО свои выплаты и ТОЛЬКО со статусом 'paid'
+  const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
+
+  if (!isPrivileged) {
     query = query.eq('user_id', profile.user_id);
-  } else if (userId) {
+  } else if (userId && userId !== 'all') {
     query = query.eq('user_id', userId);
   }
 
@@ -149,7 +155,16 @@ export async function getPayouts(
     };
   }
 
-  let filteredPayouts = (data as unknown as PayoutItem[]) || [];
+  let filteredPayouts: PayoutItem[] = ((data as unknown as PayoutItem[]) || []).map((p) => ({
+    ...p,
+    status: p.status || 'paid',
+    employee_id: p.employee_id || p.user_id,
+  }));
+
+  // Для SMM и консультантов строгая изоляция: только статус 'paid'
+  if (!isPrivileged) {
+    filteredPayouts = filteredPayouts.filter((p) => p.status === 'paid');
+  }
 
   // Клиентский поиск по имени получателя, комментарию или способу оплаты
   if (search.trim()) {
@@ -197,7 +212,8 @@ export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsSta
 
   const { data: summary, error } = await supabase.rpc('get_payouts_summary', {
     p_accrual_month: accrualMonth && accrualMonth !== 'all' ? accrualMonth : undefined,
-    p_user_id: profile.role !== 'admin' ? profile.user_id : undefined,
+    p_user_id:
+      profile.role !== 'admin' && profile.role !== 'supervisor' ? profile.user_id : undefined,
   });
 
   if (error || !summary) {

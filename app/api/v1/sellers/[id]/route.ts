@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireRoles } from '@/lib/auth/check-role';
+import { requireAuth, requireRoles, requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { assignSellerManager } from '@/app/sellers/actions';
 
@@ -26,8 +26,10 @@ export async function GET(
       return apiError('Продавец не найден', 'NOT_FOUND', 404);
     }
 
-    if (profile.role === 'consultant' && seller.moderation !== 'approved') {
-      return apiError('Продавец находится на модерации и недоступен', 'FORBIDDEN', 403);
+    if (profile.role === 'consultant') {
+      if (seller.moderation !== 'approved' || seller.manager_id !== profile.user_id) {
+        return apiError('Продавец не назначен вам или находится на модерации', 'FORBIDDEN', 403);
+      }
     }
 
     return apiSuccess(seller);
@@ -104,7 +106,7 @@ export async function DELETE(
   try {
     const { id } = await params;
     const decodedId = decodeURIComponent(id);
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    const { supabase } = await requireAdmin();
 
     const { error } = await supabase
       .from('sellers')

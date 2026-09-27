@@ -29,6 +29,7 @@ import {
   Loader2,
   RotateCcw,
   Plus,
+  Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import dynamic from 'next/dynamic';
@@ -130,6 +131,10 @@ export default function SellersPage() {
     return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
   };
 
+  // Массовые действия для администратора
+  const [selectedSellerIds, setSelectedSellerIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
+
   // Загрузка начальных данных
   const fetchSellersData = React.useCallback(
     async (page = 1, search = '', silent = false, moderationOverride?: string) => {
@@ -172,6 +177,46 @@ export default function SellersPage() {
     },
     [filterModeration, filterActive, filterManager, router, showToast]
   );
+
+  const handleBatchManager = async (managerId: string | null, clearSelection: () => void) => {
+    if (selectedSellerIds.length === 0) return;
+    setIsBatchLoading(true);
+    try {
+      await api.sellers.batch({
+        seller_ids: selectedSellerIds,
+        action: 'change_manager',
+        manager_id: managerId,
+      });
+      showToast(`Куратор назначен для ${selectedSellerIds.length} продавцов`, 'success');
+      clearSelection();
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового назначения куратора', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleBatchDelete = async (clearSelection: () => void) => {
+    if (selectedSellerIds.length === 0) return;
+    if (!window.confirm(`Вы уверены, что хотите удалить ${selectedSellerIds.length} выбранных продавцов?`)) {
+      return;
+    }
+    setIsBatchLoading(true);
+    try {
+      await api.sellers.batch({
+        seller_ids: selectedSellerIds,
+        action: 'delete',
+      });
+      showToast(`Удалено ${selectedSellerIds.length} продавцов`, 'success');
+      clearSelection();
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового удаления', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
 
   // Вкладки статуса модерации для DataJournal
   const sellerTabs: DataJournalTab[] = React.useMemo(() => {
@@ -1119,6 +1164,44 @@ export default function SellersPage() {
             tabs={sellerTabs}
             activeTab={filterModeration}
             onTabChange={handleTabChange}
+            enableSelection={currentUserRole === 'admin'}
+            selectedIds={selectedSellerIds}
+            onSelectionChange={setSelectedSellerIds}
+            renderBulkActions={(ids, clearSelection) => (
+              <div className="flex items-center gap-2">
+                <select
+                  disabled={isBatchLoading}
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value !== '') {
+                      const val = e.target.value === 'null' ? null : e.target.value;
+                      handleBatchManager(val, clearSelection);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer max-w-[170px] truncate"
+                >
+                  <option value="" disabled className="text-zinc-900 bg-white">Назначить куратора...</option>
+                  <option value="null" className="text-zinc-900 bg-white">Без куратора</option>
+                  {managers.map((m) => (
+                    <option key={m.user_id} value={m.user_id} className="text-zinc-900 bg-white">
+                      {m.full_name}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() => handleBatchDelete(clearSelection)}
+                  className="h-8 px-2.5 rounded-xl bg-rose-500/30 hover:bg-rose-500/40 text-rose-300 text-xs font-semibold border border-rose-500/40 transition-colors flex items-center gap-1"
+                  title="Удалить продавцов"
+                >
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>Удалить</span>
+                </button>
+              </div>
+            )}
             customActions={sellerActions}
             customRowActions={renderCustomRowActions}
             renderCard={renderSellerCard}

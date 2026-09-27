@@ -688,11 +688,13 @@ const openapi = {
       get: {
         tags: ["Payouts"],
         summary: "Реестр выплат и удержаний сотрудникам",
+        description: "Возвращает реестр выплат. Для ролей admin и supervisor доступны все записи и фильтр по любому userId. Для ролей smm и consultant возвращаются исключительно персональные выплаты со статусом paid.",
         parameters: [
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "pageSize", in: "query", schema: { type: "integer", default: 50 } },
           { name: "accrualMonth", in: "query", schema: { type: "string" } },
-          { name: "category", in: "query", schema: { type: "string", enum: ["all", "выплата зп", "аванс", "бонус", "прочие начисления", "удержание"] } }
+          { name: "category", in: "query", schema: { type: "string", enum: ["all", "выплата зп", "аванс", "бонус", "прочие начисления", "удержание"] } },
+          { name: "userId", in: "query", description: "Идентификатор сотрудника (только для admin/supervisor)", schema: { type: "string", format: "uuid" } }
         ],
         responses: {
           200: {

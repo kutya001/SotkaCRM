@@ -7,17 +7,24 @@ export async function GET(req: NextRequest) {
   try {
     const { profile } = await requireAuth();
 
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к выплатам', 'FORBIDDEN', 403);
-    }
-
     const { searchParams } = new URL(req.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = searchParams.get('search') || undefined;
     const accrualMonth = searchParams.get('accrualMonth') || undefined;
     const category = searchParams.get('category') || undefined;
-    const userId = searchParams.get('userId') || undefined;
+    const requestedUserId = searchParams.get('userId') || undefined;
+
+    // Строгая ролевая изоляция выплат:
+    // admin и supervisor могут просматривать любые выплаты
+    // consultant и smm видят ТОЛЬКО свои выплаты
+    let targetUserId = requestedUserId;
+    if (profile.role !== 'admin' && profile.role !== 'supervisor') {
+      if (requestedUserId && requestedUserId !== profile.user_id) {
+        return apiError('Просмотр чужих выплат запрещен ролевой моделью', 'FORBIDDEN', 403);
+      }
+      targetUserId = profile.user_id;
+    }
     const sortBy = searchParams.get('sortBy') || undefined;
     const sortOrder = (searchParams.get('sortOrder') as 'asc' | 'desc') || undefined;
 
@@ -27,7 +34,7 @@ export async function GET(req: NextRequest) {
       search,
       accrualMonth,
       category,
-      userId,
+      userId: targetUserId,
       sortBy,
       sortOrder,
     });

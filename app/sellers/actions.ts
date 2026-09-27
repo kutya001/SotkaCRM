@@ -776,9 +776,26 @@ export async function syncSellersFromSotka(
       });
     });
 
-    // 6. Подготовка записей для таблицы sellers Supabase
-    const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] =
-      normalizedSellers.map((s) => ({
+    // 6. Гарантированная дедупликация по ключу sotka_id / organization_id
+    const dedupedSellersMap = new Map<string | number, any>();
+    for (const seller of normalizedSellers) {
+      const idKey = (seller as any).sotka_id || seller.organization_id || seller.seller_phone;
+      if (!idKey) continue;
+      // Если запись уже есть, объединяем поля, отдавая приоритет последней
+      const existing = dedupedSellersMap.get(idKey);
+      dedupedSellersMap.set(idKey, {
+        ...existing,
+        ...seller,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // Вторичная строгая дедупликация по первичному ключу seller_phone
+    // во избежание ошибки Postgres: ON CONFLICT DO UPDATE command cannot affect row a second time
+    const dedupedByPhoneMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
+    for (const s of dedupedSellersMap.values()) {
+      if (!s.seller_phone) continue;
+      const row: Database['public']['Tables']['sellers']['Insert'] = {
         seller_phone: s.seller_phone,
         seller_name: s.seller_name,
         store: s.store,
@@ -794,38 +811,41 @@ export async function syncSellersFromSotka(
         brands: s.brands,
         organization_id: s.organization_id || null,
         manager_id: s.manager_id || null,
-        synced_at: s.synced_at,
-      }));
-
-    // Дедупликация в рамках текущего пакета
-    const uniqueMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
-    for (const row of sellersToUpsert) {
-      const key = row.organization_id || row.seller_phone;
-      uniqueMap.set(key, row);
+        synced_at: s.synced_at || new Date().toISOString(),
+      };
+      const existing = dedupedByPhoneMap.get(s.seller_phone);
+      dedupedByPhoneMap.set(s.seller_phone, {
+        ...existing,
+        ...row,
+      });
     }
-    const uniqueSellers = Array.from(uniqueMap.values());
 
-    // 7. Пакетный upsert в Supabase
-    // Сначала пробуем по уникальному ключу organization_id, при необходимости - fallback на seller_phone
-    let upsertError = null;
-    const { error: orgUpsertErr } = await supabase
-      .from('sellers')
-      .upsert(uniqueSellers, { onConflict: 'organization_id' });
+    const uniqueSellers = Array.from(dedupedByPhoneMap.values());
 
-    if (orgUpsertErr) {
-      console.warn(
-        '[syncSellersFromSotka] Предупреждение upsert по organization_id, fallback на seller_phone:',
-        orgUpsertErr.message
-      );
-      const { error: phoneUpsertErr } = await supabase
+    // 7. Сохранение пакетами (чанками) по 50 записей для предотвращения лимита параметров Postgres
+    const CHUNK_SIZE = 50;
+    let savedCount = 0;
+
+    for (let i = 0; i < uniqueSellers.length; i += CHUNK_SIZE) {
+      const chunk = uniqueSellers.slice(i, i + CHUNK_SIZE);
+      const { error: chunkUpsertErr } = await supabase
         .from('sellers')
-        .upsert(uniqueSellers, { onConflict: 'seller_phone' });
-      upsertError = phoneUpsertErr;
+        .upsert(chunk, { onConflict: 'seller_phone', ignoreDuplicates: false });
+
+      if (chunkUpsertErr) {
+        console.error(
+          `[syncSellersFromSotka] Ошибка при сохранении чанка [${i}..${i + chunk.length}]:`,
+          chunkUpsertErr
+        );
+        throw new Error(`Ошибка сохранения продавцов в базу данных: ${chunkUpsertErr.message}`);
+      }
+      savedCount += chunk.length;
     }
 
-    if (upsertError) {
-      throw new Error(`Ошибка сохранения продавцов в базу данных: ${upsertError.message}`);
-    }
+    // Подробное серверное логирование
+    console.log(
+      `[Sellers Sync] Получено от API: ${items.length}, уникальных после дедупликации: ${uniqueSellers.length}, успешно сохранено: ${savedCount}`
+    );
 
     revalidatePath('/sellers');
     revalidatePath('/leads');

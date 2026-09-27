@@ -37,6 +37,7 @@ import {
   RotateCcw,
   Link2,
   Store,
+  Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -472,14 +473,89 @@ function LeadsContent() {
     });
   };
 
-  const handleStatusChangeInJournal = async (lead: LeadItem, newStatus: string) => {
-    if (currentUserRole === 'smm' && !['Открыт', 'Обработан'].includes(newStatus)) {
-      showToast('SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»', 'error');
+  // Массовые действия для администратора
+  const [selectedLeadIds, setSelectedLeadIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
+
+  const handleBatchStatus = async (status: LeadStatus, clearSelection: () => void) => {
+    if (selectedLeadIds.length === 0) return;
+    setIsBatchLoading(true);
+    try {
+      await api.leads.batch({
+        lead_ids: selectedLeadIds,
+        action: 'change_status',
+        status,
+      });
+      showToast(`Статус обновлен для ${selectedLeadIds.length} лидов`, 'success');
+      clearSelection();
+      await fetchInitialData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового изменения статуса', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleBatchAssign = async (assignedTo: string | null, clearSelection: () => void) => {
+    if (selectedLeadIds.length === 0) return;
+    setIsBatchLoading(true);
+    try {
+      await api.leads.batch({
+        lead_ids: selectedLeadIds,
+        action: 'change_assigned',
+        assigned_to: assignedTo,
+      });
+      showToast(`Куратор назначен для ${selectedLeadIds.length} лидов`, 'success');
+      clearSelection();
+      await fetchInitialData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового назначения', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleBatchDelete = async (clearSelection: () => void) => {
+    if (selectedLeadIds.length === 0) return;
+    if (!window.confirm(`Вы уверены, что хотите перевести в статус «Отмена» ${selectedLeadIds.length} выбранных лидов?`)) {
       return;
     }
-    if (currentUserRole === 'consultant' && !['Назначен', 'Подписан', 'Отмена'].includes(newStatus)) {
-      showToast('Консультанту доступны только статусы «Назначен», «Подписан» или «Отмена»', 'error');
-      return;
+    setIsBatchLoading(true);
+    try {
+      await api.leads.batch({
+        lead_ids: selectedLeadIds,
+        action: 'delete',
+      });
+      showToast(`Исключено ${selectedLeadIds.length} лидов`, 'success');
+      clearSelection();
+      await fetchInitialData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового исключения', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleStatusChangeInJournal = async (lead: LeadItem, newStatus: string) => {
+    if (currentUserRole === 'smm') {
+      if (!['Открыт', 'Обработан'].includes(lead.status)) {
+        showToast('SMM-специалисту запрещено менять статус на стадии «Назначен», «Подписан» или «Отмена»', 'error');
+        return;
+      }
+      if (!['Открыт', 'Обработан'].includes(newStatus)) {
+        showToast('SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»', 'error');
+        return;
+      }
+    }
+    if (currentUserRole === 'consultant') {
+      if (lead.assigned_to !== currentUserId) {
+        showToast('Консультант может изменять статус только своих лидов', 'error');
+        return;
+      }
+      if (!['Назначен', 'Подписан', 'Отмена'].includes(newStatus)) {
+        showToast('Консультанту доступны только статусы «Назначен», «Подписан» или «Отмена»', 'error');
+        return;
+      }
     }
     try {
       await api.leads.updateStatus(lead.lead_id, newStatus);
@@ -769,6 +845,63 @@ function LeadsContent() {
           tabs={leadTabs}
           activeTab={filterStatus}
           onTabChange={setFilterStatus}
+          enableSelection={currentUserRole === 'admin'}
+          selectedIds={selectedLeadIds}
+          onSelectionChange={setSelectedLeadIds}
+          renderBulkActions={(ids, clearSelection) => (
+            <div className="flex items-center gap-2">
+              <select
+                disabled={isBatchLoading}
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleBatchStatus(e.target.value as LeadStatus, clearSelection);
+                    e.target.value = '';
+                  }
+                }}
+                className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
+              >
+                <option value="" disabled className="text-zinc-900 bg-white">Сменить статус...</option>
+                <option value="Открыт" className="text-zinc-900 bg-white">Открыт</option>
+                <option value="Обработан" className="text-zinc-900 bg-white">Обработан</option>
+                <option value="Назначен" className="text-zinc-900 bg-white">Назначен</option>
+                <option value="Подписан" className="text-zinc-900 bg-white">Подписан</option>
+                <option value="Отмена" className="text-zinc-900 bg-white">Отмена</option>
+              </select>
+
+              <select
+                disabled={isBatchLoading}
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value !== '') {
+                    const val = e.target.value === 'null' ? null : e.target.value;
+                    handleBatchAssign(val, clearSelection);
+                    e.target.value = '';
+                  }
+                }}
+                className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer max-w-[150px] truncate"
+              >
+                <option value="" disabled className="text-zinc-900 bg-white">Назначить...</option>
+                <option value="null" className="text-zinc-900 bg-white">Без куратора</option>
+                {consultants.map((c) => (
+                  <option key={c.user_id} value={c.user_id} className="text-zinc-900 bg-white">
+                    {c.full_name}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                disabled={isBatchLoading}
+                onClick={() => handleBatchDelete(clearSelection)}
+                className="h-8 px-2.5 rounded-xl bg-rose-500/30 hover:bg-rose-500/40 text-rose-300 text-xs font-semibold border border-rose-500/40 transition-colors flex items-center gap-1"
+                title="Исключить лиды"
+              >
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Исключить</span>
+              </button>
+            </div>
+          )}
           customActions={leadActions}
           customRowActions={renderCustomRowActions}
           onRowClick={handleRowClick}

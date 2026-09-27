@@ -27,6 +27,13 @@ import {
   TrendingUp,
   Receipt,
   FileSpreadsheet,
+  CheckCircle2,
+  Clock,
+  Smartphone,
+  Wallet,
+  Landmark,
+  Building2,
+  Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -105,13 +112,21 @@ export default function PayoutsPage() {
     amount: 0,
     payout_category: 'выплата зп',
     operation_type: 'payout',
-    payment_method: 'kaspi',
+    payment_method: 'mbank',
     comment: '',
   });
 
   const [unpaidAccruals, setUnpaidAccruals] = React.useState<any[]>([]);
   const [selectedAccrualIds, setSelectedAccrualIds] = React.useState<string[]>([]);
   const [isLoadingAccruals, setIsLoadingAccruals] = React.useState(false);
+  const [payrollSheet, setPayrollSheet] = React.useState<{
+    opening_balance: number;
+    total_accrued: number;
+    total_deductions: number;
+    total_paid: number;
+    closing_balance: number;
+  } | null>(null);
+  const [isLoadingPayroll, setIsLoadingPayroll] = React.useState(false);
 
   // Загрузка данных
   const fetchData = React.useCallback(async (month?: string, cat?: string) => {
@@ -169,9 +184,31 @@ export default function PayoutsPage() {
     fetchData(selectedMonth, val);
   };
 
-  // Автоматическая загрузка неоплаченных начислений при выборе сотрудника
+  // Автоматическая загрузка неоплаченных начислений и расчетного листка при выборе сотрудника
   React.useEffect(() => {
-    if (!isCreateOpen || !formData.user_id || formData.operation_type === 'deduction') {
+    if (!isCreateOpen || !formData.user_id) {
+      setUnpaidAccruals([]);
+      setSelectedAccrualIds([]);
+      setPayrollSheet(null);
+      return;
+    }
+
+    setIsLoadingPayroll(true);
+    api.profile
+      .getPayrollSheet({ employeeId: formData.user_id, month: formData.accrual_month })
+      .then((sheet) => {
+        setPayrollSheet({
+          opening_balance: Number(sheet.opening_balance) || 0,
+          total_accrued: Number(sheet.total_accrued) || 0,
+          total_deductions: Number(sheet.total_deductions) || 0,
+          total_paid: Number(sheet.total_paid) || 0,
+          closing_balance: Number(sheet.closing_balance) || 0,
+        });
+      })
+      .catch((err) => console.error('Failed to load payroll sheet:', err))
+      .finally(() => setIsLoadingPayroll(false));
+
+    if (formData.operation_type === 'deduction') {
       setUnpaidAccruals([]);
       setSelectedAccrualIds([]);
       return;
@@ -239,11 +276,12 @@ export default function PayoutsPage() {
         amount: 0,
         payout_category: 'выплата зп',
         operation_type: 'payout',
-        payment_method: 'kaspi',
+        payment_method: 'mbank',
         comment: '',
       });
       setSelectedAccrualIds([]);
       setUnpaidAccruals([]);
+      setPayrollSheet(null);
       fetchData();
     } catch (err: any) {
       showToast(err.message || 'Ошибка при сохранении выплаты', 'error');
@@ -313,36 +351,42 @@ export default function PayoutsPage() {
       },
       {
         key: 'payment_method',
-        label: 'Метод оплаты',
-        width: 140,
-        minWidth: 120,
+        label: 'Кошелек',
+        width: 150,
+        minWidth: 130,
         sortable: true,
         filterable: true,
         renderCell: (row) => {
           const method = (row.payment_method || '').toLowerCase();
           let badgeColor = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50';
-          let label = row.payment_method;
+          let label = row.payment_method || '—';
+          let IconComponent = Wallet;
 
-          if (method === 'kaspi' || method.includes('kaspi')) {
-            badgeColor = 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20';
-            label = 'Kaspi Pay';
-          } else if (method === 'halyk' || method.includes('halyk')) {
-            badgeColor = 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20';
-            label = 'Halyk Bank';
-          } else if (method === 'oney' || method.includes('oney') || method.includes('о!деньги') || method.includes('деньги')) {
-            badgeColor = 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
-            label = 'O!Dengi';
-          } else if (method === 'cash' || method.includes('cash') || method.includes('наличные')) {
-            badgeColor = 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20';
-            label = 'Наличные';
-          } else if (method === 'card_transfer' || method.includes('карт') || method.includes('card') || method.includes('mbank')) {
+          if (method === 'mbank') {
             badgeColor = 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20';
-            label = method.includes('mbank') ? 'Mbank' : 'Перевод на карту';
+            label = 'МБанк';
+            IconComponent = Smartphone;
+          } else if (method === 'odengi' || method === 'oney') {
+            badgeColor = 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
+            label = 'О!Деньги';
+            IconComponent = Wallet;
+          } else if (method === 'bakai') {
+            badgeColor = 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20';
+            label = 'Бакай Банк';
+            IconComponent = Landmark;
+          } else if (method === 'abank') {
+            badgeColor = 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20';
+            label = 'АБанк';
+            IconComponent = Building2;
+          } else if (method === 'cash') {
+            badgeColor = 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20';
+            label = 'Наличка';
+            IconComponent = Banknote;
           }
 
           return (
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border ${badgeColor}`}>
-              <CreditCard className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+              <IconComponent className="w-3 h-3 shrink-0" strokeWidth={1.75} />
               <span>{label}</span>
             </span>
           );
@@ -373,6 +417,33 @@ export default function PayoutsPage() {
             <FormattedDate date={row.payout_date} type="date" />
           </span>
         ),
+      },
+      {
+        key: 'status',
+        label: 'Статус',
+        width: 120,
+        minWidth: 100,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => {
+          const isPaid = (row.status || 'paid') === 'paid';
+          return (
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold border ${
+                isPaid
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+              }`}
+            >
+              {isPaid ? (
+                <CheckCircle2 className="w-3 h-3" strokeWidth={1.75} />
+              ) : (
+                <Clock className="w-3 h-3" strokeWidth={1.75} />
+              )}
+              <span>{isPaid ? 'Выплачено' : 'В обработке'}</span>
+            </span>
+          );
+        },
       },
       {
         key: 'comment',
@@ -577,9 +648,17 @@ export default function PayoutsPage() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-zinc-400">Способ перевода:</span>
+                  <span className="text-zinc-400">Кошелек:</span>
                   <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                    {selectedPayout.payment_method}
+                    {(() => {
+                      const m = (selectedPayout.payment_method || '').toLowerCase();
+                      if (m === 'mbank') return 'МБанк';
+                      if (m === 'odengi' || m === 'oney') return 'О!Деньги';
+                      if (m === 'bakai') return 'Бакай Банк';
+                      if (m === 'abank') return 'АБанк';
+                      if (m === 'cash') return 'Наличка';
+                      return selectedPayout.payment_method;
+                    })()}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -713,6 +792,49 @@ export default function PayoutsPage() {
                   </select>
                 </div>
 
+                {/* Интерактивный расчетный листок выбранного сотрудника */}
+                {formData.user_id && (
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-zinc-50 to-zinc-100/70 dark:from-zinc-800/60 dark:to-zinc-800/30 border border-zinc-200/80 dark:border-zinc-700/60 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                      <div className="flex items-center gap-1.5">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
+                        <span>Расчетный листок ({formData.accrual_month})</span>
+                      </div>
+                      {isLoadingPayroll && (
+                        <span className="text-[11px] text-zinc-400 font-normal">Обновление сальдо...</span>
+                      )}
+                    </div>
+                    {payrollSheet ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                        <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Вх. сальдо</span>
+                          <span className="font-mono font-bold text-zinc-800 dark:text-zinc-200">
+                            {payrollSheet.opening_balance.toLocaleString('ru-RU')} сом
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Начислено</span>
+                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            +{payrollSheet.total_accrued.toLocaleString('ru-RU')} сом
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Удержано / Выпл.</span>
+                          <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
+                            -{(payrollSheet.total_deductions + payrollSheet.total_paid).toLocaleString('ru-RU')} сом
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+                          <span className="text-emerald-700 dark:text-emerald-300 block text-[10px] font-semibold">К выплате</span>
+                          <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                            {payrollSheet.closing_balance.toLocaleString('ru-RU')} сом
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
                 {/* Чекбоксы неоплаченных начислений для выплаты */}
                 {formData.user_id && formData.operation_type !== 'deduction' && (
                   <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 space-y-2">
@@ -807,22 +929,21 @@ export default function PayoutsPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  {/* Способ перевода */}
+                  {/* Кошелек */}
                   <div className="space-y-1">
                     <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Инструмент расчета *
+                      Кошелек *
                     </label>
                     <select
                       value={formData.payment_method}
                       onChange={(e) => setFormData((p) => ({ ...p, payment_method: e.target.value }))}
                       className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     >
-                      <option value="kaspi">Kaspi Pay / Перевод</option>
-                      <option value="halyk">Halyk Bank</option>
-                      <option value="oney">O!Dengi / Oney</option>
-                      <option value="cash">Наличные</option>
-                      <option value="card_transfer">Перевод на карту</option>
-                      <option value="Mbank">Mbank</option>
+                      <option value="mbank">МБанк</option>
+                      <option value="odengi">О!Деньги</option>
+                      <option value="bakai">Бакай Банк</option>
+                      <option value="abank">АБанк (Айыл Банк)</option>
+                      <option value="cash">Наличка</option>
                     </select>
                   </div>
 

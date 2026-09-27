@@ -3,6 +3,20 @@ import { z } from 'zod';
 export const PG_UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const paymentMethodSchema = z.enum(['mbank', 'odengi', 'bakai', 'abank', 'cash'], {
+  message: 'Недопустимый метод оплаты (кошелек)',
+});
+
+export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  mbank: 'МБанк',
+  odengi: 'О!Деньги',
+  bakai: 'Бакай Банк',
+  abank: 'АБанк',
+  cash: 'Наличка',
+};
+
 export const PayoutSchema = z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
   accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ'),
@@ -13,10 +27,35 @@ export const PayoutSchema = z.object({
     message: 'Недопустимая категория выплаты',
   }),
   operation_type: z.enum(['payout', 'deduction']).optional().default('payout'),
-  payment_method: z.string().min(1, 'Укажите способ проведения выплаты'),
+  payment_method: paymentMethodSchema,
   comment: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   accrual_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional().nullable(),
+});
+
+export const LeadStatusSchema = z.enum(['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'], {
+  message: 'Недопустимый статус лида',
+});
+
+export const LeadsBatchActionSchema = z.object({
+  action: z.enum(['change_status', 'change_assigned', 'delete']),
+  ids: z.array(z.string().regex(PG_UUID_REGEX)).optional(),
+  lead_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional(),
+  status: LeadStatusSchema.optional(),
+  assigned_to: z.string().uuid().nullable().optional(),
+  payload: z.any().optional(),
+}).refine((data) => (data.ids && data.ids.length > 0) || (data.lead_ids && data.lead_ids.length > 0), {
+  message: 'Необходимо выбрать хотя бы один лид',
+});
+
+export const SellersBatchActionSchema = z.object({
+  action: z.enum(['change_manager', 'delete']),
+  ids: z.array(z.string().min(1)).optional(),
+  seller_ids: z.array(z.string().min(1)).optional(),
+  manager_id: z.string().uuid().nullable().optional(),
+  payload: z.any().optional(),
+}).refine((data) => (data.ids && data.ids.length > 0) || (data.seller_ids && data.seller_ids.length > 0), {
+  message: 'Необходимо выбрать хотя бы одного продавца',
 });
 
 export const EmployeeRateSchema = z.object({

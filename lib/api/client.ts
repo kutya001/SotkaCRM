@@ -283,6 +283,19 @@ export const api = {
       invalidateNamespaces('leads', 'sellers', 'connections', 'dashboard', 'analytics');
       return res;
     },
+    batch: async (data: {
+      lead_ids: string[];
+      action: 'change_status' | 'change_assigned' | 'delete';
+      status?: string;
+      assigned_to?: string | null;
+    }) => {
+      const res = await request<any>('/api/v1/leads/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      invalidateNamespaces('leads', 'dashboard', 'analytics');
+      return res;
+    },
     getScripts: (stage?: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/leads/scripts${buildQuery({ stage })}`, {
         method: 'GET',
@@ -343,6 +356,18 @@ export const api = {
         }
       );
       invalidateNamespaces('sellers', 'dashboard', 'analytics');
+      return res;
+    },
+    batch: async (data: {
+      seller_ids: string[];
+      action: 'change_manager' | 'delete';
+      manager_id?: string | null;
+    }) => {
+      const res = await request<any>('/api/v1/sellers/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      invalidateNamespaces('sellers', 'connections', 'dashboard', 'analytics');
       return res;
     },
     checkAvailableLeads: (options?: { bypassCache?: boolean }) =>

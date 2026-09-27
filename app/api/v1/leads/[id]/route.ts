@@ -28,9 +28,6 @@ export async function GET(
       return apiError('Лид не найден в системе', 'NOT_FOUND', 404);
     }
 
-    if (profile.role === 'smm' && lead.created_by !== profile.user_id) {
-      return apiError('Нет доступа к данному лиду', 'FORBIDDEN', 403);
-    }
     if (profile.role === 'consultant' && lead.assigned_to !== profile.user_id) {
       return apiError('Лид назначен на другого консультанта', 'FORBIDDEN', 403);
     }
@@ -61,8 +58,12 @@ export async function PATCH(
     }
 
     if (profile.role === 'smm') {
-      if (existingLead.created_by !== profile.user_id) {
-        return apiError('Роль SMM может редактировать только свои лиды', 'FORBIDDEN', 403);
+      if (!['Открыт', 'Обработан'].includes(existingLead.status)) {
+        return apiError(
+          'SMM-специалисту запрещено редактировать лиды со статусом «Назначен», «Подписан» или «Отмена»',
+          'FORBIDDEN',
+          403
+        );
       }
       if (body.assigned_to !== undefined && body.assigned_to !== existingLead.assigned_to) {
         return apiError('Роль SMM не имеет прав на назначение ответственного', 'FORBIDDEN', 403);
@@ -145,8 +146,8 @@ export async function DELETE(
     const { id } = await params;
     const { supabase, profile } = await requireAuth();
 
-    if (profile.role === 'smm') {
-      return apiError('Роль SMM не имеет прав на удаление/отмену лидов', 'FORBIDDEN', 403);
+    if (profile.role !== 'admin') {
+      return apiError('Исключительное право на удаление/исключение лидов имеет только администратор', 'FORBIDDEN', 403);
     }
 
     const { data: existingLead } = await supabase
@@ -157,10 +158,6 @@ export async function DELETE(
 
     if (!existingLead) {
       return apiError('Лид не найден', 'NOT_FOUND', 404);
-    }
-
-    if (profile.role === 'consultant' && existingLead.assigned_to !== profile.user_id) {
-      return apiError('Лид назначен на другого консультанта', 'FORBIDDEN', 403);
     }
 
     // ВАЖНО: Физический DELETE запрещен триггером prevent_lead_delete (GEMINI.md).

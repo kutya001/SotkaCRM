@@ -299,12 +299,14 @@ export type Database = {
           created_at: string
           created_by: string
           description: string | null
+          employee_id: string | null
           operation_type: "payout" | "deduction"
           payment_method: string
           payout_category: Database["public"]["Enums"]["payout_category_type"]
           payout_date: string
           payout_id: string
           settlement_month: string
+          status: string
           user_id: string
         }
         Insert: {
@@ -314,12 +316,14 @@ export type Database = {
           created_at?: string
           created_by: string
           description?: string | null
+          employee_id?: string | null
           operation_type?: "payout" | "deduction"
           payment_method: string
           payout_category: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
           payout_id?: string
           settlement_month?: string
+          status?: string
           user_id: string
         }
         Update: {
@@ -329,12 +333,14 @@ export type Database = {
           created_at?: string
           created_by?: string
           description?: string | null
+          employee_id?: string | null
           operation_type?: "payout" | "deduction"
           payment_method?: string
           payout_category?: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
           payout_id?: string
           settlement_month?: string
+          status?: string
           user_id?: string
         }
         Relationships: [

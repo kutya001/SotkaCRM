@@ -32,9 +32,6 @@ export async function PATCH(
     }
 
     if (profile.role === 'smm') {
-      if (targetLead.created_by !== profile.user_id) {
-        return apiError('Роль SMM может управлять только своими лидами', 'FORBIDDEN', 403);
-      }
       if (
         !['Открыт', 'Обработан'].includes(targetLead.status) ||
         !['Открыт', 'Обработан'].includes(status)

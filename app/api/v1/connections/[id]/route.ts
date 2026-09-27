@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireRoles } from '@/lib/auth/check-role';
+import { requireAuth, requireRoles, requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 
 export async function GET(
@@ -94,7 +94,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    const { supabase } = await requireAdmin();
 
     const { error } = await supabase
       .from('connections')

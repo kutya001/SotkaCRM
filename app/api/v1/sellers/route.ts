@@ -23,12 +23,11 @@ export async function GET(req: NextRequest) {
 
     let query = supabase.from('sellers').select('*', { count: 'exact' });
 
-    // Изоляция: консультант видит только approved продавцов
+    // Изоляция: консультант видит строго только своих закрепленных approved продавцов
     if (profile.role === 'consultant') {
-      query = query.eq('moderation', 'approved');
-      if (managerId === 'my') {
-        query = query.eq('manager_id', profile.user_id);
-      }
+      query = query
+        .eq('moderation', 'approved')
+        .eq('manager_id', profile.user_id);
     } else {
       if (moderation && moderation !== 'all') {
         query = query.eq('moderation', moderation as SellerModerationStatus);

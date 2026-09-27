@@ -39,13 +39,9 @@ export async function GET(req: NextRequest) {
         { count: 'exact' }
       );
 
-    // Ролевая изоляция
+    // Ролевая изоляция: консультант видит только свои назначенные лиды, SMM видит все лиды для сквозной аналитики
     if (profile.role === 'consultant') {
-      query = query
-        .eq('assigned_to', profile.user_id)
-        .in('status', ['Назначен', 'Подписан', 'Отмена']);
-    } else if (profile.role === 'smm') {
-      query = query.eq('created_by', profile.user_id);
+      query = query.eq('assigned_to', profile.user_id);
     }
 
     // Фильтр по статусу воронки

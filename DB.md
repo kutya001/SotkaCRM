@@ -425,15 +425,14 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 | `payout_category` | `payout_category_type` | `NOT NULL` | Категория финансовой проводки.
 
  |
-| `payment_method` | `VARCHAR(50)` | `NOT NULL` | Инструмент расчета (`Mbank`, `О!Деньги`, `Наличные`).
-
- |
-| `comment` | `TEXT` | `NULL` | Обоснование или служебная заметка.
-
- |
-| `created_by` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Администратор, выполнивший проводку.
-
- |
+| `payment_method` | `VARCHAR(50)` | `NOT NULL` | Инструмент расчета (`Mbank`, `О!Деньги`, `Наличные`, `kaspi`, `halyk`, `card_transfer`). |
+| `status` | `VARCHAR(20)` | `NOT NULL, DEFAULT 'paid'` | Статус финансовой проводки (`paid`, `pending`, `cancelled`). |
+| `employee_id` | `UUID` | `NULL, REFERENCES users(user_id)` | Идентификатор сотрудника (псевдоним `user_id`). |
+| `settlement_month` | `VARCHAR(7)` | `NULL` | Расчетный период начисления (`YYYY-MM`). |
+| `operation_type` | `VARCHAR(20)` | `NOT NULL, DEFAULT 'payout'` | Тип финансовой операции (`payout`, `deduction`). |
+| `description` | `TEXT` | `NULL` | Текстовое обоснование проводки. |
+| `comment` | `TEXT` | `NULL` | Служебная заметка. |
+| `created_by` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Администратор, выполнивший проводку. |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Дата и время проведения записи. |
 
 ---
@@ -1274,6 +1273,55 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
   * Реализует непрерывный сальдовый метод:
     $$\text{closing\_balance} = \text{opening\_balance} + \text{total\_accrued} - \text{total\_deductions} - \text{total\_paid}$$
   * Возвращает агрегированные суммы и массивы объектов: начисления (подключения и сопровождения), удержания и выплаты с методами перевода.
+
+---
+
+### 16. Спецификация миграции 016 (`016_payouts_isolation_smm_consultant.sql`): Строгая изоляция выплат для ролей SMM и Консультантов
+
+**16.1. Модификация `employee_payouts` и зеркальный алиас `payouts`:**
+* Добавлена колонка статуса финансовой проводки: `status VARCHAR(20) NOT NULL DEFAULT 'paid'`.
+* Добавлена колонка псевдонима: `employee_id UUID REFERENCES users(user_id) ON DELETE CASCADE`.
+* Триггер `sync_payout_employee_id_trigger` автоматически синхронизирует `user_id` и `employee_id` при любых операциях вставки и обновления.
+* Создано представление `public.payouts WITH (security_invoker = true)` для зеркальной совместимости запросов клиентов.
+* Индексы оптимизации выборки:
+  * `idx_employee_payouts_status_user ON employee_payouts(user_id, status)`
+  * `idx_employee_payouts_employee_status ON employee_payouts(employee_id, status)`
+
+---
+
+### 17. Спецификация миграции 017 (`017_security_wallet_and_role_permissions.sql`): Рефакторинг Кошелька, блокировка DELETE и ролевая матрица
+
+**17.1. Рефакторинг Кошелька Кыргызстана (`employee_payouts`):**
+* Введено строгое ограничение целостности:
+  `CHECK (payment_method IN ('mbank', 'odengi', 'bakai', 'abank', 'cash'))`
+* Все исторические записи с иностранными кошельками автоматически мигрированы на национальные платежные шлюзы Кыргызской Республики:
+  * `mbank` — МБанк
+  * `odengi` — О!Деньги
+  * `bakai` — Бакай Банк
+  * `abank` — АБанк (Айыл Банк)
+  * `cash` — Наличка
+
+**17.2. Исключительное право удаления (Admin-Only DELETE RLS):**
+* На уровне PostgreSQL RLS удалены все политики с правом удаления для не-администраторских ролей.
+* Сгенерированы строгие политики `<table_name>_admin_delete_policy` для таблиц:
+  * `employee_payouts`
+  * `sellers`
+  * `connections`
+  * `connection_accruals`
+  * `plans`
+  * `employee_rates`
+  * `payments`
+  * `users`
+* Физическое удаление данных разрешено исключительно для роли `admin` (`role = 'admin'`). Физическое удаление лидов `leads` по-прежнему заблокировано на уровне базы данных триггером `prevent_lead_delete`.
+
+**17.3. Ролевая матрица доступа к лидам, продавцам и подключениям:**
+* **Лиды (`leads`):**
+  * `leads_select_policy`: роль `smm` видит абсолютно все лиды системы для обеспечения сквозной аналитики и отслеживания рекламных кампаний. Роль `consultant` видит только свои назначенные лиды (`assigned_to = auth.uid()`).
+  * `leads_update_policy`: роль `smm` имеет право изменять лид исключительно в статусах «Открыт» и «Обработан». Попытка редактирования лида в статусе «Назначен», «Подписан» или «Отмена» блокируется с кодом 403 Forbidden.
+* **Продавцы (`sellers`) и подключения (`connections`):**
+  * `sellers_select_policy`: роль `consultant` видит исключительно закрепленных за собой продавцов со статусом модерации `approved` (`manager_id = auth.uid() AND moderation = 'approved'`).
+  * `connections_select_policy`: консультант видит исключительно свои подключения (`manager_id = auth.uid()`).
+
 
 
 

@@ -121,6 +121,10 @@ export interface DataJournalProps<T extends Record<string, any>> {
   tabs?: DataJournalTab[];
   activeTab?: string;
   onTabChange?: (tabId: string) => void;
+  enableSelection?: boolean;
+  selectedIds?: string[];
+  onSelectionChange?: (selectedIds: string[]) => void;
+  renderBulkActions?: (selectedIds: string[], clearSelection: () => void) => React.ReactNode;
 }
 
 export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
@@ -474,6 +478,9 @@ interface DataJournalTableRowProps<T extends Record<string, any>> {
   rowKey: string;
   orderedColumns: ColumnDef<T>[];
   initialColumns: ColumnDef<T>[];
+  enableSelection?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (rowKey: string, checked: boolean) => void;
   onRowClick?: (row: T) => void;
   onStatusChange?: (row: T, newStatus: string) => void;
   onAssignedChange?: (row: T, newAssigned: string | null) => void;
@@ -492,6 +499,9 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   rowKey,
   orderedColumns,
   initialColumns,
+  enableSelection,
+  isSelected,
+  onToggleSelect,
   onRowClick,
   onStatusChange,
   onAssignedChange,
@@ -535,8 +545,25 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
           onRowContextMenu(e, row);
         }
       }}
-      className="group hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40 transition-colors"
+      className={`group transition-colors ${
+        isSelected
+          ? 'bg-blue-500/10 dark:bg-blue-500/15 hover:bg-blue-500/15 dark:hover:bg-blue-500/20'
+          : 'hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40'
+      }`}
     >
+      {enableSelection && (
+        <td
+          className="w-10 px-3 py-3 sticky left-0 z-20 backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 shadow-[2px_0_8px_rgba(0,0,0,0.03)] text-center"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(isSelected)}
+            onChange={(e) => onToggleSelect && onToggleSelect(rowKey, e.target.checked)}
+            className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          />
+        </td>
+      )}
       {orderedColumns.map((col, colIndex) => {
         const val = row[col.key];
         const isFirstCol = colIndex === 0;
@@ -728,6 +755,8 @@ function areRowPropsEqual<T extends Record<string, any>>(
   nextProps: DataJournalTableRowProps<T>
 ): boolean {
   if (prevProps.rowKey !== nextProps.rowKey) return false;
+  if (prevProps.isSelected !== nextProps.isSelected) return false;
+  if (prevProps.enableSelection !== nextProps.enableSelection) return false;
 
   const prev = prevProps.row;
   const next = nextProps.row;
@@ -1181,8 +1210,24 @@ export function DataJournal<T extends Record<string, any>>({
   tabs,
   activeTab,
   onTabChange,
+  enableSelection = false,
+  selectedIds = [],
+  onSelectionChange,
+  renderBulkActions,
 }: DataJournalProps<T>) {
   const { showToast } = useToast();
+
+  const handleToggleSelectRow = React.useCallback(
+    (rowKey: string, checked: boolean) => {
+      if (!onSelectionChange) return;
+      if (checked) {
+        onSelectionChange([...(selectedIds || []), rowKey]);
+      } else {
+        onSelectionChange((selectedIds || []).filter((id) => id !== rowKey));
+      }
+    },
+    [selectedIds, onSelectionChange]
+  );
 
   // Стабилизация коллбэков через useCallback для исключения ре-рендеров строк и карточек
   const onRowClickStable = React.useCallback(
@@ -2422,6 +2467,30 @@ export function DataJournal<T extends Record<string, any>>({
               {/* Sticky-шапка */}
               <thead className="sticky top-0 z-20 backdrop-blur-2xl bg-zinc-100/90 dark:bg-zinc-900/95 border-b border-zinc-200/80 dark:border-zinc-800">
                 <tr>
+                  {enableSelection && (
+                    <th className="w-10 px-3 py-3 sticky left-0 z-30 backdrop-blur-2xl bg-zinc-100/95 dark:bg-zinc-900/95 text-center select-none border-r border-zinc-200/50 dark:border-zinc-800/50">
+                      <input
+                        type="checkbox"
+                        checked={
+                          paginatedData.length > 0 &&
+                          paginatedData.every((r) => selectedIds.includes(String(r[keyField])))
+                        }
+                        onChange={(e) => {
+                          if (!onSelectionChange) return;
+                          const pageKeys = paginatedData.map((r) => String(r[keyField]));
+                          if (e.target.checked) {
+                            const merged = Array.from(new Set([...selectedIds, ...pageKeys]));
+                            onSelectionChange(merged);
+                          } else {
+                            const pageKeySet = new Set(pageKeys);
+                            onSelectionChange(selectedIds.filter((id) => !pageKeySet.has(id)));
+                          }
+                        }}
+                        className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        title="Выбрать все на странице"
+                      />
+                    </th>
+                  )}
                   {orderedColumns.map((col, colIndex) => {
                     const width = columnWidths[col.key] || 160;
                     const isFirstCol = colIndex === 0;
@@ -2565,7 +2634,7 @@ export function DataJournal<T extends Record<string, any>>({
                     {virtualRows.length > 0 && virtualRows[0].start > 0 && (
                       <tr>
                         <td
-                          colSpan={orderedColumns.length}
+                          colSpan={orderedColumns.length + (enableSelection ? 1 : 0)}
                           style={{
                             height: `${virtualRows[0].start}px`,
                             padding: 0,
@@ -2585,6 +2654,9 @@ export function DataJournal<T extends Record<string, any>>({
                           rowKey={rowKey}
                           orderedColumns={orderedColumns}
                           initialColumns={initialColumns}
+                          enableSelection={enableSelection}
+                          isSelected={selectedIds?.includes(rowKey)}
+                          onToggleSelect={handleToggleSelectRow}
                           onRowClick={onRowClickStable}
                           onStatusChange={onStatusChangeStable}
                           onAssignedChange={onAssignedChangeStable}
@@ -2603,7 +2675,7 @@ export function DataJournal<T extends Record<string, any>>({
                       totalVirtualSize - virtualRows[virtualRows.length - 1].end > 0 && (
                         <tr>
                           <td
-                            colSpan={orderedColumns.length}
+                            colSpan={orderedColumns.length + (enableSelection ? 1 : 0)}
                             style={{
                               height: `${totalVirtualSize - virtualRows[virtualRows.length - 1].end}px`,
                               padding: 0,
@@ -2866,6 +2938,32 @@ export function DataJournal<T extends Record<string, any>>({
         initialColumns={initialColumns}
         customRowActions={customRowActions}
       />
+
+      {/* Плавающий стеклянный островок массовых действий (Apple Island Glassmorphism) */}
+      {enableSelection && selectedIds && selectedIds.length > 0 && typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[9990] flex items-center gap-3 px-5 py-3 rounded-2xl backdrop-blur-2xl bg-zinc-900/90 dark:bg-zinc-800/95 text-white border border-white/20 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              <span className="text-xs font-semibold whitespace-nowrap">
+                Выбрано: {selectedIds.length}
+              </span>
+            </div>
+            <div className="h-4 w-px bg-white/20" />
+            {renderBulkActions &&
+              renderBulkActions(selectedIds, () => onSelectionChange?.([]))}
+            <button
+              type="button"
+              onClick={() => onSelectionChange?.([])}
+              className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors ml-1"
+              title="Снять выделение"
+              aria-label="Снять выделение"
+            >
+              <X className="w-4 h-4" strokeWidth={2} />
+            </button>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

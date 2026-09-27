@@ -229,37 +229,47 @@ async function handleSync(request: Request) {
           synced_at: s.synced_at,
         }));
 
-      // Дедупликация продавцов по organization_id / seller_phone в рамках текущего батча
-      const sellersMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
+      // Гарантированная дедупликация продавцов по organization_id / sotka_id
+      const dedupedOrgMap = new Map<string, any>();
       for (const s of sellersToUpsert) {
-        const key = s.organization_id || s.seller_phone;
-        sellersMap.set(key, s);
+        const orgKey = s.organization_id || s.seller_phone;
+        const existing = dedupedOrgMap.get(orgKey);
+        dedupedOrgMap.set(orgKey, {
+          ...existing,
+          ...s,
+        });
+      }
+
+      // Вторичная строгая дедупликация по первичному ключу seller_phone
+      // исключает ошибку Postgres: ON CONFLICT DO UPDATE command cannot affect row a second time
+      const sellersMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
+      for (const s of dedupedOrgMap.values()) {
+        if (!s.seller_phone) continue;
+        const existing = sellersMap.get(s.seller_phone);
+        sellersMap.set(s.seller_phone, {
+          ...existing,
+          ...s,
+        });
       }
       const uniqueSellers = Array.from(sellersMap.values());
 
-      // 3.2. Чанкинг вставки продавцов порциями по CHUNK_SIZE записей
-      for (let i = 0; i < uniqueSellers.length; i += CHUNK_SIZE) {
-        const chunk = uniqueSellers.slice(i, i + CHUNK_SIZE);
-        let { error: sellersUpsertError } = await adminSupabase
+      // 3.2. Чанкинг вставки продавцов порциями по 50 записей
+      const SYNC_CHUNK_SIZE = 50;
+      for (let i = 0; i < uniqueSellers.length; i += SYNC_CHUNK_SIZE) {
+        const chunk = uniqueSellers.slice(i, i + SYNC_CHUNK_SIZE);
+        const { error: sellersUpsertError } = await adminSupabase
           .from('sellers')
-          .upsert(chunk, { onConflict: 'organization_id' });
-
-        if (sellersUpsertError) {
-          console.warn(
-            '[Sotka Sync] Предупреждение upsert по organization_id, fallback на seller_phone:',
-            sellersUpsertError.message
-          );
-          const { error: phoneErr } = await adminSupabase
-            .from('sellers')
-            .upsert(chunk, { onConflict: 'seller_phone' });
-          sellersUpsertError = phoneErr;
-        }
+          .upsert(chunk, { onConflict: 'seller_phone', ignoreDuplicates: false });
 
         if (sellersUpsertError) {
           console.error('[Sotka Sync] Ошибка upsert продавцов:', sellersUpsertError);
           throw new Error(`Ошибка сохранения продавцов: ${sellersUpsertError.message}`);
         }
       }
+
+      console.log(
+        `[Sotka API Sync] Батч: получено ${items.length}, уникальных ${uniqueSellers.length}, сохранено порциями по 50.`
+      );
 
       syncedSellersCount += uniqueSellers.length;
       sellerOffset += items.length;

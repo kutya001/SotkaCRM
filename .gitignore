@@ -36,3 +36,5 @@ next-env.d.ts
 .agents/
 skills-lock.json
 
+# supabase temp
+supabase/.temp/

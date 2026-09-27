@@ -6,13 +6,17 @@ export const PG_UUID_REGEX =
 export const PayoutSchema = z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
   accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ'),
+  settlement_month: z.string().regex(/^\d{4}-\d{2}$/, 'Расчетный месяц должен быть в формате ГГГГ-ММ').optional().nullable(),
   payout_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата выплаты должна быть в формате ГГГГ-ММ-ДД'),
   amount: z.coerce.number().positive('Сумма выплаты должна быть больше нуля'),
   payout_category: z.enum(['аванс', 'выплата зп', 'бонус', 'прочие начисления', 'удержание'], {
     message: 'Недопустимая категория выплаты',
   }),
+  operation_type: z.enum(['payout', 'deduction']).optional().default('payout'),
   payment_method: z.string().min(1, 'Укажите способ проведения выплаты'),
   comment: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  accrual_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional().nullable(),
 });
 
 export const EmployeeRateSchema = z.object({

@@ -109,17 +109,91 @@ export type Database = {
           },
         ]
       }
+      connection_accruals: {
+        Row: {
+          id: string
+          connection_id: string
+          seller_phone: string
+          employee_id: string
+          accrual_type: "connection" | "maintenance"
+          settlement_month: string
+          amount: number
+          is_paid: boolean
+          payout_id: string | null
+          paid_at: string | null
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          connection_id: string
+          seller_phone: string
+          employee_id: string
+          accrual_type: "connection" | "maintenance"
+          settlement_month: string
+          amount?: number
+          is_paid?: boolean
+          payout_id?: string | null
+          paid_at?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          connection_id?: string
+          seller_phone?: string
+          employee_id?: string
+          accrual_type?: "connection" | "maintenance"
+          settlement_month?: string
+          amount?: number
+          is_paid?: boolean
+          payout_id?: string | null
+          paid_at?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connection_accruals_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "connections"
+            referencedColumns: ["connection_id"]
+          },
+          {
+            foreignKeyName: "connection_accruals_seller_phone_fkey"
+            columns: ["seller_phone"]
+            isOneToOne: false
+            referencedRelation: "sellers"
+            referencedColumns: ["seller_phone"]
+          },
+          {
+            foreignKeyName: "connection_accruals_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          }
+        ]
+      }
       connections: {
         Row: {
           accrual_month: string
           assigned_at: string
           assigned_by: string
           client_status: Database["public"]["Enums"]["client_lifecycle_status"]
+          connection_fee: number
           connection_fee_amount: number
           connection_fee_percent: number
           connection_id: string
+          maintenance_fee_monthly: number
+          maintenance_month_start: string | null
           maintenance_months_accrued: number
           maintenance_months_limit: number
+          maintenance_months_total: number
           manager_id: string
           plan_id: string | null
           plan_price: number
@@ -133,11 +207,15 @@ export type Database = {
           assigned_at?: string
           assigned_by: string
           client_status?: Database["public"]["Enums"]["client_lifecycle_status"]
+          connection_fee?: number
           connection_fee_amount?: number
           connection_fee_percent?: number
           connection_id?: string
+          maintenance_fee_monthly?: number
+          maintenance_month_start?: string | null
           maintenance_months_accrued?: number
           maintenance_months_limit?: number
+          maintenance_months_total?: number
           manager_id: string
           plan_id?: string | null
           plan_price?: number
@@ -151,11 +229,15 @@ export type Database = {
           assigned_at?: string
           assigned_by?: string
           client_status?: Database["public"]["Enums"]["client_lifecycle_status"]
+          connection_fee?: number
           connection_fee_amount?: number
           connection_fee_percent?: number
           connection_id?: string
+          maintenance_fee_monthly?: number
+          maintenance_month_start?: string | null
           maintenance_months_accrued?: number
           maintenance_months_limit?: number
+          maintenance_months_total?: number
           manager_id?: string
           plan_id?: string | null
           plan_price?: number
@@ -216,10 +298,13 @@ export type Database = {
           comment: string | null
           created_at: string
           created_by: string
+          description: string | null
+          operation_type: "payout" | "deduction"
           payment_method: string
           payout_category: Database["public"]["Enums"]["payout_category_type"]
           payout_date: string
           payout_id: string
+          settlement_month: string
           user_id: string
         }
         Insert: {
@@ -228,10 +313,13 @@ export type Database = {
           comment?: string | null
           created_at?: string
           created_by: string
+          description?: string | null
+          operation_type?: "payout" | "deduction"
           payment_method: string
           payout_category: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
           payout_id?: string
+          settlement_month?: string
           user_id: string
         }
         Update: {
@@ -240,10 +328,13 @@ export type Database = {
           comment?: string | null
           created_at?: string
           created_by?: string
+          description?: string | null
+          operation_type?: "payout" | "deduction"
           payment_method?: string
           payout_category?: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
           payout_id?: string
+          settlement_month?: string
           user_id?: string
         }
         Relationships: [
@@ -824,6 +915,13 @@ export type Database = {
         }
         Returns: Json
       }
+      get_employee_payroll_sheet: {
+        Args: {
+          p_employee_id: string
+          p_month?: string
+        }
+        Returns: Json
+      }
       get_leads_funnel_stats: { Args: never; Returns: Json }
       get_payouts_summary: {
         Args: { p_accrual_month?: string; p_user_id?: string }
@@ -855,6 +953,15 @@ export type Database = {
           p_payout_category: Database["public"]["Enums"]["payout_category_type"]
           p_payout_date: string
           p_user_id: string
+          p_operation_type?: string
+          p_settlement_month?: string
+          p_accrual_ids?: string[]
+        }
+        Returns: Json
+      }
+      run_maintenance_billing: {
+        Args: {
+          p_billing_month?: string
         }
         Returns: Json
       }

@@ -1227,6 +1227,55 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * `public.calculate_payout_accruals(p_accrual_month VARCHAR(7), p_employee_id UUID)`:
   * Выполняет мгновенную калькуляцию фонда начислений за первичное подключение (`connections`) и ежемесячное сопровождение (`client_maintenance`) с возможностью фильтрации по конкретному сотруднику или за весь расчетный месяц.
 
+---
+
+### 15. Рефакторинг модуля Подключений, Биллинг Сопровождения, Начисления и Расчетный Лист (Миграция `015_maintenance_accruals_payroll_and_methods.sql`)
+
+**15.1. Модификация таблицы `connections`:**
+* Добавлены поля:
+  * `maintenance_months_total INT NOT NULL DEFAULT 2` — установленный срок сопровождения (по умолчанию 2 месяца).
+  * `maintenance_month_start VARCHAR(7)` — расчетный месяц старта сопровождения ('YYYY-MM', дата подключения + 1 месяц).
+  * `maintenance_fee_monthly NUMERIC(12,2) NOT NULL DEFAULT 0` — фиксированное ежемесячное начисление за сопровождение.
+  * `connection_fee NUMERIC(12,2) NOT NULL DEFAULT 0` — сумма разового бонуса за первичное подключение.
+* Значение статуса по умолчанию для новых записей при связывании куратором: `'подключен'`.
+* Жизненный цикл статусов подключения: `'подключен'` -> `'сопровождение'` -> `'приостановлен'` / `'расторгнут'`.
+
+**15.2. Таблица `connection_accruals` (Реестр начислений кураторам):**
+* Назначение: Гранулярный помесячный учет начислений за первичное подключение и каждый месяц сопровождения с привязкой к выплатам.
+* Схема:
+  * `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+  * `connection_id UUID REFERENCES connections(connection_id) ON DELETE CASCADE`
+  * `seller_phone VARCHAR(20) REFERENCES sellers(seller_phone) ON DELETE CASCADE`
+  * `employee_id UUID REFERENCES users(user_id) ON DELETE CASCADE`
+  * `accrual_type VARCHAR(20) CHECK (accrual_type IN ('connection', 'maintenance'))`
+  * `settlement_month VARCHAR(7) NOT NULL` (формат 'YYYY-MM')
+  * `amount NUMERIC(12, 2) NOT NULL DEFAULT 0`
+  * `is_paid BOOLEAN NOT NULL DEFAULT false`
+  * `payout_id UUID REFERENCES employee_payouts(payout_id) ON DELETE SET NULL`
+  * `paid_at TIMESTAMPTZ`
+  * `notes TEXT`
+* Ограничение уникальности: `CONSTRAINT uq_conn_accrual UNIQUE (connection_id, accrual_type, settlement_month)` исключает дублирование начислений за один и тот же расчетный месяц.
+* RLS-политики: `admin` и `supervisor` обладают полным доступом на чтение и изменение; `consultant` имеет доступ на чтение исключительно своих начислений (`employee_id = get_current_crm_user_id()`).
+
+**15.3. Модификация таблицы `employee_payouts`:**
+* Добавлены поля:
+  * `settlement_month VARCHAR(7)` — расчетный период начисления.
+  * `operation_type VARCHAR(20) DEFAULT 'payout' CHECK (operation_type IN ('payout', 'deduction'))` — явное разграничение выплат и удержаний.
+  * `description TEXT` — текстовое основание платежа.
+* Поддерживаемые платежные методы: `cash` (Наличные), `kaspi` (Kaspi Bank), `halyk` (Halyk Bank), `oney` (Oney), `card_transfer` (Перевод на карту).
+
+**15.4. Хранимые процедуры:**
+* `link_lead_to_seller(p_lead_id, p_seller_phone, p_user_id, p_manager_id, p_assigned_by)`:
+  * Статус подключения сразу выставляется в `'подключен'`, генерируется первичное начисление типа `'connection'` в `connection_accruals`.
+* `run_maintenance_billing(p_billing_month VARCHAR(7))`:
+  * Пакетный биллинг активных подключений. Вычисляет номер месяца сопровождения относительно `maintenance_month_start`.
+  * Если номер месяца $< maintenance\_months\_total$, генерирует запись в `connection_accruals` (`accrual_type = 'maintenance'`), переводит статус в `'сопровождение'` и инкрементирует счетчик `maintenance_months_accrued`.
+* `get_employee_payroll_sheet(p_employee_id UUID, p_month VARCHAR(7))`:
+  * Реализует непрерывный сальдовый метод:
+    $$\text{closing\_balance} = \text{opening\_balance} + \text{total\_accrued} - \text{total\_deductions} - \text{total\_paid}$$
+  * Возвращает агрегированные суммы и массивы объектов: начисления (подключения и сопровождения), удержания и выплаты с методами перевода.
+
+
 
 
 

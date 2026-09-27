@@ -35,6 +35,7 @@ import dynamic from 'next/dynamic';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
+import { CuratorSelectDropdown } from '@/components/sellers/CuratorSelectDropdown';
 
 const LinkSellerLeadModal = dynamic(
   () => import('@/components/sellers/LinkSellerLeadModal').then((m) => m.LinkSellerLeadModal),
@@ -426,34 +427,16 @@ export default function SellersPage() {
         ],
         renderCell: (row: SellerItem) => {
           if (currentUserRole === 'admin') {
-            const isUnassigned = !row.manager_id;
-            const currentMgr = managers.find((m) => m.user_id === row.manager_id);
             return (
-              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                <EmployeeColorDot
-                  color={currentMgr?.color || (isUnassigned ? '#9CA3AF' : undefined)}
-                  size="sm"
-                />
-                <select
-                  value={row.manager_id || ''}
-                  onChange={async (e) => {
-                    const val = e.target.value || null;
-                    await handleAssignManager(row.seller_phone, val);
-                  }}
-                  className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
-                    isUnassigned
-                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
-                      : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'
-                  }`}
-                >
-                  <option value="">— Не назначен —</option>
-                  {managers.map((m) => (
-                    <option key={m.user_id} value={m.user_id}>
-                      ● {m.full_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <CuratorSelectDropdown
+                value={row.manager_id}
+                managers={managers}
+                onChange={async (val) => {
+                  await handleAssignManager(row.seller_phone, val);
+                }}
+                size="sm"
+                className="w-[170px]"
+              />
             );
           }
           if (!row.manager_user) {
@@ -668,11 +651,11 @@ export default function SellersPage() {
       renderCustomView: (_val: any, data: SellerItem) => {
         if (currentUserRole === 'admin') {
           return (
-            <div className="flex items-center gap-2">
-              <select
-                value={data?.manager_id || ''}
-                onChange={async (e) => {
-                  const val = e.target.value || null;
+            <div className="w-full">
+              <CuratorSelectDropdown
+                value={data?.manager_id}
+                managers={managers}
+                onChange={async (val) => {
                   await handleAssignManager(data.seller_phone, val);
                   setModalState((prev) =>
                     prev.selectedSeller
@@ -689,15 +672,9 @@ export default function SellersPage() {
                       : prev
                   );
                 }}
-                className="w-full h-10 px-3 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Не назначен</option>
-                {managers.map((m) => (
-                  <option key={m.user_id} value={m.user_id}>
-                    {m.full_name} ({m.role === 'admin' ? 'Админ' : 'Консультант'})
-                  </option>
-                ))}
-              </select>
+                size="md"
+                className="w-full"
+              />
             </div>
           );
         }
@@ -944,29 +921,15 @@ export default function SellersPage() {
             </span>
             {currentUserRole === 'admin' ? (
               <div className="flex items-center gap-1.5 flex-1 max-w-[210px] justify-end">
-                <EmployeeColorDot
-                  color={currentMgr?.color || (isUnassignedMgr ? '#9CA3AF' : undefined)}
-                  size="xs"
-                />
-                <select
-                  value={seller.manager_id || ''}
-                  onChange={async (e) => {
-                    const val = e.target.value || null;
+                <CuratorSelectDropdown
+                  value={seller.manager_id}
+                  managers={managers}
+                  onChange={async (val) => {
                     await handleAssignManager(seller.seller_phone, val);
                   }}
-                  className={`h-7 w-full px-2 text-[11px] font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
-                    isUnassignedMgr
-                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40'
-                      : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200'
-                  }`}
-                >
-                  <option value="">— Не назначен —</option>
-                  {managers.map((m) => (
-                    <option key={m.user_id} value={m.user_id}>
-                      ● {m.full_name}
-                    </option>
-                  ))}
-                </select>
+                  size="sm"
+                  className="w-full max-w-[190px]"
+                />
               </div>
             ) : (
               <div>

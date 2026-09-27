@@ -18,6 +18,10 @@ export interface ConnectionItem {
   plan_price: number;
   connection_fee_percent: number;
   connection_fee_amount: number;
+  connection_fee?: number;
+  maintenance_fee_monthly?: number;
+  maintenance_months_total?: number;
+  maintenance_month_start?: string | null;
   accrual_month: string;
   maintenance_months_limit: number;
   maintenance_months_accrued: number;
@@ -116,6 +120,10 @@ export async function getConnections(
       plan_price,
       connection_fee_percent,
       connection_fee_amount,
+      connection_fee,
+      maintenance_fee_monthly,
+      maintenance_months_total,
+      maintenance_month_start,
       accrual_month,
       maintenance_months_limit,
       maintenance_months_accrued,

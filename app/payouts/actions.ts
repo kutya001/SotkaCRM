@@ -11,11 +11,14 @@ export interface PayoutItem {
   payout_id: string;
   user_id: string;
   accrual_month: string;
+  settlement_month?: string | null;
+  operation_type?: string | null;
   payout_date: string;
   amount: number;
   payout_category: PayoutCategoryType;
   payment_method: string;
   comment: string | null;
+  description?: string | null;
   created_by: string;
   created_at: string;
   recipient?: {
@@ -214,20 +217,24 @@ export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsSta
 export interface CreatePayoutInput {
   user_id: string;
   accrual_month: string;
+  settlement_month?: string | null;
+  operation_type?: 'payout' | 'deduction';
   payout_date: string;
   amount: number;
   payout_category: PayoutCategoryType;
   payment_method: string;
-  comment?: string;
+  comment?: string | null;
+  description?: string | null;
+  accrual_ids?: string[] | null;
 }
 
 /**
- * Создание записи о выплате сотруднику (строго роль admin)
+ * Создание записи о выплате или удержании сотрудника (строго роль admin)
  * Выполняется через атомарную функцию process_employee_payout_atomic с блокировкой FOR UPDATE
  */
 export async function createPayout(
   input: CreatePayoutInput
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; payout_id?: string }> {
   try {
     const { profile, supabase } = await requireAdmin();
 
@@ -245,8 +252,11 @@ export async function createPayout(
       p_amount: roundMoney(valid.amount),
       p_payout_category: valid.payout_category,
       p_payment_method: valid.payment_method.trim(),
-      p_comment: valid.comment?.trim() || '',
+      p_comment: (valid.comment || valid.description || '').trim(),
       p_created_by: profile.user_id,
+      p_operation_type: valid.operation_type || (valid.payout_category === 'удержание' ? 'deduction' : 'payout'),
+      p_settlement_month: valid.settlement_month || valid.accrual_month,
+      p_accrual_ids: valid.accrual_ids && valid.accrual_ids.length > 0 ? valid.accrual_ids : undefined,
     });
 
     if (error) {
@@ -258,10 +268,55 @@ export async function createPayout(
     }
 
     revalidatePath('/payouts');
-    return { success: true };
+    revalidatePath('/connections');
+    revalidatePath('/profile');
+
+    const res = data as any;
+    return { success: true, payout_id: res?.payout_id };
   } catch (err: any) {
     return { success: false, error: err.message || 'Ошибка проведения выплаты' };
   }
+}
+
+/**
+ * Получение неоплаченных начислений сотрудника
+ */
+export async function getUnpaidAccrualsAction(
+  employeeId: string,
+  settlementMonth?: string
+) {
+  const supabase = await createClient();
+  let query = supabase
+    .from('connection_accruals')
+    .select(`
+      id,
+      connection_id,
+      seller_phone,
+      employee_id,
+      accrual_type,
+      settlement_month,
+      amount,
+      is_paid,
+      notes,
+      created_at,
+      sellers(seller_name, store)
+    `)
+    .eq('employee_id', employeeId)
+    .eq('is_paid', false)
+    .order('settlement_month', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (settlementMonth && settlementMonth !== 'all') {
+    query = query.eq('settlement_month', settlementMonth);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('Error fetching unpaid accruals:', error);
+    return { success: false, error: error.message, accruals: [] };
+  }
+
+  return { success: true, accruals: data || [] };
 }
 
 /**

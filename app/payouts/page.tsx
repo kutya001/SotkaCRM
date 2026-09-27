@@ -104,9 +104,14 @@ export default function PayoutsPage() {
     payout_date: todayStr,
     amount: 0,
     payout_category: 'выплата зп',
-    payment_method: 'Mbank',
+    operation_type: 'payout',
+    payment_method: 'kaspi',
     comment: '',
   });
+
+  const [unpaidAccruals, setUnpaidAccruals] = React.useState<any[]>([]);
+  const [selectedAccrualIds, setSelectedAccrualIds] = React.useState<string[]>([]);
+  const [isLoadingAccruals, setIsLoadingAccruals] = React.useState(false);
 
   // Загрузка данных
   const fetchData = React.useCallback(async (month?: string, cat?: string) => {
@@ -164,6 +169,42 @@ export default function PayoutsPage() {
     fetchData(selectedMonth, val);
   };
 
+  // Автоматическая загрузка неоплаченных начислений при выборе сотрудника
+  React.useEffect(() => {
+    if (!isCreateOpen || !formData.user_id || formData.operation_type === 'deduction') {
+      setUnpaidAccruals([]);
+      setSelectedAccrualIds([]);
+      return;
+    }
+
+    setIsLoadingAccruals(true);
+    api.payouts
+      .getUnpaidAccruals({ employeeId: formData.user_id, settlementMonth: formData.accrual_month })
+      .then((res) => {
+        const list = res.accruals || [];
+        setUnpaidAccruals(list);
+        const ids = list.map((a: any) => a.id);
+        setSelectedAccrualIds(ids);
+        const total = list.reduce((sum: number, a: any) => sum + (Number(a.amount) || 0), 0);
+        if (total > 0) {
+          setFormData((prev) => ({ ...prev, amount: total }));
+        }
+      })
+      .catch((err) => console.error('Failed to load unpaid accruals:', err))
+      .finally(() => setIsLoadingAccruals(false));
+  }, [isCreateOpen, formData.user_id, formData.accrual_month, formData.operation_type]);
+
+  const toggleAccrualSelection = (id: string) => {
+    setSelectedAccrualIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      const nextTotal = unpaidAccruals
+        .filter((a) => next.includes(a.id))
+        .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+      setFormData((f) => ({ ...f, amount: nextTotal }));
+      return next;
+    });
+  };
+
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.user_id) {
@@ -177,8 +218,19 @@ export default function PayoutsPage() {
 
     setIsSubmitting(true);
     try {
-      await api.payouts.create(formData);
-      showToast('Выплата успешно зарегистрирована', 'success');
+      await api.payouts.create({
+        ...formData,
+        accrual_ids:
+          formData.operation_type === 'payout' && selectedAccrualIds.length > 0
+            ? selectedAccrualIds
+            : undefined,
+      });
+      showToast(
+        formData.operation_type === 'deduction'
+          ? 'Удержание успешно зарегистрировано'
+          : 'Выплата успешно зарегистрирована',
+        'success'
+      );
       setIsCreateOpen(false);
       setFormData({
         user_id: '',
@@ -186,9 +238,12 @@ export default function PayoutsPage() {
         payout_date: todayStr,
         amount: 0,
         payout_category: 'выплата зп',
-        payment_method: 'Mbank',
+        operation_type: 'payout',
+        payment_method: 'kaspi',
         comment: '',
       });
+      setSelectedAccrualIds([]);
+      setUnpaidAccruals([]);
       fetchData();
     } catch (err: any) {
       showToast(err.message || 'Ошибка при сохранении выплаты', 'error');
@@ -263,12 +318,35 @@ export default function PayoutsPage() {
         minWidth: 120,
         sortable: true,
         filterable: true,
-        renderCell: (row) => (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-            <CreditCard className="w-3 h-3 text-zinc-400" strokeWidth={1.5} />
-            <span>{row.payment_method}</span>
-          </span>
-        ),
+        renderCell: (row) => {
+          const method = (row.payment_method || '').toLowerCase();
+          let badgeColor = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50';
+          let label = row.payment_method;
+
+          if (method === 'kaspi' || method.includes('kaspi')) {
+            badgeColor = 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20';
+            label = 'Kaspi Pay';
+          } else if (method === 'halyk' || method.includes('halyk')) {
+            badgeColor = 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20';
+            label = 'Halyk Bank';
+          } else if (method === 'oney' || method.includes('oney') || method.includes('о!деньги') || method.includes('деньги')) {
+            badgeColor = 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
+            label = 'O!Dengi';
+          } else if (method === 'cash' || method.includes('cash') || method.includes('наличные')) {
+            badgeColor = 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20';
+            label = 'Наличные';
+          } else if (method === 'card_transfer' || method.includes('карт') || method.includes('card') || method.includes('mbank')) {
+            badgeColor = 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20';
+            label = method.includes('mbank') ? 'Mbank' : 'Перевод на карту';
+          }
+
+          return (
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border ${badgeColor}`}>
+              <CreditCard className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+              <span>{label}</span>
+            </span>
+          );
+        },
       },
       {
         key: 'accrual_month',
@@ -577,6 +655,44 @@ export default function PayoutsPage() {
               </div>
 
               <div className="space-y-3 text-xs">
+                {/* Переключатель: Выплата vs Удержание */}
+                <div className="flex rounded-xl bg-zinc-100 dark:bg-zinc-800 p-1 mb-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData((p) => ({
+                        ...p,
+                        operation_type: 'payout',
+                        payout_category: 'выплата зп',
+                      }))
+                    }
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                      formData.operation_type !== 'deduction'
+                        ? 'bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                        : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    Выплата сотруднику
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData((p) => ({
+                        ...p,
+                        operation_type: 'deduction',
+                        payout_category: 'удержание',
+                      }))
+                    }
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                      formData.operation_type === 'deduction'
+                        ? 'bg-white dark:bg-zinc-900 text-rose-600 dark:text-rose-400 shadow-xs'
+                        : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    Удержание / Штраф
+                  </button>
+                </div>
+
                 {/* Выбор сотрудника */}
                 <div className="space-y-1">
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
@@ -596,6 +712,49 @@ export default function PayoutsPage() {
                     ))}
                   </select>
                 </div>
+
+                {/* Чекбоксы неоплаченных начислений для выплаты */}
+                {formData.user_id && formData.operation_type !== 'deduction' && (
+                  <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                      <span>Неоплаченные начисления ({unpaidAccruals.length}):</span>
+                      <span className="text-[10px] text-zinc-400">Отметьте для выплаты</span>
+                    </div>
+                    {isLoadingAccruals ? (
+                      <div className="text-[11px] text-zinc-400 py-1">Поиск начислений...</div>
+                    ) : unpaidAccruals.length === 0 ? (
+                      <div className="text-[11px] text-zinc-400 py-1">Нет неоплаченных начислений за выбранный период</div>
+                    ) : (
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                        {unpaidAccruals.map((acc: any) => {
+                          const isChecked = selectedAccrualIds.includes(acc.id);
+                          return (
+                            <label
+                              key={acc.id}
+                              className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700/50 cursor-pointer text-xs transition-colors"
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => toggleAccrualSelection(acc.id)}
+                                  className="rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
+                                />
+                                <span className="truncate">
+                                  {acc.accrual_type === 'connection' ? 'Подключение' : 'Сопровождение'}
+                                  {acc.sellers?.store ? ` • ${acc.sellers.store}` : ''}
+                                </span>
+                              </div>
+                              <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
+                                +{Number(acc.amount).toLocaleString('ru-RU')} сом
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   {/* Сумма */}
@@ -630,13 +789,19 @@ export default function PayoutsPage() {
                           payout_category: e.target.value as PayoutCategoryType,
                         }))
                       }
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      disabled={formData.operation_type === 'deduction'}
+                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-75"
                     >
-                      <option value="выплата зп">Выплата ЗП</option>
-                      <option value="аванс">Аванс</option>
-                      <option value="бонус">Бонус</option>
-                      <option value="прочие начисления">Прочие начисления</option>
-                      <option value="удержание">Удержание</option>
+                      {formData.operation_type === 'deduction' ? (
+                        <option value="удержание">Удержание</option>
+                      ) : (
+                        <>
+                          <option value="выплата зп">Выплата ЗП</option>
+                          <option value="аванс">Аванс</option>
+                          <option value="бонус">Бонус</option>
+                          <option value="прочие начисления">Прочие начисления</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 </div>
@@ -652,10 +817,12 @@ export default function PayoutsPage() {
                       onChange={(e) => setFormData((p) => ({ ...p, payment_method: e.target.value }))}
                       className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     >
+                      <option value="kaspi">Kaspi Pay / Перевод</option>
+                      <option value="halyk">Halyk Bank</option>
+                      <option value="oney">O!Dengi / Oney</option>
+                      <option value="cash">Наличные</option>
+                      <option value="card_transfer">Перевод на карту</option>
                       <option value="Mbank">Mbank</option>
-                      <option value="О!Деньги">О!Деньги</option>
-                      <option value="Наличные">Наличные</option>
-                      <option value="Перевод на карту">Перевод на карту</option>
                     </select>
                   </div>
 
@@ -699,7 +866,7 @@ export default function PayoutsPage() {
                   </label>
                   <textarea
                     rows={2}
-                    value={formData.comment}
+                    value={formData.comment || ''}
                     onChange={(e) => setFormData((p) => ({ ...p, comment: e.target.value }))}
                     placeholder="Например: Бонус за перевыполнение KPI..."
                     className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"

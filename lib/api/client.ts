@@ -417,6 +417,50 @@ export const api = {
       invalidateNamespaces('connections', 'sellers', 'leads', 'payouts', 'dashboard', 'analytics');
       return res;
     },
+    getById: (id: string, options?: { bypassCache?: boolean }) =>
+      request<any>(`/api/v1/connections/${encodeURIComponent(id)}`, {
+        method: 'GET',
+        bypassCache: options?.bypassCache,
+      }),
+    getAccruals: (id: string, options?: { bypassCache?: boolean }) =>
+      request<{ connection: any; accruals: any[] }>(`/api/v1/connections/${encodeURIComponent(id)}/accruals`, {
+        method: 'GET',
+        bypassCache: options?.bypassCache,
+      }),
+    updateAccrual: async (connectionId: string, accrualId: string, data: any) => {
+      const res = await request<any>(
+        `/api/v1/connections/${encodeURIComponent(connectionId)}/accruals/${encodeURIComponent(accrualId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(data),
+        }
+      );
+      invalidateNamespaces('connections', 'payouts', 'profile');
+      return res;
+    },
+    deleteAccrual: async (connectionId: string, accrualId: string) => {
+      const res = await request<any>(
+        `/api/v1/connections/${encodeURIComponent(connectionId)}/accruals/${encodeURIComponent(accrualId)}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      invalidateNamespaces('connections', 'payouts', 'profile');
+      return res;
+    },
+    runBilling: async (billingMonth?: string) => {
+      const res = await request<{
+        success: boolean;
+        billing_month: string;
+        generated_accruals: number;
+        message: string;
+      }>('/api/v1/connections/maintenance/billing', {
+        method: 'POST',
+        body: JSON.stringify({ billing_month: billingMonth }),
+      });
+      invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
+      return res;
+    },
     runMaintenance: async (targetMonth?: string) => {
       const res = await request<any>('/api/v1/connections/maintenance/fk', {
         method: 'POST',
@@ -444,12 +488,32 @@ export const api = {
         method: 'GET',
         bypassCache: params?.bypassCache,
       }),
+    getUnpaidAccruals: (params: {
+      employeeId?: string;
+      settlementMonth?: string;
+      bypassCache?: boolean;
+    }) =>
+      request<{
+        employee_id: string;
+        settlement_month: string | null;
+        accruals: any[];
+        total_unpaid_amount: number;
+      }>(
+        `/api/v1/payouts/unpaid-accruals${buildQuery({
+          employeeId: params.employeeId,
+          settlementMonth: params.settlementMonth,
+        })}`,
+        {
+          method: 'GET',
+          bypassCache: params?.bypassCache,
+        }
+      ),
     create: async (data: any) => {
       const res = await request<any>('/api/v1/payouts', {
         method: 'POST',
         body: JSON.stringify(data),
       });
-      invalidateNamespaces('payouts', 'dashboard', 'analytics');
+      invalidateNamespaces('payouts', 'connections', 'profile', 'dashboard', 'analytics');
       return res;
     },
     calculate: (params: { accrual_month?: string; employee_id?: string }) =>
@@ -635,6 +699,29 @@ export const api = {
       request<any>(`/api/v1/profile${buildQuery({ userId })}`, {
         method: 'GET',
         bypassCache: options?.bypassCache,
+      }),
+    getPayrollSheet: (params?: { employeeId?: string; month?: string; bypassCache?: boolean }) =>
+      request<{
+        employee: {
+          user_id: string;
+          full_name: string;
+          role: string;
+          login: string;
+          color?: string;
+        } | null;
+        employee_id: string;
+        month: string;
+        opening_balance: number;
+        total_accrued: number;
+        total_deductions: number;
+        total_paid: number;
+        closing_balance: number;
+        accruals: any[];
+        deductions: any[];
+        payouts: any[];
+      }>(`/api/v1/profile/payroll${buildQuery({ employeeId: params?.employeeId, month: params?.month })}`, {
+        method: 'GET',
+        bypassCache: params?.bypassCache,
       }),
     changePassword: async (data: { newPassword: string; targetUserId?: string }) => {
       const res = await request<any>('/api/v1/profile/change-password', {

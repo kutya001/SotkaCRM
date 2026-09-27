@@ -2551,6 +2551,356 @@
           }
         }
       }
+    },
+    "/api/v1/connections/maintenance/billing": {
+      "post": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Запуск ежемесячного биллинга сопровождения",
+        "description": "Генерирует начисления сопровождения кураторам за указанный месяц (до 2 месяцев сопровождения) через RPC run_maintenance_billing",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "billing_month": {
+                    "type": "string",
+                    "example": "2026-09",
+                    "description": "Расчетный месяц YYYY-MM"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Результат выполнения биллинга",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "billing_month": {
+                      "type": "string"
+                    },
+                    "generated_accruals": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connections/{id}/accruals": {
+      "get": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Список начислений куратору по сделке подключения",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Карточка подключения и реестр начислений",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "object"
+                    },
+                    "accruals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "accrual_type": {
+                            "type": "string",
+                            "enum": [
+                              "connection",
+                              "maintenance"
+                            ]
+                          },
+                          "settlement_month": {
+                            "type": "string"
+                          },
+                          "amount": {
+                            "type": "number"
+                          },
+                          "is_paid": {
+                            "type": "boolean"
+                          },
+                          "paid_at": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connections/{id}/accruals/{accrualId}": {
+      "patch": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Редактирование начисления куратора",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "accrualId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "settlement_month": {
+                    "type": "string"
+                  },
+                  "is_paid": {
+                    "type": "boolean"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Начисление успешно обновлено"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Удаление неоплаченного начисления",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "accrualId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Начисление удалено"
+          },
+          "409": {
+            "description": "Нельзя удалить оплаченное начисление"
+          }
+        }
+      }
+    },
+    "/api/v1/payouts/unpaid-accruals": {
+      "get": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Выборка неоплаченных начислений сотрудника",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "settlementMonth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список неоплаченных начислений с подсчетом суммы",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "employee_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "settlement_month": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "accruals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "total_unpaid_amount": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profile/payroll": {
+      "get": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Расчетный листок (Payslip) сотрудника с непрерывным сальдо",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "2026-09"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Расчетный листок: Сальдо нач -> Начислено -> Удержано -> Выплачено -> Сальдо кон",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "employee": {
+                      "type": "object"
+                    },
+                    "month": {
+                      "type": "string"
+                    },
+                    "opening_balance": {
+                      "type": "number"
+                    },
+                    "total_accrued": {
+                      "type": "number"
+                    },
+                    "total_deductions": {
+                      "type": "number"
+                    },
+                    "total_paid": {
+                      "type": "number"
+                    },
+                    "closing_balance": {
+                      "type": "number"
+                    },
+                    "accruals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "deductions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "payouts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

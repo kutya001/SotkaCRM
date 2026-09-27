@@ -53,7 +53,11 @@ export async function POST(req: NextRequest) {
       return apiError(res.error || 'Ошибка создания выплаты', 'PAYOUT_FAILED', 400);
     }
 
-    return apiSuccess({ success: true, message: 'Выплата успешно зарегистрирована' }, 201);
+    return apiSuccess({
+      success: true,
+      message: 'Выплата успешно зарегистрирована',
+      payout_id: res.payout_id,
+    }, 201);
   } catch (err) {
     return handleApiError(err);
   }

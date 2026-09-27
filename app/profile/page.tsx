@@ -49,7 +49,9 @@ import {
   Palette,
   BookOpen,
   ArrowUpRight,
+  FileSpreadsheet,
 } from 'lucide-react';
+import { EmployeePayslipTab } from '@/components/profile/EmployeePayslipTab';
 import type { UserRole } from '@/types/database.types';
 
 export default function ProfilePage() {
@@ -60,6 +62,7 @@ export default function ProfilePage() {
   const [profile, setProfile] = React.useState<UserProfileData | null>(null);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
   const [activeViewingUserId, setActiveViewingUserId] = React.useState<string | undefined>(undefined);
+  const [activeTab, setActiveTab] = React.useState<'kpi' | 'payslip'>('kpi');
 
   // Список всех сотрудников для администратора
   const [allUsers, setAllUsers] = React.useState<UserProfileData[]>([]);
@@ -460,10 +463,49 @@ export default function ProfilePage() {
           </Link>
         )}
 
-        {/* 2. Персональный KPI-дашборд в зависимости от отображаемой роли */}
+        {/* Переключатель вкладок: KPI & Дашборд vs Расчётный листок (Payslip) */}
+        {displayedRole !== 'smm' && (
+          <div className="flex items-center p-1 rounded-2xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200/60 dark:border-zinc-700/60 w-fit">
+            <button
+              type="button"
+              onClick={() => setActiveTab('kpi')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'kpi'
+                  ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4 text-emerald-500" />
+              <span>KPI и показатели</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('payslip')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'payslip'
+                  ? 'bg-white dark:bg-zinc-900 text-purple-600 dark:text-purple-400 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4 text-purple-500" />
+              <span>Расчётный листок (Payslip)</span>
+            </button>
+          </div>
+        )}
 
-        {/* ДАШБОРД ДЛЯ SMM-СПЕЦИАЛИСТА */}
-        {displayedRole === 'smm' && smmStats && (
+        {/* 2. Расчетный листок (Payslip) при активной вкладке */}
+        {activeTab === 'payslip' && displayedRole !== 'smm' && (
+          <EmployeePayslipTab
+            employeeId={activeViewingUserId || profile?.user_id || ''}
+            isAdmin={currentUserRole === 'admin'}
+          />
+        )}
+
+        {/* 3. Персональный KPI-дашборд в зависимости от отображаемой роли */}
+        {(activeTab === 'kpi' || displayedRole === 'smm') && (
+          <>
+            {/* ДАШБОРД ДЛЯ SMM-СПЕЦИАЛИСТА */}
+            {displayedRole === 'smm' && smmStats && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
@@ -701,6 +743,8 @@ export default function ProfilePage() {
               </div>
             </div>
           </div>
+        )}
+          </>
         )}
 
         {/* 3. МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ ПРОФИЛЯ */}

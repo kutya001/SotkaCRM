@@ -19,10 +19,8 @@ import {
   type ConnectionsStats,
 } from './actions';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
-import {
-  generateMonthlyMaintenanceAccruals,
-  type MaintenanceAccrualResult,
-} from './maintenance-actions';
+import { MaintenanceBillingModal } from '@/components/connections/MaintenanceBillingModal';
+import { ConnectionAccrualsSection } from '@/components/connections/ConnectionAccrualsSection';
 import {
   Link2,
   Phone,
@@ -64,6 +62,16 @@ const CLIENT_STATUS_OPTIONS: StatusOption[] = [
     value: 'готов',
     label: 'Готов (Выплачен)',
     colorClass: 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+  },
+  {
+    value: 'приостановлен',
+    label: 'Приостановлен',
+    colorClass: 'bg-amber-500/10 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20',
+  },
+  {
+    value: 'расторгнут',
+    label: 'Расторгнут',
+    colorClass: 'bg-zinc-500/10 dark:bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/20',
   },
   {
     value: 'отменен',
@@ -121,9 +129,6 @@ export default function ConnectionsPage() {
 
   // Модальное окно биллинга сопровождения
   const [isBillingModalOpen, setIsBillingModalOpen] = React.useState(false);
-  const [isBillingLoading, setIsBillingLoading] = React.useState(false);
-  const [billingMonth, setBillingMonth] = React.useState(new Date().toISOString().substring(0, 7));
-  const [billingResult, setBillingResult] = React.useState<MaintenanceAccrualResult | null>(null);
 
   // Загрузка данных
   const fetchData = React.useCallback(async (month?: string, status?: string) => {
@@ -304,28 +309,6 @@ export default function ConnectionsPage() {
     }
   };
 
-  // Запуск ежемесячного биллинга сопровождения
-  const handleRunMaintenanceBilling = async () => {
-    setIsBillingLoading(true);
-    try {
-      const result = await api.connections.runMaintenance(billingMonth);
-      setBillingResult(result);
-      if (result.success) {
-        showToast(
-          `Биллинг завершен: начислено ${result.count ?? result.accruals_created ?? 0} клиентам на сумму ${result.total_amount ?? result.totalAmount ?? 0} сом`,
-          'success'
-        );
-        fetchData();
-      } else {
-        showToast(result.error || 'Ошибка при проведении биллинга', 'error');
-      }
-    } catch (err: any) {
-      showToast(err.message || 'Сбой при проведении начислений', 'error');
-    } finally {
-      setIsBillingLoading(false);
-    }
-  };
-
   // Если пользователь SMM — доступ закрыт
   if (currentUserRole === 'smm') {
     return (
@@ -501,6 +484,49 @@ export default function ConnectionsPage() {
         ),
       },
       {
+        key: 'maintenance_months_accrued',
+        label: 'Срок сопровождения',
+        width: 165,
+        minWidth: 145,
+        sortable: true,
+        filterable: false,
+        renderCell: (row) => {
+          const total = row.maintenance_months_total || 2;
+          const current = row.maintenance_months_accrued || 0;
+          const isCompleted = current >= total;
+          return (
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
+                isCompleted
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                  : current > 0
+                  ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-200 dark:border-zinc-700'
+              }`}
+            >
+              <Clock className="w-3 h-3" />
+              {current} из {total} мес.
+            </span>
+          );
+        },
+      },
+      {
+        key: 'maintenance_fee_monthly',
+        label: 'Бонус сопровождения',
+        width: 170,
+        minWidth: 150,
+        sortable: true,
+        filterable: false,
+        renderCell: (row) => {
+          const fee = row.maintenance_fee_monthly || Math.round((Number(row.plan_price) || 0) * 0.1);
+          return (
+            <span className="font-mono text-xs font-semibold text-purple-600 dark:text-purple-400">
+              +{Number(fee).toLocaleString('ru-RU')} сом/мес
+            </span>
+          );
+        },
+      },
+      {
         key: 'client_status',
         label: 'Статус клиента',
         width: 150,
@@ -591,10 +617,7 @@ export default function ConnectionsPage() {
       {currentUserRole === 'admin' && (
         <button
           type="button"
-          onClick={() => {
-            setBillingResult(null);
-            setIsBillingModalOpen(true);
-          }}
+          onClick={() => setIsBillingModalOpen(true)}
           className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center justify-center md:gap-2 shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
           title="Биллинг сопровождения"
           aria-label="Биллинг сопровождения"
@@ -918,6 +941,8 @@ export default function ConnectionsPage() {
                       <option value="подключен">Подключен</option>
                       <option value="сопровождение">Сопровождение</option>
                       <option value="готов">Готов (Выплачен)</option>
+                      <option value="приостановлен">Приостановлен</option>
+                      <option value="расторгнут">Расторгнут</option>
                       <option value="отменен">Отменен</option>
                     </select>
                     <button
@@ -936,6 +961,15 @@ export default function ConnectionsPage() {
                 )}
               </div>
 
+              {/* График и реестр начислений куратору */}
+              <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50">
+                <ConnectionAccrualsSection
+                  connectionId={selectedConnection.connection_id}
+                  isAdmin={currentUserRole === 'admin'}
+                  onUpdated={fetchData}
+                />
+              </div>
+
               {/* Кнопка закрытия */}
               <div className="flex justify-end pt-2">
                 <button
@@ -951,86 +985,11 @@ export default function ConnectionsPage() {
         )}
 
         {/* 5. Модальное окно биллинга сопровождения (Admin Only) */}
-        {isBillingModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-600 dark:text-purple-400">
-                    <Banknote className="w-5 h-5" strokeWidth={1.75} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      Биллинг сопровождения
-                    </h3>
-                    <p className="text-xs text-zinc-400">
-                      Ежемесячное начисление комиссий консультантам
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsBillingModalOpen(false)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500"
-                >
-                  <X className="w-4 h-4" strokeWidth={2} />
-                </button>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed bg-zinc-50 dark:bg-zinc-800/60 p-3 rounded-2xl border border-zinc-100 dark:border-zinc-800">
-                  Система проанализирует клиентов в статусах «Подключен» и «Сопровождение» с неисчерпанным лимитом (до 3 месяцев), рассчитает бонус 10% (или по индивидуальной ставке) и зафиксирует строки в таблице <code className="font-mono text-purple-600 dark:text-purple-400 font-semibold">client_maintenance</code>.
-                </p>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Расчетный месяц начисления (YYYY-MM):
-                  </label>
-                  <input
-                    type="text"
-                    pattern="^\d{4}-\d{2}$"
-                    value={billingMonth}
-                    onChange={(e) => setBillingMonth(e.target.value)}
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-
-                {billingResult && (
-                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold">
-                      <CheckCircle2 className="w-4 h-4" strokeWidth={2} />
-                      <span>Биллинг успешно проведен!</span>
-                    </div>
-                    <p className="text-[11px]">
-                      Обработано: <strong>{billingResult.count}</strong> начислений на сумму{' '}
-                      <strong>{billingResult.totalAmount} сом</strong> (пропущено повторов/лимитов: {billingResult.skippedCount}).
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsBillingModalOpen(false)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Закрыть
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRunMaintenanceBilling}
-                  disabled={isBillingLoading}
-                  className="h-9 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isBillingLoading ? 'Начисление...' : 'Запустить биллинг'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <MaintenanceBillingModal
+          isOpen={isBillingModalOpen}
+          onClose={() => setIsBillingModalOpen(false)}
+          onSuccess={fetchData}
+        />
       </div>
     </AppLayout>
   );

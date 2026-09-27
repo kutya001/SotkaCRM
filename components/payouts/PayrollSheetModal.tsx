@@ -67,7 +67,7 @@ export function PayrollSheetModal({
   );
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [activeDetailTab, setActiveDetailTab] = React.useState<'accruals' | 'deductions' | 'payouts'>('accruals');
+  const [activeDetailTab, setActiveDetailTab] = React.useState<'all' | 'accruals' | 'deductions' | 'payouts'>('all');
 
   const [sheet, setSheet] = React.useState<{
     opening_balance: number;
@@ -75,6 +75,7 @@ export function PayrollSheetModal({
     total_deductions: number;
     total_paid: number;
     closing_balance: number;
+    all_operations: PayrollOperationRow[];
     accruals: PayrollOperationRow[];
     deductions_and_advances: PayrollOperationRow[];
     payouts: PayrollOperationRow[];
@@ -96,7 +97,7 @@ export function PayrollSheetModal({
       const data = await api.payouts.getPayrollSheet({ employeeId: empId, month });
       const rawOps: PayrollOperationRow[] = data.operations || [];
 
-      // Безопасное формирование трех массивов детальных операций
+      // Формирование массивов операций
       const accruals =
         data.accruals && data.accruals.length > 0
           ? data.accruals
@@ -118,7 +119,17 @@ export function PayrollSheetModal({
       const payouts =
         data.payouts && data.payouts.length > 0
           ? data.payouts
-          : rawOps.filter((o) => o.operation_type === 'payout' || !o.operation_type);
+          : rawOps.filter((o) => o.operation_type === 'payout' || (!o.operation_type && o.operation_sign === '-'));
+
+      // Объединенный список всех операций, отсортированный по дате
+      const allOps: PayrollOperationRow[] =
+        rawOps.length > 0
+          ? rawOps
+          : [...accruals, ...deductionsAndAdvances, ...payouts].sort((a, b) => {
+              const dateA = a.actual_date || a.payout_date || a.created_at || '';
+              const dateB = b.actual_date || b.payout_date || b.created_at || '';
+              return dateB.localeCompare(dateA);
+            });
 
       setSheet({
         opening_balance: Number(data.opening_balance) || 0,
@@ -126,6 +137,7 @@ export function PayrollSheetModal({
         total_deductions: Number(data.total_deductions) || 0,
         total_paid: Number(data.total_paid) || 0,
         closing_balance: Number(data.closing_balance) || 0,
+        all_operations: allOps,
         accruals,
         deductions_and_advances: deductionsAndAdvances,
         payouts,
@@ -148,7 +160,7 @@ export function PayrollSheetModal({
 
   const currentEmp = employees.find((e) => e.user_id === selectedUserId);
 
-  const renderOperationsTable = (rows: PayrollOperationRow[], typeSign: '+' | '-') => {
+  const renderOperationsTable = (rows: PayrollOperationRow[], forcedSign?: '+' | '-') => {
     if (rows.length === 0) {
       return (
         <div className="py-8 text-center text-xs text-zinc-400">
@@ -175,6 +187,12 @@ export function PayrollSheetModal({
               const monthVal = row.settlement_month || row.accrual_month || selectedMonth;
               const opType = (row.operation_type as SalaryOperationType) || 'payout';
               const label = SALARY_OPERATION_TYPE_LABELS[opType] || opType;
+              
+              const isPositive =
+                forcedSign === '+' ||
+                row.operation_sign === '+' ||
+                ['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(opType);
+              const sign = forcedSign || (isPositive ? '+' : '-');
 
               return (
                 <tr
@@ -191,22 +209,22 @@ export function PayrollSheetModal({
                     <span className="font-medium text-zinc-800 dark:text-zinc-200">
                       {label}
                     </span>
-                    {(row.note || row.comment) && (
-                      <span className="block text-[10px] text-zinc-400 truncate max-w-[200px]">
-                        {row.note || row.comment}
+                    {(row.note || row.comment || row.description) && (
+                      <span className="block text-[10px] text-zinc-400 truncate max-w-[220px]">
+                        {row.note || row.comment || row.description}
                       </span>
                     )}
                   </td>
                   <td
                     className={`py-2 px-3 text-right font-mono font-bold ${
-                      typeSign === '+'
+                      isPositive
                         ? 'text-emerald-600 dark:text-emerald-400'
                         : opType === 'payout'
                         ? 'text-sky-600 dark:text-sky-400'
                         : 'text-rose-600 dark:text-rose-400'
                     }`}
                   >
-                    {typeSign}
+                    {sign}
                     {Number(row.amount || 0).toLocaleString('ru-RU')} сом
                   </td>
                 </tr>
@@ -317,78 +335,96 @@ export function PayrollSheetModal({
           </div>
         ) : sheet ? (
           <div className="space-y-4">
-            {/* СТРОКА 1: Входящий остаток (Сальдо на начало) */}
-            <div className="px-4 py-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/70 dark:border-zinc-700/60 flex items-center justify-between text-xs">
-              <span className="font-semibold text-zinc-600 dark:text-zinc-400">
-                Входящий остаток (Сальдо на начало):
-              </span>
-              <span className="font-mono font-bold text-sm text-zinc-900 dark:text-zinc-100">
-                {sheet.opening_balance.toLocaleString('ru-RU')} сом
-              </span>
-            </div>
-
-            {/* СТРОКА 2: Сетка 3 колонки (Начислено | Удержано, штрафы, авансы | Выплачено) */}
+            {/* ВЕРХНИЙ KPI БЛОК: 3 параллельные колонки (Начислено / Удержано / Выплачено) */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               {/* Колонка 1: Начислено (+) */}
-              <div className="p-3 rounded-2xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 space-y-1">
-                <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                  <TrendingUp className="w-3.5 h-3.5" />
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 space-y-1">
+                <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span>Начислено (+)</span>
                 </span>
-                <p className="font-mono text-base font-bold text-emerald-600 dark:text-emerald-400">
+                <p className="font-mono text-lg font-bold text-emerald-600 dark:text-emerald-400">
                   +{sheet.total_accrued.toLocaleString('ru-RU')} сом
                 </p>
+                <span className="text-[10px] text-zinc-400 block">
+                  Все оклады и бонусы
+                </span>
               </div>
 
-              {/* Колонка 2: Удержано, штрафы, авансы (-) */}
-              <div className="p-3 rounded-2xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 space-y-1">
-                <span className="text-[11px] font-medium text-rose-700 dark:text-rose-400 flex items-center gap-1">
-                  <TrendingDown className="w-3.5 h-3.5" />
-                  <span>Удержано / Авансы (-)</span>
+              {/* Колонка 2: Удержано (-) */}
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 space-y-1">
+                <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                  <TrendingDown className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                  <span>Удержано (-)</span>
                 </span>
-                <p className="font-mono text-base font-bold text-rose-600 dark:text-rose-400">
+                <p className="font-mono text-lg font-bold text-rose-600 dark:text-rose-400">
                   -{sheet.total_deductions.toLocaleString('ru-RU')} сом
                 </p>
+                <span className="text-[10px] text-zinc-400 block">
+                  Авансы, удержания, штрафы
+                </span>
               </div>
 
               {/* Колонка 3: Выплачено (-) */}
-              <div className="p-3 rounded-2xl bg-sky-500/10 dark:bg-sky-500/5 border border-sky-500/20 space-y-1">
-                <span className="text-[11px] font-medium text-sky-700 dark:text-sky-400 flex items-center gap-1">
-                  <Wallet className="w-3.5 h-3.5" />
+              <div className="p-3.5 rounded-2xl bg-sky-500/10 dark:bg-sky-500/5 border border-sky-500/20 space-y-1">
+                <span className="text-[11px] font-semibold text-sky-700 dark:text-sky-400 flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-sky-600 dark:text-sky-400" />
                   <span>Выплачено (-)</span>
                 </span>
-                <p className="font-mono text-base font-bold text-sky-600 dark:text-sky-400">
+                <p className="font-mono text-lg font-bold text-sky-600 dark:text-sky-400">
                   -{sheet.total_paid.toLocaleString('ru-RU')} сом
                 </p>
-              </div>
-            </div>
-
-            {/* СТРОКА 3: Исходящий остаток (Сальдо на конец / К выплате) */}
-            <div
-              className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs transition-colors ${
-                sheet.closing_balance >= 0
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-100'
-                  : 'bg-rose-500/10 border-rose-500/30 text-rose-950 dark:text-rose-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                <span className="font-bold text-sm">
-                  Исходящий остаток (К выплате):
+                <span className="text-[10px] text-zinc-400 block">
+                  Фактически перечислено
                 </span>
               </div>
-              <span className="font-mono text-lg font-extrabold tracking-tight">
-                {sheet.closing_balance.toLocaleString('ru-RU')} сом
-              </span>
             </div>
 
-            {/* ДЕТАЛИЗАЦИЯ ОПЕРАЦИЙ: Табы и 4-колоночные таблицы */}
+            {/* ИТОГОВАЯ СТРОКА САЛЬДО: «Входящий остаток: X» -> «К выплате: Y» */}
+            <div className="px-4 py-3 rounded-2xl bg-gradient-to-r from-zinc-50 via-zinc-100 to-zinc-50 dark:from-zinc-800/80 dark:via-zinc-800/50 dark:to-zinc-800/80 border border-zinc-200/80 dark:border-zinc-700/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-zinc-500 dark:text-zinc-400 font-medium">
+                  Входящий остаток (Сальдо нач):
+                </span>
+                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 text-sm">
+                  {sheet.opening_balance.toLocaleString('ru-RU')} сом
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-zinc-500 dark:text-zinc-400 font-medium">
+                  К выплате (Сальдо кон):
+                </span>
+                <span
+                  className={`font-mono text-base font-extrabold tracking-tight ${
+                    sheet.closing_balance >= 0
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-rose-600 dark:text-rose-400'
+                  }`}
+                >
+                  {sheet.closing_balance.toLocaleString('ru-RU')} сом
+                </span>
+              </div>
+            </div>
+
+            {/* ТАБЫ ДЕТАЛИЗАЦИИ: Все / Начисления / Удержания / Выплаты */}
             <div className="pt-2 space-y-2.5">
-              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200/60 dark:border-zinc-700/60 text-xs w-full sm:w-fit">
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200/60 dark:border-zinc-700/60 text-xs w-full overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setActiveDetailTab('all')}
+                  className={`flex-1 min-w-[70px] px-2.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer text-center ${
+                    activeDetailTab === 'all'
+                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                      : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  Все ({sheet.all_operations.length})
+                </button>
                 <button
                   type="button"
                   onClick={() => setActiveDetailTab('accruals')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 min-w-[95px] px-2.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer text-center ${
                     activeDetailTab === 'accruals'
                       ? 'bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
                       : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
@@ -399,18 +435,18 @@ export function PayrollSheetModal({
                 <button
                   type="button"
                   onClick={() => setActiveDetailTab('deductions')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 min-w-[95px] px-2.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer text-center ${
                     activeDetailTab === 'deductions'
                       ? 'bg-white dark:bg-zinc-900 text-rose-600 dark:text-rose-400 shadow-sm'
                       : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
                   }`}
                 >
-                  Удержания / Авансы ({sheet.deductions_and_advances.length})
+                  Удержания ({sheet.deductions_and_advances.length})
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveDetailTab('payouts')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 min-w-[80px] px-2.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer text-center ${
                     activeDetailTab === 'payouts'
                       ? 'bg-white dark:bg-zinc-900 text-sky-600 dark:text-sky-400 shadow-sm'
                       : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
@@ -421,7 +457,9 @@ export function PayrollSheetModal({
               </div>
 
               {/* Отображение выбранной таблицы */}
-              <div className="max-h-60 overflow-y-auto pr-1">
+              <div className="max-h-64 overflow-y-auto pr-1">
+                {activeDetailTab === 'all' &&
+                  renderOperationsTable(sheet.all_operations)}
                 {activeDetailTab === 'accruals' &&
                   renderOperationsTable(sheet.accruals, '+')}
                 {activeDetailTab === 'deductions' &&

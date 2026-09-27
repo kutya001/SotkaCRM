@@ -1,29 +1,41 @@
 'use client';
 
 import * as React from 'react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Layers, ArrowLeft, Loader2, FileCode } from 'lucide-react';
-import 'swagger-ui-react/swagger-ui.css';
+import 'swagger-ui-dist/swagger-ui.css';
 import '@/app/docs/swagger-theme.css';
 
 interface SwaggerDocsProps {
   url?: string;
 }
 
-const SwaggerUI = dynamic(() => import('swagger-ui-react'), {
-  ssr: false,
-  loading: () => (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-      <Loader2 className="w-8 h-8 animate-spin text-blue-500" strokeWidth={2} />
-      <span className="text-xs font-semibold text-zinc-400">
-        Загрузка интерактивной документации Swagger...
-      </span>
-    </div>
-  ),
-});
-
 export function SwaggerDocs({ url = '/openapi.json' }: SwaggerDocsProps) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [isLoading, setIsLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    import('swagger-ui-dist').then(({ SwaggerUIBundle }) => {
+      if (!isMounted || !containerRef.current) return;
+      SwaggerUIBundle({
+        url,
+        domNode: containerRef.current,
+        deepLinking: true,
+        docExpansion: 'list',
+        defaultModelsExpandDepth: 1,
+        presets: [SwaggerUIBundle.presets.apis],
+      });
+      if (isMounted) {
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [url]);
+
   return (
     <div className="swagger-dark-theme min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       {/* Верхняя навигационная панель Apple Island */}
@@ -76,8 +88,16 @@ export function SwaggerDocs({ url = '/openapi.json' }: SwaggerDocsProps) {
       </header>
 
       {/* Основной контейнер Swagger UI */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6">
-        <SwaggerUI url={url} docExpansion="list" defaultModelsExpandDepth={1} />
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 relative">
+        {isLoading && (
+          <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500" strokeWidth={2} />
+            <span className="text-xs font-semibold text-zinc-400">
+              Загрузка интерактивной документации Swagger...
+            </span>
+          </div>
+        )}
+        <div ref={containerRef} className={isLoading ? 'hidden' : 'block'} />
       </main>
 
       {/* Подвал */}

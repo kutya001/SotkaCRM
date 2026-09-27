@@ -39,6 +39,8 @@ import {
   Clock,
   Trash2,
   Receipt,
+  Check,
+  Loader2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -131,6 +133,10 @@ export default function ConnectionsPage() {
 
   // Модальное окно пакетных начислений (Admin Only)
   const [isAccrueBonusesModalOpen, setIsAccrueBonusesModalOpen] = React.useState(false);
+
+  // Редактирование срока сопровождения (Admin Only)
+  const [editMaintenanceMonthsTotal, setEditMaintenanceMonthsTotal] = React.useState<number>(2);
+  const [isUpdatingMaintenanceMonths, setIsUpdatingMaintenanceMonths] = React.useState(false);
 
   // Удаление подключения (Admin Only)
   const [connectionToDelete, setConnectionToDelete] = React.useState<ConnectionItem | null>(null);
@@ -229,6 +235,7 @@ export default function ConnectionsPage() {
     setStatusToUpdate(connection.client_status);
     setEditPlanId(connection.plan_id || '');
     setEditPlanPrice(Number(connection.plan_price) || 0);
+    setEditMaintenanceMonthsTotal(Number(connection.maintenance_months_total || connection.maintenance_months_limit || 2));
     const initialDate = connection.assigned_at
       ? connection.assigned_at.substring(0, 10)
       : new Date().toISOString().substring(0, 10);
@@ -245,6 +252,33 @@ export default function ConnectionsPage() {
       } catch (e) {
         console.error(e);
       }
+    }
+  };
+
+  // Сохранение срока сопровождения (строго admin)
+  const handleSaveMaintenanceMonths = async () => {
+    if (!selectedConnection) return;
+    setIsUpdatingMaintenanceMonths(true);
+    try {
+      await api.connections.update(selectedConnection.connection_id, {
+        maintenance_months_total: editMaintenanceMonthsTotal,
+        maintenance_months_limit: editMaintenanceMonthsTotal,
+      });
+      showToast('Срок сопровождения успешно обновлен', 'success');
+      setSelectedConnection((prev) =>
+        prev
+          ? {
+              ...prev,
+              maintenance_months_total: editMaintenanceMonthsTotal,
+              maintenance_months_limit: editMaintenanceMonthsTotal,
+            }
+          : null
+      );
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка обновления срока сопровождения', 'error');
+    } finally {
+      setIsUpdatingMaintenanceMonths(false);
     }
   };
 
@@ -995,17 +1029,17 @@ export default function ConnectionsPage() {
               </div>
 
               {/* Сопровождение и статус жизненного цикла (FSM) */}
-              <div className="space-y-2">
+              <div className="p-3.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60 space-y-2.5">
                 <div className="flex items-center justify-between text-xs">
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                     Статус жизненного цикла (FSM):
                   </label>
-                  <span className="text-[11px] text-zinc-400">
-                    Сопровождение: {selectedConnection.maintenance_months_accrued} из {selectedConnection.maintenance_months_limit} мес.
+                  <span className="text-[10px] text-zinc-400 italic">
+                    Автоматический переход (FSM)
                   </span>
                 </div>
 
-                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60 flex items-center justify-between">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     {(() => {
                       const opt =
@@ -1021,10 +1055,42 @@ export default function ConnectionsPage() {
                       );
                     })()}
                   </div>
-                  <span className="text-[10px] text-zinc-400 italic">
-                    Автоматический переход (FSM)
-                  </span>
+                  <div className="text-[11px] font-mono text-zinc-500 dark:text-zinc-400">
+                    Прогресс: <span className="font-bold text-purple-600 dark:text-purple-400">{selectedConnection.maintenance_months_accrued || 0}</span> из {selectedConnection.maintenance_months_total || selectedConnection.maintenance_months_limit || 2} мес.
+                  </div>
                 </div>
+
+                {currentUserRole === 'admin' ? (
+                  <div className="pt-2 border-t border-zinc-200/40 dark:border-zinc-700/40 flex items-center justify-between gap-3 text-xs">
+                    <div>
+                      <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block">
+                        Срок сопровождения (месяцев):
+                      </span>
+                      <span className="text-[10px] text-zinc-400">
+                        По умолчанию 2 мес. Задайте срок (1, 3, 4 и т.д.)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="24"
+                        value={editMaintenanceMonthsTotal}
+                        onChange={(e) => setEditMaintenanceMonthsTotal(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-16 h-8 px-2 text-center text-xs font-mono font-bold rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveMaintenanceMonths}
+                        disabled={isUpdatingMaintenanceMonths || editMaintenanceMonthsTotal === (selectedConnection.maintenance_months_total || selectedConnection.maintenance_months_limit || 2)}
+                        className="h-8 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer"
+                      >
+                        {isUpdatingMaintenanceMonths ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                        <span>Сохранить</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {/* История начислений ЗП */}

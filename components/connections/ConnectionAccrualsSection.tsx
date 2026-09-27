@@ -217,73 +217,80 @@ export const ConnectionAccrualsSection: React.FC<ConnectionAccrualsSectionProps>
           Фактические проводки по данному подключению пока отсутствуют
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-sm">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-zinc-200/60 dark:border-zinc-800 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 bg-zinc-50/50 dark:bg-zinc-800/30">
-                <th className="py-2.5 px-3">Дата</th>
-                <th className="py-2.5 px-3">Месяц</th>
-                <th className="py-2.5 px-3">Вид операции</th>
-                <th className="py-2.5 px-3">Куратор</th>
-                <th className="py-2.5 px-3 text-right">Сумма</th>
-                <th className="py-2.5 px-3">Примечание</th>
-                {isAdmin && <th className="py-2.5 px-3 text-center w-16">Действия</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200/40 dark:divide-zinc-800/40 font-mono">
-              {postings.map((item) => (
-                <tr
-                  key={item.id}
-                  className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors"
-                >
-                  <td className="py-2.5 px-3 text-zinc-700 dark:text-zinc-300 font-medium">
-                    {item.actual_date ? (
-                      <FormattedDate date={item.actual_date} type="date" />
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400">
-                    {item.settlement_month || '—'}
-                  </td>
-                  <td className="py-2.5 px-3 font-sans">
-                    {getOperationBadge(item.operation_type)}
-                  </td>
-                  <td className="py-2.5 px-3 font-sans text-zinc-600 dark:text-zinc-300 truncate max-w-[130px]" title={item.users?.full_name}>
-                    {item.users?.full_name || '—'}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">
-                    +{Number(item.amount).toLocaleString('ru-RU')} сом
-                  </td>
-                  <td className="py-2.5 px-3 font-sans text-zinc-400 dark:text-zinc-500 text-[11px] truncate max-w-[160px]" title={item.note}>
-                    {item.note || '—'}
-                  </td>
-                  {isAdmin && (
-                    <td className="py-2.5 px-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(item)}
-                          title="Редактировать параметры проводки"
-                          className="p-1 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 transition-colors"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeletePosting(item.id)}
-                          title="Удалить проводку"
-                          className="p-1 rounded-lg text-rose-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+        <div className="space-y-2">
+          {postings.map((item) => (
+            <div
+              key={item.id}
+              className="p-3 rounded-2xl bg-zinc-50/80 dark:bg-zinc-800/60 border border-zinc-200/70 dark:border-zinc-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 transition-all shadow-2xs hover:border-zinc-300 dark:hover:border-zinc-600"
+            >
+              {/* Левая часть карточки: бейдж типа, месяц, дата, примечание */}
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {getOperationBadge(item.operation_type)}
+                <span className="font-mono text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                  {item.settlement_month || '—'}
+                </span>
+                <span className="text-[11px] text-zinc-400 font-mono">
+                  {item.actual_date ? (
+                    <FormattedDate date={item.actual_date} type="date" />
+                  ) : (
+                    '—'
                   )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                </span>
+                {item.users?.full_name && (
+                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate max-w-[120px]" title={item.users.full_name}>
+                    • {item.users.full_name}
+                  </span>
+                )}
+                {item.note && (
+                  <span
+                    className="text-[11px] text-zinc-400 dark:text-zinc-500 italic truncate max-w-[150px]"
+                    title={item.note}
+                  >
+                    ({item.note})
+                  </span>
+                )}
+              </div>
+
+              {/* Правая часть карточки: сумма жирным зеленым, статус и кнопки действий */}
+              <div className="flex items-center justify-between sm:justify-end gap-3 flex-shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-zinc-200/40 dark:border-zinc-700/40">
+                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                  +{Number(item.amount).toLocaleString('ru-RU')} сом
+                </span>
+
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
+                    item.is_paid || item.status === 'completed'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3" />
+                  {item.is_paid || item.status === 'completed' ? 'Выплачено' : 'К выплате'}
+                </span>
+
+                {isAdmin && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(item)}
+                      title="Редактировать проводку"
+                      className="p-1 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePosting(item.id)}
+                      title="Удалить проводку"
+                      className="p-1 rounded-lg text-rose-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

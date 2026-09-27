@@ -2761,3 +2761,32 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * Колонка connections.maintenance_months_total (INTEGER DEFAULT 2) доступна для редактирования администратором системы (1, 3, 4 и более месяцев).
 * При начислении сопровождения лимит сверяется с индивидуальным значением COALESCE(connections.maintenance_months_total, connections.maintenance_months_limit, 2).
 
+---
+
+## 21. Спецификация Миграции 022 (`022_cross_links_soft_delete_and_payouts_admin_fix.sql`)
+
+### 21.1. Метка удаленных продавцов во внешнем источнике (Soft-Delete `is_deleted_from_source`):
+* Добавлена колонка `is_deleted_from_source BOOLEAN NOT NULL DEFAULT false` в таблицу `sellers`.
+* Создан индекс `idx_sellers_deleted_from_source ON sellers(is_deleted_from_source)`.
+* При синхронизации с API Sotka HQ (`syncSellersFromSotka`), продавцы, отсутствующие в удаленной системе, маркируются `is_deleted_from_source = true`.
+* В реестре DataJournal удаленные в источнике продавцы помечаются бейджем «Удален в HQ», администратору предоставляется возможность их безвозвратного удаления (`deleteSellerPermanently`).
+
+### 21.2. Двусторонняя отвязка «Лид ⇄ Продавец» (`unlink_lead_and_seller`):
+* Колонка `seller_id UUID REFERENCES sellers(seller_id) ON DELETE SET NULL` в таблице `leads`.
+* Создана хранимая процедура `public.unlink_lead_and_seller(p_lead_id UUID) RETURNS JSONB`:
+  * Обнуляет поля связи в лиде: `seller_phone = NULL`, `seller_id = NULL`, `linked_at = NULL`.
+  * Переводит лид обратно в статус `'Назначен'`.
+  * Сбрасывает назначенного куратора у продавца: `manager_id = NULL`.
+  * Доступна эндпоинтам `POST /api/v1/leads/[id]/unlink-seller` и `POST /api/v1/sellers/[id]/unlink-lead`.
+
+### 21.3. Выборочное начисление бонусов (`accrue_selected_connections`):
+* Создана хранимая процедура `public.accrue_selected_connections(p_connection_ids UUID[], p_mode VARCHAR(20) DEFAULT 'all', p_settlement_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Позволяет администратору через мультиселект в реестре «Подключения» пакетно начислять бонусы только по выбранному набору подключений.
+* Поддерживает режимы: `'all'`, `'connection_only'`, `'maintenance_only'`.
+
+### 21.4. Исправление RLS-политики видимости выплат для администратора:
+* Обновлена политика `employee_payouts_select_policy`:
+  * Администраторы и супервайзеры (`public.get_current_user_role() IN ('admin', 'supervisor')`) видят все операции по ЗП без принудительной фильтрации по сотруднику.
+  * Консультанты и SMM видят только собственные проводки (`employee_id = auth.uid() OR user_id = auth.uid()`).
+
+

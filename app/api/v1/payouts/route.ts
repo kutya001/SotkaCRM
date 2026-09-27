@@ -9,21 +9,31 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
+    const pageSize = Math.min(1000, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = searchParams.get('search') || undefined;
     const accrualMonth = searchParams.get('accrualMonth') || undefined;
     const category = searchParams.get('category') || undefined;
-    const requestedUserId = searchParams.get('userId') || undefined;
+    const requestedUserId = searchParams.get('userId') || searchParams.get('employeeId') || undefined;
 
     // Строгая ролевая изоляция выплат:
-    // admin и supervisor могут просматривать любые выплаты
+    // admin и supervisor видят абсолютно все операции системы без фильтров по сотруднику по умолчанию
     // consultant и smm видят ТОЛЬКО свои выплаты
-    let targetUserId = requestedUserId;
-    if (profile.role !== 'admin' && profile.role !== 'supervisor') {
+    const roleLower = (profile.role || '').toLowerCase();
+    const isPrivileged = roleLower === 'admin' || roleLower === 'supervisor';
+
+    let targetUserId: string | undefined = undefined;
+    if (!isPrivileged) {
       if (requestedUserId && requestedUserId !== profile.user_id) {
         return apiError('Просмотр чужих выплат запрещен ролевой моделью', 'FORBIDDEN', 403);
       }
       targetUserId = profile.user_id;
+    } else {
+      // Для администратора: если параметр не задан или равен 'all', фильтр по сотруднику НЕ накладывается
+      if (requestedUserId && requestedUserId !== 'all' && requestedUserId.trim() !== '') {
+        targetUserId = requestedUserId.trim();
+      } else {
+        targetUserId = undefined;
+      }
     }
     const sortBy = searchParams.get('sortBy') || undefined;
     const sortOrder = (searchParams.get('sortOrder') as 'asc' | 'desc') || undefined;

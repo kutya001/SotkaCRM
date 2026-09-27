@@ -108,14 +108,36 @@ export async function DELETE(
     const decodedId = decodeURIComponent(id);
     const { supabase } = await requireAdmin();
 
+    // 1. Поиск продавца для определения seller_phone
+    const { data: seller } = await supabase
+      .from('sellers')
+      .select('seller_phone, seller_id, organization_id')
+      .or(`seller_phone.eq.${decodedId},organization_id.eq.${decodedId},seller_id.eq.${decodedId}`)
+      .maybeSingle();
+
+    const targetPhone = seller?.seller_phone || decodedId;
+
+    // 2. Отвязываем лид, если был привязан
+    await supabase
+      .from('leads')
+      .update({ seller_phone: null, seller_id: null, linked_at: null, status: 'Назначен' } as any)
+      .eq('seller_phone', targetPhone);
+
+    // 3. Удаляем связанные подключения
+    await supabase
+      .from('connections')
+      .delete()
+      .eq('seller_phone', targetPhone);
+
+    // 4. Удаляем продавца
     const { error } = await supabase
       .from('sellers')
       .delete()
-      .or(`seller_phone.eq.${decodedId},organization_id.eq.${decodedId}`);
+      .or(`seller_phone.eq.${targetPhone},seller_id.eq.${decodedId},organization_id.eq.${decodedId}`);
 
     if (error) throw error;
 
-    return apiSuccess({ success: true, deleted_id: decodedId });
+    return apiSuccess({ success: true, deleted_id: decodedId, seller_phone: targetPhone });
   } catch (err) {
     return handleApiError(err);
   }

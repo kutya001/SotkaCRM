@@ -484,6 +484,7 @@ export type Database = {
           lead_id: string
           linked_at: string | null
           phone: string
+          seller_id?: string | null
           seller_phone: string | null
           status: Database["public"]["Enums"]["lead_status"]
           updated_at: string
@@ -499,6 +500,7 @@ export type Database = {
           lead_id?: string
           linked_at?: string | null
           phone: string
+          seller_id?: string | null
           seller_phone?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           updated_at?: string
@@ -514,6 +516,7 @@ export type Database = {
           lead_id?: string
           linked_at?: string | null
           phone?: string
+          seller_id?: string | null
           seller_phone?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           updated_at?: string
@@ -770,6 +773,7 @@ export type Database = {
           brands: string | null
           employees_count: number
           is_active: boolean
+          is_deleted_from_source: boolean
           last_activity: string | null
           manager_id: string | null
           moderation: Database["public"]["Enums"]["seller_moderation_status"]
@@ -778,6 +782,7 @@ export type Database = {
           plan_id: string | null
           plan_name: string
           registered_at: string | null
+          seller_id: string
           seller_name: string
           seller_phone: string
           store: string
@@ -788,6 +793,7 @@ export type Database = {
           brands?: string | null
           employees_count?: number
           is_active?: boolean
+          is_deleted_from_source?: boolean
           last_activity?: string | null
           manager_id?: string | null
           moderation?: Database["public"]["Enums"]["seller_moderation_status"]
@@ -796,6 +802,7 @@ export type Database = {
           plan_id?: string | null
           plan_name?: string
           registered_at?: string | null
+          seller_id?: string
           seller_name: string
           seller_phone: string
           store?: string
@@ -806,6 +813,7 @@ export type Database = {
           brands?: string | null
           employees_count?: number
           is_active?: boolean
+          is_deleted_from_source?: boolean
           last_activity?: string | null
           manager_id?: string | null
           moderation?: Database["public"]["Enums"]["seller_moderation_status"]
@@ -814,6 +822,7 @@ export type Database = {
           plan_id?: string | null
           plan_name?: string
           registered_at?: string | null
+          seller_id?: string
           seller_name?: string
           seller_phone?: string
           store?: string

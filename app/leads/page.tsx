@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type DataJournalTab, PIPELINE_STATUS_OPTIONS } from '@/components/ui/DataJournal';
 import dynamic from 'next/dynamic';
@@ -46,6 +46,7 @@ import type { LeadStatus, UserRole } from '@/types/database.types';
 import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
 
 function LeadsContent() {
+  const router = useRouter();
   const { showToast } = useToast();
   const searchParams = useSearchParams();
   const user = useUser();
@@ -139,6 +140,26 @@ function LeadsContent() {
       showToast(err.message || 'Ошибка удаления лида', 'error');
     } finally {
       setIsDeletingLead(false);
+    }
+  };
+
+  // Диалог подтверждения отвязки продавца от лида
+  const [leadToUnlink, setLeadToUnlink] = React.useState<LeadItem | null>(null);
+  const [isUnlinkingSeller, setIsUnlinkingSeller] = React.useState(false);
+
+  const handleConfirmUnlinkSeller = async () => {
+    if (!leadToUnlink) return;
+    setIsUnlinkingSeller(true);
+    try {
+      await api.leads.unlinkSeller(leadToUnlink.lead_id);
+      showToast('Продавец успешно отвязан. Лид переведен в статус «Назначен»', 'success');
+      setLeadToUnlink(null);
+      setModalState({ isOpen: false, mode: 'view', selectedLead: null });
+      await fetchInitialData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при отвязке продавца', 'error');
+    } finally {
+      setIsUnlinkingSeller(false);
     }
   };
 
@@ -979,6 +1000,34 @@ function LeadsContent() {
             onLinkSeller={handleLinkSeller}
             onDelete={currentUserRole === 'admin' ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
+            linkedBanner={
+              modalState.selectedLead?.seller_phone
+                ? {
+                    title: `Привязанный продавец: +${modalState.selectedLead.seller_phone}`,
+                    description: `Связан ${
+                      modalState.selectedLead.linked_at
+                        ? new Date(modalState.selectedLead.linked_at).toLocaleDateString('ru-RU')
+                        : 'в системе'
+                    }`,
+                    navigateLabel: 'К продавцу',
+                    onNavigate: () => {
+                      router.push(
+                        `/sellers?search=${encodeURIComponent(
+                          modalState.selectedLead?.seller_phone || ''
+                        )}`
+                      );
+                    },
+                    unlinkLabel:
+                      currentUserRole === 'admin' || currentUserRole === 'consultant'
+                        ? 'Отвязать продавца'
+                        : undefined,
+                    onUnlink:
+                      currentUserRole === 'admin' || currentUserRole === 'consultant'
+                        ? () => setLeadToUnlink(modalState.selectedLead)
+                        : undefined,
+                  }
+                : undefined
+            }
           />
         )}
 
@@ -1117,6 +1166,62 @@ function LeadsContent() {
                     <>
                       <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
                       <span>Удалить навсегда</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 9. Диалог подтверждения отвязки продавца от лида */}
+        {leadToUnlink && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <RotateCcw className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Отвязать продавца от лида?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {leadToUnlink.client_name} (Продавец: +{leadToUnlink.seller_phone})
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 space-y-1.5">
+                <p className="text-[11px] leading-relaxed">
+                  При отвязке лид вернется в статус <b>«Назначен»</b>, привязка к продавцу будет разорвана, а у продавца будет сброшен назначенный куратор.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isUnlinkingSeller}
+                  onClick={() => setLeadToUnlink(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isUnlinkingSeller}
+                  onClick={handleConfirmUnlinkSeller}
+                  className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isUnlinkingSeller ? (
+                    <span>Отвязка...</span>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Подтвердить отвязку</span>
                     </>
                   )}
                 </button>

@@ -288,8 +288,8 @@ export const api = {
       return res;
     },
     unlinkSeller: async (id: string) => {
-      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/link-seller`, {
-        method: 'DELETE',
+      const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/unlink-seller`, {
+        method: 'POST',
       });
       invalidateNamespaces('leads', 'sellers', 'connections', 'dashboard', 'analytics');
       return res;
@@ -397,6 +397,36 @@ export const api = {
       invalidateNamespaces('sellers', 'leads', 'connections', 'dashboard', 'analytics');
       return res;
     },
+    unlinkLead: async (sellerPhoneOrId: string) => {
+      const res = await request<any>(`/api/v1/sellers/${encodeURIComponent(sellerPhoneOrId)}/unlink-lead`, {
+        method: 'POST',
+      });
+      invalidateNamespaces('sellers', 'leads', 'connections', 'dashboard', 'analytics');
+      return res;
+    },
+    getTransactions: (sellerPhoneOrId: string, options?: { bypassCache?: boolean }) =>
+      request<{
+        organization_id: string | number | null;
+        seller_phone: string;
+        transactions: {
+          items: Array<{
+            id?: string | number;
+            date?: string;
+            type?: string;
+            description?: string;
+            amount?: number;
+            status?: string;
+          }>;
+          total: number;
+          total_topups: number;
+          total_charges: number;
+          total_amount: number;
+        };
+        warning?: string;
+      }>(`/api/v1/sellers/${encodeURIComponent(sellerPhoneOrId)}/transactions`, {
+        method: 'GET',
+        bypassCache: options?.bypassCache,
+      }),
     syncSotka: async (offset = 0, limit = 50) => {
       const res = await request<{ synced_count: number; total_available: number; duration_ms: number }>(
         '/api/v1/sellers/sync',
@@ -517,6 +547,24 @@ export const api = {
       }>('/api/v1/connections/accrue-all', {
         method: 'POST',
         body: JSON.stringify({ month, settlement_month: month, accrual_type: accrualType }),
+      });
+      invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
+      return res;
+    },
+    batch: async (data: {
+      action: 'update_maintenance_months' | 'accrue_selected';
+      connection_ids: string[];
+      payload?: {
+        months_total?: number;
+        maintenance_months_total?: number;
+        mode?: string;
+        month?: string;
+        settlement_month?: string;
+      };
+    }) => {
+      const res = await request<any>('/api/v1/connections/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
       });
       invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
       return res;

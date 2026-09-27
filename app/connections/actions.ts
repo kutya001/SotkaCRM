@@ -29,6 +29,10 @@ export interface ConnectionItem {
   total_bonus?: number;
   total_paid?: number;
   balance_remaining?: number;
+  connection_bonus_accrued?: number;
+  maintenance_bonus_accrued?: number;
+  has_connection_accrual?: boolean;
+  has_maintenance_accrual?: boolean;
   manager_user?: {
     user_id: string;
     full_name: string;
@@ -213,32 +217,72 @@ export async function getConnections(
     }
   }
 
-  // Обогащение данными начислений/выплат
+  // Обогащение данными реальных проводок из employee_payouts
   const connectionIds = (rawConnections || []).map((c) => c.connection_id);
-  const accrualsMap = new Map<string, { totalBonus: number; totalPaid: number }>();
+  const accrualsMap = new Map<
+    string,
+    {
+      totalBonus: number;
+      totalPaid: number;
+      connectionAccrued: number;
+      maintenanceAccrued: number;
+      hasConnectionAccrual: boolean;
+      hasMaintenanceAccrual: boolean;
+    }
+  >();
+
   if (connectionIds.length > 0) {
-    const { data: accrualsData } = await supabase
-      .from('connection_accruals')
-      .select('connection_id, amount, is_paid')
+    const { data: payoutsData } = await supabase
+      .from('employee_payouts')
+      .select('connection_id, operation_type, operation_sign, amount, status')
       .in('connection_id', connectionIds);
 
-    if (accrualsData) {
-      accrualsData.forEach((a) => {
-        const cur = accrualsMap.get(a.connection_id) || { totalBonus: 0, totalPaid: 0 };
-        const amt = Number(a.amount) || 0;
-        cur.totalBonus += amt;
-        if (a.is_paid) {
+    if (payoutsData) {
+      payoutsData.forEach((p) => {
+        if (!p.connection_id) return;
+        const cur = accrualsMap.get(p.connection_id) || {
+          totalBonus: 0,
+          totalPaid: 0,
+          connectionAccrued: 0,
+          maintenanceAccrued: 0,
+          hasConnectionAccrual: false,
+          hasMaintenanceAccrual: false,
+        };
+        const amt = Number(p.amount) || 0;
+        if (p.operation_type === 'accrual_connection') {
+          cur.connectionAccrued += amt;
+          cur.hasConnectionAccrual = true;
+          cur.totalBonus += amt;
+        } else if (p.operation_type === 'accrual_maintenance') {
+          cur.maintenanceAccrued += amt;
+          cur.hasMaintenanceAccrual = true;
+          cur.totalBonus += amt;
+        } else if (
+          p.operation_type === 'payout' ||
+          p.operation_type === 'advance' ||
+          p.operation_sign === '-'
+        ) {
           cur.totalPaid += amt;
         }
-        accrualsMap.set(a.connection_id, cur);
+        if (p.status === 'paid' && p.operation_sign === '+') {
+          cur.totalPaid += amt;
+        }
+        accrualsMap.set(p.connection_id, cur);
       });
     }
   }
 
   const enriched: ConnectionItem[] = (rawConnections || []).map((conn) => {
-    const acc = accrualsMap.get(conn.connection_id) || { totalBonus: 0, totalPaid: 0 };
-    const totalBonus = acc.totalBonus || Number(conn.connection_fee_amount || 0);
-    const totalPaid = acc.totalPaid || 0;
+    const acc = accrualsMap.get(conn.connection_id) || {
+      totalBonus: 0,
+      totalPaid: 0,
+      connectionAccrued: 0,
+      maintenanceAccrued: 0,
+      hasConnectionAccrual: false,
+      hasMaintenanceAccrual: false,
+    };
+    const totalBonus = acc.totalBonus;
+    const totalPaid = acc.totalPaid;
     const balanceRemaining = Math.max(0, totalBonus - totalPaid);
 
     return {
@@ -249,6 +293,10 @@ export async function getConnections(
       total_bonus: totalBonus,
       total_paid: totalPaid,
       balance_remaining: balanceRemaining,
+      connection_bonus_accrued: acc.connectionAccrued,
+      maintenance_bonus_accrued: acc.maintenanceAccrued,
+      has_connection_accrual: acc.hasConnectionAccrual,
+      has_maintenance_accrual: acc.hasMaintenanceAccrual,
       manager_user: usersMap.get(conn.manager_id) || null,
       assigned_user: usersMap.get(conn.assigned_by) || null,
     };

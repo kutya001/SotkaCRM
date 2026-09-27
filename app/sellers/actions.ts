@@ -25,6 +25,7 @@ export interface LinkedLeadInfo {
 }
 
 export interface SellerItem {
+  seller_id?: string;
   seller_phone: string;
   seller_name: string;
   store: string;
@@ -33,6 +34,7 @@ export interface SellerItem {
   plan_id: string | null;
   moderation: SellerModerationStatus;
   is_active: boolean;
+  is_deleted_from_source?: boolean;
   outlets_count: number;
   employees_count: number;
   brands: string | null;
@@ -830,6 +832,7 @@ export async function syncSellersFromSotka(
         organization_id: s.organization_id || null,
         manager_id: s.manager_id || null,
         synced_at: s.synced_at || new Date().toISOString(),
+        is_deleted_from_source: false,
       };
       const existing = dedupedByPhoneMap.get(s.seller_phone);
       dedupedByPhoneMap.set(s.seller_phone, {
@@ -858,6 +861,51 @@ export async function syncSellersFromSotka(
         throw new Error(`Ошибка сохранения продавцов в базу данных: ${chunkUpsertErr.message}`);
       }
       savedCount += chunk.length;
+    }
+
+    // 8. Выявление продавцов, удаленных во внешнем Sotka HQ API (Soft-delete)
+    const syncedOrgIds = items
+      .map((item) => (item.organization_id !== undefined && item.organization_id !== null ? String(item.organization_id) : ''))
+      .filter(Boolean);
+
+    if (syncedOrgIds.length > 0) {
+      try {
+        // Получаем всех локальных продавцов с organization_id
+        const { data: allLocalSellers } = await supabase
+          .from('sellers')
+          .select('seller_phone, organization_id')
+          .not('organization_id', 'is', null);
+
+        if (allLocalSellers && allLocalSellers.length > 0) {
+          const syncedSet = new Set(syncedOrgIds);
+          const phonesToMarkDeleted: string[] = [];
+          const phonesToMarkActive: string[] = [];
+
+          for (const ls of allLocalSellers) {
+            if (ls.organization_id && !syncedSet.has(String(ls.organization_id))) {
+              phonesToMarkDeleted.push(ls.seller_phone);
+            } else {
+              phonesToMarkActive.push(ls.seller_phone);
+            }
+          }
+
+          if (phonesToMarkDeleted.length > 0) {
+            await supabase
+              .from('sellers')
+              .update({ is_deleted_from_source: true, updated_at: new Date().toISOString() } as any)
+              .in('seller_phone', phonesToMarkDeleted);
+          }
+
+          if (phonesToMarkActive.length > 0) {
+            await supabase
+              .from('sellers')
+              .update({ is_deleted_from_source: false } as any)
+              .in('seller_phone', phonesToMarkActive);
+          }
+        }
+      } catch (softDelErr) {
+        console.warn('[syncSellersFromSotka] Ошибка при актуализации is_deleted_from_source:', softDelErr);
+      }
     }
 
     // Подробное серверное логирование
@@ -907,5 +955,56 @@ export async function getSellerDetailFromSotka(
     };
   }
 }
+
+/**
+ * Безвозвратное удаление продавца администратором системы (с каскадной очисткой связок)
+ */
+export async function deleteSellerPermanently(
+  sellerPhoneOrId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    // 1. Находим продавца
+    const { data: seller } = await supabase
+      .from('sellers')
+      .select('seller_phone, seller_id')
+      .or(`seller_phone.eq.${sellerPhoneOrId},seller_id.eq.${sellerPhoneOrId}`)
+      .maybeSingle();
+
+    const targetPhone = seller?.seller_phone || sellerPhoneOrId;
+
+    // 2. Отвязываем лиды
+    await supabase
+      .from('leads')
+      .update({ seller_phone: null, seller_id: null, linked_at: null, status: 'Назначен' } as any)
+      .eq('seller_phone', targetPhone);
+
+    // 3. Удаляем связанные подключения
+    await supabase
+      .from('connections')
+      .delete()
+      .eq('seller_phone', targetPhone);
+
+    // 4. Удаляем самого продавца
+    const { error: delErr } = await supabase
+      .from('sellers')
+      .delete()
+      .or(`seller_phone.eq.${targetPhone},seller_id.eq.${sellerPhoneOrId}`);
+
+    if (delErr) throw delErr;
+
+    revalidatePath('/sellers');
+    revalidatePath('/leads');
+    revalidatePath('/connections');
+    revalidatePath('/analytics');
+    revalidatePath('/');
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка полного удаления продавца' };
+  }
+}
+
 
 

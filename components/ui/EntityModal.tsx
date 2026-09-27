@@ -67,6 +67,19 @@ export interface EntityModalProps<T extends Record<string, any>> {
   onDelete?: (data: T) => void;
   deleteLabel?: string;
   createSubmitLabel?: string;
+  linkedBanner?: {
+    title: string;
+    description?: string;
+    onNavigate?: () => void;
+    navigateLabel?: string;
+    onUnlink?: () => void;
+    unlinkLabel?: string;
+    isUnlinking?: boolean;
+  };
+  tabs?: { id: string; label: string; icon?: React.ComponentType<{ className?: string }> }[];
+  activeTab?: string;
+  onTabChange?: (tabId: string) => void;
+  renderTabContent?: (tabId: string) => React.ReactNode;
 }
 
 export function EntityModal<T extends Record<string, any>>({
@@ -87,6 +100,11 @@ export function EntityModal<T extends Record<string, any>>({
   onDelete,
   deleteLabel = 'Удалить навсегда',
   createSubmitLabel = 'Сохранить запись',
+  linkedBanner,
+  tabs,
+  activeTab = 'main',
+  onTabChange,
+  renderTabContent,
 }: EntityModalProps<T>) {
   const { showToast } = useToast();
 
@@ -328,9 +346,86 @@ export function EntityModal<T extends Record<string, any>>({
           </div>
         )}
 
-        {/* 3. ТЕЛО ФОРМЫ (Скроллируемый список полей) */}
-        <form id="entity-modal-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* 2.1. ВКЛАДКИ СУЩНОСТИ (Tabs) в режиме View */}
+        {tabs && tabs.length > 0 && mode === 'view' && (
+          <div className="px-6 border-b border-zinc-200/70 dark:border-zinc-800/70 flex gap-2 overflow-x-auto bg-zinc-50/50 dark:bg-zinc-800/20">
+            {tabs.map((tab) => {
+              const isActive = (activeTab || tabs[0].id) === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onTabChange?.(tab.id)}
+                  className={`py-2.5 px-3 text-xs font-semibold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                  }`}
+                >
+                  {Icon && <Icon className="w-3.5 h-3.5" />}
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Контент кастомной вкладки */}
+        {activeTab && activeTab !== 'main' && renderTabContent && mode === 'view' ? (
+          <div className="flex-1 overflow-y-auto p-6">
+            {renderTabContent(activeTab)}
+          </div>
+        ) : (
+          /* 3. ТЕЛО ФОРМЫ (Скроллируемый список полей) */
+          <form id="entity-modal-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
+            {/* Плашка связанной сущности */}
+            {linkedBanner && mode === 'view' && (
+              <div className="p-3.5 rounded-2xl bg-purple-50/80 dark:bg-purple-950/20 border border-purple-200/60 dark:border-purple-800/40 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
+                    <Link2 className="w-4 h-4" strokeWidth={1.75} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                      {linkedBanner.title}
+                    </div>
+                    {linkedBanner.description && (
+                      <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                        {linkedBanner.description}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {linkedBanner.onNavigate && (
+                    <button
+                      type="button"
+                      onClick={linkedBanner.onNavigate}
+                      className="h-7 px-2.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>{linkedBanner.navigateLabel || 'Перейти'}</span>
+                    </button>
+                  )}
+                  {linkedBanner.onUnlink && (
+                    <button
+                      type="button"
+                      disabled={linkedBanner.isUnlinking}
+                      onClick={linkedBanner.onUnlink}
+                      className="h-7 px-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    >
+                      {linkedBanner.isUnlinking ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <RotateCcw className="w-3 h-3" strokeWidth={1.75} />
+                      )}
+                      <span>{linkedBanner.unlinkLabel || 'Отвязать'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {fields
               .filter((f) => mode !== 'create' || !f.isSystem)
               .map((field) => {
@@ -502,6 +597,7 @@ export function EntityModal<T extends Record<string, any>>({
               })}
           </div>
         </form>
+        )}
 
         {/* 4. ПОДВАЛ (Footer) */}
         <div className="px-6 py-4 border-t border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/80 dark:bg-zinc-900/80 flex items-center justify-between gap-2.5">

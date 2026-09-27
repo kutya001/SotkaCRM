@@ -166,6 +166,79 @@ export default function ConnectionsPage() {
     }
   };
 
+  // Массовые действия для администратора (Bulk Operations)
+  const [selectedConnectionIds, setSelectedConnectionIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
+
+  const [bulkMaintenanceModal, setBulkMaintenanceModal] = React.useState<{
+    isOpen: boolean;
+    months: number;
+  }>({
+    isOpen: false,
+    months: 2,
+  });
+
+  const [bulkAccrueModal, setBulkAccrueModal] = React.useState<{
+    isOpen: boolean;
+    mode: 'all' | 'connection_only' | 'maintenance_only';
+    month: string;
+  }>({
+    isOpen: false,
+    mode: 'all',
+    month: new Date().toISOString().slice(0, 7),
+  });
+
+  const handleBulkUpdateMaintenanceMonths = async (clearSelection: () => void) => {
+    if (selectedConnectionIds.length === 0) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.connections.batch({
+        action: 'update_maintenance_months',
+        connection_ids: selectedConnectionIds,
+        payload: {
+          maintenance_months_total: bulkMaintenanceModal.months,
+        },
+      });
+      showToast(
+        `Срок сопровождения обновлен (${bulkMaintenanceModal.months} мес.) для ${res.updated_count || selectedConnectionIds.length} подключений`,
+        'success'
+      );
+      setBulkMaintenanceModal({ isOpen: false, months: 2 });
+      clearSelection();
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового обновления срока', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleBulkAccrueSelected = async (clearSelection: () => void) => {
+    if (selectedConnectionIds.length === 0) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.connections.batch({
+        action: 'accrue_selected',
+        connection_ids: selectedConnectionIds,
+        payload: {
+          mode: bulkAccrueModal.mode,
+          settlement_month: bulkAccrueModal.month,
+        },
+      });
+      showToast(
+        `Начисления выполнены: ${res.connection_accruals_created || 0} за подкл., ${res.maintenance_accruals_created || 0} за сопр.`,
+        'success'
+      );
+      setBulkAccrueModal({ isOpen: false, mode: 'all', month: new Date().toISOString().slice(0, 7) });
+      clearSelection();
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка начисления выбранным', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
   // Загрузка данных
   const fetchData = React.useCallback(async (month?: string, status?: string) => {
     setIsLoading(true);
@@ -528,11 +601,22 @@ export default function ConnectionsPage() {
         minWidth: 140,
         sortable: true,
         filterable: true,
-        renderCell: (row) => (
-          <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-            +{Number(row.connection_fee_amount).toLocaleString('ru-RU')} сом
-          </span>
-        ),
+        renderCell: (row) => {
+          const hasAccrual = row.has_connection_accrual || (row.connection_bonus_accrued || 0) > 0;
+          const amt = row.connection_bonus_accrued || 0;
+          if (!hasAccrual || amt <= 0) {
+            return (
+              <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
+                0 сом
+              </span>
+            );
+          }
+          return (
+            <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+              +{Number(amt).toLocaleString('ru-RU')} сом
+            </span>
+          );
+        },
       },
       {
         key: 'accrual_month',
@@ -582,10 +666,18 @@ export default function ConnectionsPage() {
         sortable: true,
         filterable: false,
         renderCell: (row) => {
-          const fee = row.maintenance_fee_monthly || Math.round((Number(row.plan_price) || 0) * 0.1);
+          const hasAccrual = row.has_maintenance_accrual || (row.maintenance_bonus_accrued || 0) > 0;
+          const amt = row.maintenance_bonus_accrued || 0;
+          if (!hasAccrual || amt <= 0) {
+            return (
+              <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
+                0 сом
+              </span>
+            );
+          }
           return (
-            <span className="font-mono text-xs font-semibold text-purple-600 dark:text-purple-400">
-              +{Number(fee).toLocaleString('ru-RU')} сом/мес
+            <span className="font-mono text-xs font-bold text-purple-600 dark:text-purple-400">
+              +{Number(amt).toLocaleString('ru-RU')} сом
             </span>
           );
         },
@@ -597,11 +689,21 @@ export default function ConnectionsPage() {
         minWidth: 120,
         sortable: true,
         filterable: false,
-        renderCell: (row) => (
-          <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-            +{Number(row.total_bonus ?? row.connection_fee_amount).toLocaleString('ru-RU')} сом
-          </span>
-        ),
+        renderCell: (row) => {
+          const total = Number(row.total_bonus || 0);
+          if (total <= 0) {
+            return (
+              <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
+                0 сом
+              </span>
+            );
+          }
+          return (
+            <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+              +{total.toLocaleString('ru-RU')} сом
+            </span>
+          );
+        },
       },
       {
         key: 'client_status',
@@ -783,6 +885,36 @@ export default function ConnectionsPage() {
           externalSearchQuery={searchQuery}
           customActions={connectionActions}
           customRowActions={renderCustomRowActions}
+          enableSelection={currentUserRole === 'admin'}
+          selectedIds={selectedConnectionIds}
+          onSelectionChange={setSelectedConnectionIds}
+          renderBulkActions={(ids, clearSelection) => (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkMaintenanceModal({ isOpen: true, months: 2 })}
+                className="h-8 px-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-semibold border border-purple-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Срок сопр. ({ids.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setBulkAccrueModal({
+                    isOpen: true,
+                    mode: 'all',
+                    month: new Date().toISOString().slice(0, 7),
+                  })
+                }
+                className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <Coins className="w-3.5 h-3.5" />
+                <span>Начислить ({ids.length})</span>
+              </button>
+            </div>
+          )}
         />
 
         {/* 4. Модальное окно деталей закрепления и смены статуса (Glassmorphism) */}
@@ -1093,24 +1225,8 @@ export default function ConnectionsPage() {
                 ) : null}
               </div>
 
-              {/* История начислений ЗП */}
-              <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50 space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
-                    <Receipt className="w-3.5 h-3.5 text-blue-500" strokeWidth={1.75} />
-                    <span>История начислений ЗП</span>
-                  </span>
-                  <div className="flex items-center gap-2 font-mono text-[11px]">
-                    <span className="text-zinc-400">Бонусы:</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                      +{Number(selectedConnection.total_bonus ?? selectedConnection.connection_fee_amount).toLocaleString('ru-RU')} с
-                    </span>
-                    <span className="text-zinc-400">Выплачено:</span>
-                    <span className="text-blue-600 dark:text-blue-400 font-bold">
-                      {Number(selectedConnection.total_paid ?? 0).toLocaleString('ru-RU')} с
-                    </span>
-                  </div>
-                </div>
+              {/* Проводки начислений ЗП */}
+              <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50">
                 <ConnectionAccrualsSection
                   connectionId={selectedConnection.connection_id}
                   isAdmin={currentUserRole === 'admin'}
@@ -1204,6 +1320,173 @@ export default function ConnectionsPage() {
                       <span>Удалить подключение</span>
                     </>
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 7. Диалог массового изменения срока сопровождения */}
+        {bulkMaintenanceModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                  <Clock className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Изменить срок сопровождения
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Выбрано подключений: {selectedConnectionIds.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Общий срок сопровождения (месяцев):
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="24"
+                  value={bulkMaintenanceModal.months}
+                  onChange={(e) =>
+                    setBulkMaintenanceModal((prev) => ({
+                      ...prev,
+                      months: Math.max(1, parseInt(e.target.value) || 1),
+                    }))
+                  }
+                  className="w-full px-3 py-2 text-sm font-mono font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <p className="text-[11px] text-zinc-400">
+                  Значение будет установлено для всех выбранных клиентов.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() => setBulkMaintenanceModal({ isOpen: false, months: 2 })}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() =>
+                    handleBulkUpdateMaintenanceMonths(() => setSelectedConnectionIds([]))
+                  }
+                  className="h-9 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isBatchLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  )}
+                  <span>Применить срок</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 8. Диалог массового начисления бонусов выбранным */}
+        {bulkAccrueModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                  <Coins className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Начислить бонусы выбранным
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Выбрано клиентов: {selectedConnectionIds.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Тип начисления:
+                  </label>
+                  <select
+                    value={bulkAccrueModal.mode}
+                    onChange={(e) =>
+                      setBulkAccrueModal((prev) => ({
+                        ...prev,
+                        mode: e.target.value as any,
+                      }))
+                    }
+                    className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">Все начисления (Подключение + Сопровождение)</option>
+                    <option value="connection_only">Только первичное подключение</option>
+                    <option value="maintenance_only">Только ежемесячное сопровождение</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Расчетный месяц:
+                  </label>
+                  <input
+                    type="month"
+                    value={bulkAccrueModal.month}
+                    onChange={(e) =>
+                      setBulkAccrueModal((prev) => ({
+                        ...prev,
+                        month: e.target.value,
+                      }))
+                    }
+                    className="w-full px-3 py-2 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() =>
+                    setBulkAccrueModal({
+                      isOpen: false,
+                      mode: 'all',
+                      month: new Date().toISOString().slice(0, 7),
+                    })
+                  }
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() =>
+                    handleBulkAccrueSelected(() => setSelectedConnectionIds([]))
+                  }
+                  className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isBatchLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Coins className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  )}
+                  <span>Запустить начисление</span>
                 </button>
               </div>
             </div>

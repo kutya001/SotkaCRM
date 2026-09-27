@@ -11,6 +11,7 @@ import { api } from '@/lib/api/client';
 import {
   getSellersStats,
   getManagersList,
+  deleteSellerPermanently,
   type SellerItem,
   type SellersStats,
 } from './actions';
@@ -32,7 +33,9 @@ import {
   Trash2,
   Users,
   UserMinus,
+  Receipt,
 } from 'lucide-react';
+import { SellerTransactionsTab } from '@/components/sellers/SellerTransactionsTab';
 import { createClient } from '@/lib/supabase/client';
 import dynamic from 'next/dynamic';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -117,6 +120,54 @@ export default function SellersPage() {
     isOpen: false,
     seller: null,
   });
+
+  // Состояние активной вкладки модального окна продавца
+  const [sellerModalTab, setSellerModalTab] = React.useState<string>('main');
+
+  // Состояние диалога отвязки лида от продавца
+  const [sellerToUnlink, setSellerToUnlink] = React.useState<SellerItem | null>(null);
+  const [isUnlinkingLead, setIsUnlinkingLead] = React.useState(false);
+
+  // Состояние диалога безвозвратного удаления продавца (Admin Only)
+  const [sellerToDelete, setSellerToDelete] = React.useState<SellerItem | null>(null);
+  const [isDeletingSeller, setIsDeletingSeller] = React.useState(false);
+
+  const handleConfirmUnlinkLead = async () => {
+    if (!sellerToUnlink) return;
+    setIsUnlinkingLead(true);
+    try {
+      await api.sellers.unlinkLead(sellerToUnlink.seller_phone);
+      showToast('Лид успешно отвязан от продавца', 'success');
+      setSellerToUnlink(null);
+      setModalState({ isOpen: false, mode: 'view', selectedSeller: null });
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при отвязке лида', 'error');
+    } finally {
+      setIsUnlinkingLead(false);
+    }
+  };
+
+  const handleConfirmDeleteSeller = async () => {
+    if (!sellerToDelete) return;
+    setIsDeletingSeller(true);
+    try {
+      const res = await deleteSellerPermanently(sellerToDelete.seller_phone);
+      if (!res.success) {
+        throw new Error(res.error || 'Ошибка при удалении');
+      }
+      showToast('Продавец навсегда удален из базы', 'success');
+      setSellerToDelete(null);
+      if (modalState.selectedSeller?.seller_phone === sellerToDelete.seller_phone) {
+        setModalState({ isOpen: false, mode: 'view', selectedSeller: null });
+      }
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка удаления продавца', 'error');
+    } finally {
+      setIsDeletingSeller(false);
+    }
+  };
 
   // Поиск и Фильтры (ЯРУС 1)
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -308,12 +359,23 @@ export default function SellersPage() {
         filterable: true,
         renderCell: (row: SellerItem) => (
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-medium text-xs flex-shrink-0">
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-medium text-xs flex-shrink-0 ${
+              row.is_deleted_from_source
+                ? 'bg-rose-500/10 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400'
+            }`}>
               <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
             </div>
             <div className="min-w-0">
-              <div className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
-                {row.seller_name || 'Не указано'}
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                  {row.seller_name || 'Не указано'}
+                </span>
+                {row.is_deleted_from_source && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex-shrink-0">
+                    Удален в HQ
+                  </span>
+                )}
               </div>
               <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                 {row.store || 'Без названия'}
@@ -871,9 +933,16 @@ export default function SellersPage() {
                 <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
               </div>
               <div className="min-w-0">
-                <h4 className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
-                  {seller.seller_name || 'Без имени'}
-                </h4>
+                <div className="flex items-center gap-1.5 truncate">
+                  <h4 className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
+                    {seller.seller_name || 'Без имени'}
+                  </h4>
+                  {seller.is_deleted_from_source && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex-shrink-0">
+                      Удален в HQ
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                   {seller.store || 'Без названия'}
                 </p>
@@ -1035,24 +1104,47 @@ export default function SellersPage() {
 
   const renderCustomRowActions = React.useCallback(
     (row: SellerItem) => {
-      if (!hasAvailableLeads || (currentUserRole !== 'admin' && currentUserRole !== 'consultant')) {
+      const canLink =
+        hasAvailableLeads &&
+        (currentUserRole === 'admin' || currentUserRole === 'consultant') &&
+        !row.linked_lead &&
+        !row.manager_id;
+      const canDelete = currentUserRole === 'admin';
+
+      if (!canLink && !canDelete) {
         return null;
       }
-      if (row.linked_lead || row.manager_id) {
-        return null;
-      }
+
       return (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setLinkLeadModal({ isOpen: true, seller: row });
-          }}
-          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 flex items-center gap-2.5 transition-colors"
-        >
-          <Plus className="w-4 h-4 text-blue-500" strokeWidth={1.75} />
-          <span>Связать с лидом</span>
-        </button>
+        <div className="space-y-1">
+          {canLink && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLinkLeadModal({ isOpen: true, seller: row });
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-blue-500" strokeWidth={1.75} />
+              <span>Связать с лидом</span>
+            </button>
+          )}
+
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSellerToDelete(row);
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
+              <span>{row.is_deleted_from_source ? 'Удалить навсегда (в HQ удален)' : 'Удалить навсегда'}</span>
+            </button>
+          )}
+        </div>
       );
     },
     [hasAvailableLeads, currentUserRole]
@@ -1210,13 +1302,14 @@ export default function SellersPage() {
             customActions={sellerActions}
             customRowActions={renderCustomRowActions}
             renderCard={renderSellerCard}
-            onRowClick={(seller) =>
+            onRowClick={(seller) => {
+              setSellerModalTab('main');
               setModalState({
                 isOpen: true,
                 mode: 'view',
                 selectedSeller: seller,
-              })
-            }
+              });
+            }}
           />
         )}
 
@@ -1231,6 +1324,53 @@ export default function SellersPage() {
             keyField="seller_phone"
             phoneField="seller_phone"
             initialMode="view"
+            tabs={[
+              { id: 'main', label: 'Основная информация', icon: Store },
+              { id: 'transactions', label: 'Транзакции Sotka HQ', icon: Receipt },
+            ]}
+            activeTab={sellerModalTab}
+            onTabChange={setSellerModalTab}
+            renderTabContent={(tabId) =>
+              tabId === 'transactions' && modalState.selectedSeller ? (
+                <SellerTransactionsTab
+                  sellerPhoneOrId={
+                    modalState.selectedSeller.organization_id
+                      ? String(modalState.selectedSeller.organization_id)
+                      : modalState.selectedSeller.seller_phone
+                  }
+                />
+              ) : null
+            }
+            linkedBanner={
+              modalState.selectedSeller?.linked_lead
+                ? {
+                    title: `Привлечен через лид: ${modalState.selectedSeller.linked_lead.client_name}`,
+                    description: `Статус воронки: ${modalState.selectedSeller.linked_lead.status}`,
+                    navigateLabel: 'К лиду',
+                    onNavigate: () => {
+                      router.push(
+                        `/leads?search=${encodeURIComponent(
+                          modalState.selectedSeller?.linked_lead?.client_name || ''
+                        )}`
+                      );
+                    },
+                    unlinkLabel:
+                      currentUserRole === 'admin' || currentUserRole === 'consultant'
+                        ? 'Отвязать лид'
+                        : undefined,
+                    onUnlink:
+                      currentUserRole === 'admin' || currentUserRole === 'consultant'
+                        ? () => setSellerToUnlink(modalState.selectedSeller)
+                        : undefined,
+                  }
+                : undefined
+            }
+            onDelete={
+              currentUserRole === 'admin' && modalState.selectedSeller?.is_deleted_from_source
+                ? (seller) => setSellerToDelete(seller as SellerItem)
+                : undefined
+            }
+            deleteLabel="Удалить навсегда (удален в HQ)"
           />
         )}
 
@@ -1242,6 +1382,122 @@ export default function SellersPage() {
             seller={linkLeadModal.seller}
             onSuccess={() => fetchSellersData(1, searchQuery, true)}
           />
+        )}
+
+        {/* Диалог подтверждения отвязки лида от продавца */}
+        {sellerToUnlink && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <RotateCcw className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Отвязать лид от продавца?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {sellerToUnlink.seller_name || sellerToUnlink.store} (+{sellerToUnlink.seller_phone})
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 space-y-1.5">
+                <p className="text-[11px] leading-relaxed">
+                  При отвязке связанный лид вернется в статус <b>«Назначен»</b>, а у данного продавца будет сброшен назначенный куратор.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isUnlinkingLead}
+                  onClick={() => setSellerToUnlink(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isUnlinkingLead}
+                  onClick={handleConfirmUnlinkLead}
+                  className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isUnlinkingLead ? (
+                    <span>Отвязка...</span>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Подтвердить отвязку</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Диалог подтверждения безвозвратного удаления продавца */}
+        {sellerToDelete && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Удалить продавца навсегда?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {sellerToDelete.seller_name || sellerToDelete.store} (+{sellerToDelete.seller_phone})
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 space-y-1.5">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                  <span>Внимание: действие необратимо</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  Запись продавца будет физически удалена из локальной базы данных SotkaCRM. Все привязанные лиды будут автоматически отвязаны.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingSeller}
+                  onClick={() => setSellerToDelete(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingSeller}
+                  onClick={handleConfirmDeleteSeller}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isDeletingSeller ? (
+                    <span>Удаление...</span>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Удалить навсегда</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AppLayout>

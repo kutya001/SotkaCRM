@@ -26,6 +26,7 @@ export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isAuthPage = pathname.startsWith('/login');
   const isApiRoute = pathname.startsWith('/api');
+  const isDocsPage = pathname.startsWith('/docs') || pathname.startsWith('/openapi.json');
 
   // Fast-path: проверка наличия токена сессии Supabase Auth в cookie заголовках
   const allCookies = request.cookies.getAll();
@@ -37,8 +38,8 @@ export async function updateSession(request: NextRequest) {
 
   // Если авторизационных кук нет вообще:
   if (!hasAuthCookie) {
-    if (isAuthPage || isApiRoute) {
-      // На странице входа или в API сразу пропускаем без сетевого запроса к Supabase Auth
+    if (isAuthPage || isApiRoute || isDocsPage) {
+      // На странице входа, в API или документации сразу пропускаем без сетевого запроса к Supabase Auth
       return supabaseResponse;
     }
     // На защищенных страницах моментально редиректим на /login без внешнего сетевого вызова
@@ -72,7 +73,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // 2. Редирект неавторизованных пользователей (если токен был невалиден/просрочен)
-  if (!user && !isAuthPage && !isApiRoute) {
+  if (!user && !isAuthPage && !isApiRoute && !isDocsPage) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return createRedirectWithCookies(url, supabaseResponse);
@@ -86,7 +87,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   // 4. Защита маршрутов по ролевой модели (RBAC)
-  if (user && !isApiRoute && !isAuthPage) {
+  if (user && !isApiRoute && !isAuthPage && !isDocsPage) {
     let role = request.cookies.get('crm_role')?.value;
     let isActive = request.cookies.get('crm_active')?.value;
 

@@ -1,0 +1,365 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "SotkaCRM API & Integration Gateway",
+    "version": "1.0.0",
+    "description": "Спецификация API шлюза синхронизации SotkaCRM и внешних контрактов взаимодействия с Sotka HQ (обзор продавцов, карточка организации, вебхуки)."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Локальный сервер разработки"
+    },
+    {
+      "url": "https://sotkacrm.vercel.app",
+      "description": "Production (Vercel)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Sync Gateway",
+      "description": "Внутренние эндпоинты синхронизации SotkaCRM"
+    },
+    {
+      "name": "Sotka HQ Sellers",
+      "description": "Контракты интеграции с внешним API продавцов Sotka HQ"
+    }
+  ],
+  "paths": {
+    "/api/sync/sotka": {
+      "get": {
+        "tags": ["Sync Gateway"],
+        "summary": "Проверка статуса шлюза синхронизации",
+        "description": "Служебный эндпоинт для проверки доступности шлюза и конфигурации API ключей.",
+        "responses": {
+          "200": {
+            "description": "Шлюз синхронизации активен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "timestamp": { "type": "string", "format": "date-time", "example": "2026-09-27T10:00:00Z" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Sync Gateway"],
+        "summary": "Вебхук синхронизации данных из Sotka",
+        "description": "Принимает входящие события от платформы Sotka (создание продавца, изменение статуса модерации, обновление лида).",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "description": "Секретный ключ вебхука CRM для валидации источника",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SyncWebhookPayload" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Событие успешно обработано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "processed_id": { "type": "integer", "example": 1024 }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Недействительный или отсутствующий API-ключ",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Ошибка валидации структуры полезной нагрузки",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/private/v1/admin/sellers-overview/": {
+      "get": {
+        "tags": ["Sotka HQ Sellers"],
+        "summary": "Обзор реестра продавцов Sotka HQ",
+        "description": "Возвращает сводный список продавцов с пагинацией и агрегированными показателями (магазины, точки, баланс). Каждая запись упакована в корневой ключ `detail`.",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Смещение пагинации",
+            "schema": { "type": "integer", "default": 0 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Количество записей на страницу (максимум 200)",
+            "schema": { "type": "integer", "default": 50, "maximum": 200 }
+          },
+          {
+            "name": "moderation_status",
+            "in": "query",
+            "required": false,
+            "description": "Фильтр по статусу модерации",
+            "schema": {
+              "type": "string",
+              "enum": ["pending", "approved", "rejected", "blocked"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список продавцов успешно получен",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SellersOverviewResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Не авторизован",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "403": {
+            "description": "Доступ запрещен",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/private/v1/admin/sellers-overview/{organization_id}/": {
+      "get": {
+        "tags": ["Sotka HQ Sellers"],
+        "summary": "Детальная карточка продавца Sotka HQ",
+        "description": "Возвращает расширенную информацию по организации: контакты, юридические реквизиты, тарифную сетку, историю модерации и финансовые транзакции.",
+        "parameters": [
+          {
+            "name": "organization_id",
+            "in": "path",
+            "required": true,
+            "description": "Идентификатор организации продавца в Sotka HQ",
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Детальные данные продавца",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SellerDetailResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Организация продавца не найдена",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "detail": { "type": "string", "example": "Unauthorized or invalid payload" }
+        }
+      },
+      "SyncWebhookPayload": {
+        "type": "object",
+        "required": ["event", "data"],
+        "properties": {
+          "event": {
+            "type": "string",
+            "enum": ["seller.created", "seller.updated", "lead.assigned", "moderation.changed"],
+            "example": "seller.updated"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "organization_id": { "type": "integer", "example": 451 },
+              "status": { "type": "string", "example": "approved" },
+              "comment": { "type": "string", "example": "Документы подтверждены" }
+            }
+          }
+        }
+      },
+      "SellerOverviewItem": {
+        "type": "object",
+        "properties": {
+          "organization_id": { "type": "integer", "example": 1024 },
+          "seller_name": { "type": "string", "example": "Алмаз Садыков" },
+          "seller_phone": { "type": "string", "example": "+996555123456" },
+          "iso_code": { "type": "string", "example": "KG" },
+          "store": { "type": "string", "example": "Sotka Store Bishkek" },
+          "moderation": { "type": "string", "enum": ["pending", "approved", "rejected", "blocked"], "example": "approved" },
+          "is_active": { "type": "boolean", "example": true },
+          "outlets_count": { "type": "integer", "example": 3 },
+          "employees_count": { "type": "integer", "example": 8 },
+          "plans": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": ["Standard", "POS Integration"]
+          },
+          "brands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": ["Apple", "Samsung", "Xiaomi"]
+          },
+          "balance": { "type": "number", "example": 45200.5 },
+          "registered_at": { "type": "string", "format": "date-time", "example": "2026-02-14T09:30:00Z" },
+          "last_activity": { "type": "string", "format": "date-time", "nullable": true, "example": "2026-09-27T08:15:20Z" }
+        }
+      },
+      "SellersOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/SellerOverviewItem" }
+              },
+              "total": { "type": "integer", "example": 142 },
+              "on_platform": { "type": "integer", "example": 110 },
+              "pending_moderation": { "type": "integer", "example": 12 },
+              "approved_moderation": { "type": "integer", "example": 115 },
+              "blocked_organizations": { "type": "integer", "example": 5 },
+              "total_balance": { "type": "number", "example": 1845000 }
+            }
+          }
+        }
+      },
+      "SellerDetailResponse": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "object",
+            "properties": {
+              "contacts": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "example": "Алмаз Садыков" },
+                  "phone": { "type": "string", "example": "+996555123456" },
+                  "iso_code": { "type": "string", "example": "KG" }
+                }
+              },
+              "store": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "example": "Sotka Store Bishkek" },
+                  "address": { "type": "string", "example": "ул. Киевская, 120" },
+                  "region": { "type": "string", "example": "Бишкек" },
+                  "points": { "type": "integer", "example": 3 },
+                  "employees": { "type": "integer", "example": 8 },
+                  "moderation": { "type": "string", "example": "approved" },
+                  "is_active": { "type": "boolean", "example": true }
+                }
+              },
+              "legal_data": {
+                "type": "object",
+                "properties": {
+                  "form": { "type": "string", "example": "ИП" },
+                  "inn": { "type": "string", "example": "21405199501234" },
+                  "tax_address": { "type": "string", "example": "г. Бишкек, Первомайский район" }
+                }
+              },
+              "platform": {
+                "type": "object",
+                "properties": {
+                  "tariff": { "type": "string", "example": "Standard" },
+                  "subscription_status": { "type": "string", "example": "active" },
+                  "last_activity": { "type": "string", "format": "date-time", "example": "2026-09-27T08:15:20Z" },
+                  "registered_at": { "type": "string", "format": "date-time", "example": "2026-02-14T09:30:00Z" }
+                }
+              },
+              "brands": {
+                "type": "array",
+                "items": { "type": "string" },
+                "example": ["Apple", "Samsung", "Xiaomi"]
+              },
+              "moderation_history": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "approved" },
+                    "comment": { "type": "string", "example": "Документы подтверждены" },
+                    "created_by": { "type": "string", "example": "Кутман" },
+                    "created_at": { "type": "string", "format": "date-time", "example": "2026-02-15T10:00:00Z" }
+                  }
+                }
+              },
+              "transactions": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "date_time": { "type": "string", "format": "date-time", "example": "2026-09-24T15:36:14.032Z" },
+                        "tran_type": { "type": "string", "example": "topup" },
+                        "user_id": { "type": "integer", "example": 142 },
+                        "user_name": { "type": "string", "example": "Алмаз Садыков" },
+                        "user_phone": { "type": "string", "example": "+996555123456" },
+                        "description": { "type": "string", "example": "Пополнение баланса лицевого счета" },
+                        "status": { "type": "string", "example": "succeeded" },
+                        "amount": { "type": "number", "example": 15000 }
+                      }
+                    }
+                  },
+                  "total": { "type": "integer", "example": 1 },
+                  "total_topups": { "type": "number", "example": 15000 },
+                  "total_charges": { "type": "number", "example": 0 },
+                  "total_amount": { "type": "number", "example": 15000 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

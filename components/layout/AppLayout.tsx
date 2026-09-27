@@ -9,6 +9,7 @@ import { MobileBottomBar } from '@/components/layout/MobileBottomBar';
 import { FAB } from '@/components/layout/FAB';
 import { useToast } from '@/components/ui/Toast';
 import { useUser } from '@/components/auth/AuthProvider';
+import { api } from '@/lib/api/client';
 import { Plus } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
@@ -92,18 +93,14 @@ export function AppLayout({
     if (isSyncing || internalSyncing) return;
     setInternalSyncing(true);
     try {
-      const res = await fetch('/api/sync/sotka', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Ошибка синхронизации');
-      }
+      const data = await api.sellers.syncSotka();
       const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
       setLastSyncedAt(timeStr);
       try {
         localStorage.setItem('crm_last_sotka_sync', timeStr);
       } catch {}
       showToast(
-        `Синхронизация завершена: ${data.syncedSellers} продавцов, ${data.syncedPayments} платежей`,
+        `Синхронизация завершена: ${data.synced_count} продавцов (всего ${data.total_available})`,
         'success'
       );
     } catch (err: any) {

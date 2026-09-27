@@ -6,18 +6,13 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
-  getEmployees,
-  createEmployee,
-  updateEmployee,
-  toggleEmployeeActive,
   resetEmployeePassword,
   type EmployeeItem,
 } from './actions';
 import {
   getEmployeeRatesHistory,
-  upsertEmployeeRate,
-  deleteEmployeeRatePeriod,
   type EmployeeRateHistoryItem,
 } from '@/app/rates/actions';
 import { getUserProfileAndKpi } from '@/app/profile/actions';
@@ -102,7 +97,7 @@ export default function EmployeesPage() {
     try {
       const [profileRes, employeesRes] = await Promise.all([
         getUserProfileAndKpi(),
-        getEmployees({
+        api.employees.getAll({
           search: searchQuery,
           role: roleFilter,
           isActive: statusFilter,
@@ -121,8 +116,8 @@ export default function EmployeesPage() {
         }
       }
 
-      setEmployees(employeesRes.employees);
-      setTotalCount(employeesRes.totalCount);
+      setEmployees(employeesRes.items || []);
+      setTotalCount(employeesRes.total || 0);
     } catch {
       showToast('Ошибка загрузки сотрудников', 'error');
     } finally {
@@ -152,7 +147,7 @@ export default function EmployeesPage() {
 
     setIsCreating(true);
     try {
-      const res = await createEmployee({
+      await api.employees.create({
         login: newLogin.trim(),
         password: newPassword,
         full_name: newFullName.trim(),
@@ -161,21 +156,17 @@ export default function EmployeesPage() {
         color: newColor,
       });
 
-      if (res.success) {
-        showToast(`Сотрудник ${newFullName} успешно добавлен`, 'success');
-        setIsCreateModalOpen(false);
-        setNewLogin('');
-        setNewPassword('');
-        setNewFullName('');
-        setNewPhone('');
-        setNewRole('consultant');
-        setNewColor(DEFAULT_EMPLOYEE_COLOR);
-        fetchEmployeesData();
-      } else {
-        showToast(res.error || 'Ошибка при создании сотрудника', 'error');
-      }
-    } catch {
-      showToast('Непредвиденная ошибка при создании', 'error');
+      showToast(`Сотрудник ${newFullName} успешно добавлен`, 'success');
+      setIsCreateModalOpen(false);
+      setNewLogin('');
+      setNewPassword('');
+      setNewFullName('');
+      setNewPhone('');
+      setNewRole('consultant');
+      setNewColor(DEFAULT_EMPLOYEE_COLOR);
+      fetchEmployeesData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при создании сотрудника', 'error');
     } finally {
       setIsCreating(false);
     }
@@ -220,21 +211,17 @@ export default function EmployeesPage() {
     }
     setIsAddingRate(true);
     try {
-      const res = await upsertEmployeeRate({
+      await api.rates.create({
         user_id: selectedEmployee.user_id,
         connection_percent: newConnPercent,
         maintenance_percent: newMaintPercent,
         effective_from: newRatePeriod,
       });
-      if (res.success) {
-        showToast(`Ставка для периода ${newRatePeriod} установлена`, 'success');
-        const history = await getEmployeeRatesHistory(selectedEmployee.user_id);
-        setEmployeeRates(history);
-      } else {
-        showToast(res.error || 'Ошибка при сохранении ставки', 'error');
-      }
-    } catch {
-      showToast('Сбой сервера при сохранении ставки', 'error');
+      showToast(`Ставка для периода ${newRatePeriod} установлена`, 'success');
+      const history = await getEmployeeRatesHistory(selectedEmployee.user_id);
+      setEmployeeRates(history);
+    } catch (err: any) {
+      showToast(err.message || 'Сбой сервера при сохранении ставки', 'error');
     } finally {
       setIsAddingRate(false);
     }
@@ -244,16 +231,12 @@ export default function EmployeesPage() {
   const handleDeleteRatePeriod = async (rateId: string) => {
     if (!selectedEmployee) return;
     try {
-      const res = await deleteEmployeeRatePeriod(rateId);
-      if (res.success) {
-        showToast('Период ставки удален', 'success');
-        const history = await getEmployeeRatesHistory(selectedEmployee.user_id);
-        setEmployeeRates(history);
-      } else {
-        showToast(res.error || 'Ошибка при удалении ставки', 'error');
-      }
-    } catch {
-      showToast('Сбой сервера при удалении ставки', 'error');
+      await api.rates.delete(rateId);
+      showToast('Период ставки удален', 'success');
+      const history = await getEmployeeRatesHistory(selectedEmployee.user_id);
+      setEmployeeRates(history);
+    } catch (err: any) {
+      showToast(err.message || 'Сбой сервера при удалении ставки', 'error');
     }
   };
 
@@ -269,7 +252,7 @@ export default function EmployeesPage() {
 
     setIsUpdating(true);
     try {
-      const res = await updateEmployee(selectedEmployee.user_id, {
+      await api.employees.update(selectedEmployee.user_id, {
         full_name: editFullName.trim(),
         phone: editPhone.trim() || null,
         role: editRole,
@@ -277,15 +260,11 @@ export default function EmployeesPage() {
         color: editColor,
       });
 
-      if (res.success) {
-        showToast('Данные сотрудника обновлены', 'success');
-        setIsEditModalOpen(false);
-        fetchEmployeesData();
-      } else {
-        showToast(res.error || 'Ошибка при обновлении', 'error');
-      }
-    } catch {
-      showToast('Ошибка сохранения изменений', 'error');
+      showToast('Данные сотрудника обновлены', 'success');
+      setIsEditModalOpen(false);
+      fetchEmployeesData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка сохранения изменений', 'error');
     } finally {
       setIsUpdating(false);
     }
@@ -337,18 +316,14 @@ export default function EmployeesPage() {
   const handleToggleActive = async (emp: EmployeeItem) => {
     const newStatus = !emp.is_active;
     try {
-      const res = await toggleEmployeeActive(emp.user_id, newStatus);
-      if (res.success) {
-        showToast(
-          `Сотрудник ${emp.full_name} ${newStatus ? 'разблокирован' : 'заблокирован'}`,
-          'info'
-        );
-        fetchEmployeesData();
-      } else {
-        showToast(res.error || 'Ошибка смены статуса', 'error');
-      }
-    } catch {
-      showToast('Ошибка изменения активности', 'error');
+      await api.employees.update(emp.user_id, { is_active: newStatus });
+      showToast(
+        `Сотрудник ${emp.full_name} ${newStatus ? 'разблокирован' : 'заблокирован'}`,
+        'info'
+      );
+      fetchEmployeesData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка изменения активности', 'error');
     }
   };
 

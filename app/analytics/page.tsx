@@ -16,7 +16,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import { getAnalyticsSummaryAction } from '@/app/analytics/actions';
+import { api } from '@/lib/api/client';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
 import { formatMoney } from '@/lib/utils/money';
 import type { UserRole } from '@/types/database.types';
@@ -54,9 +54,9 @@ export default function AnalyticsPage() {
     async function loadData() {
       setIsLoading(true);
       try {
-        const [profileRes, summaryRes] = await Promise.all([
+        const [profileRes, summaryData] = await Promise.all([
           getUserProfileAndKpi(),
-          getAnalyticsSummaryAction(),
+          api.analytics.getSummary(),
         ]);
 
         if (profileRes.profile) {
@@ -65,10 +65,10 @@ export default function AnalyticsPage() {
           setUserLogin(profileRes.profile.login);
         }
 
-        if (summaryRes.success && summaryRes.data) {
-          setLeadsStats(summaryRes.data.leads);
-          setPayoutsStats(summaryRes.data.payouts);
-          setSellersStats(summaryRes.data.sellers);
+        if (summaryData) {
+          if (summaryData.leads) setLeadsStats(summaryData.leads);
+          if (summaryData.payouts) setPayoutsStats(summaryData.payouts);
+          if (summaryData.sellers) setSellersStats(summaryData.sellers);
         }
       } catch (err) {
         console.error('Ошибка загрузки аналитики:', err);

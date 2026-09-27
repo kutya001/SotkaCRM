@@ -7,11 +7,10 @@ import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } f
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
-  getSellers,
   getSellersStats,
   getManagersList,
-  assignSellerManager,
   type SellerItem,
   type SellersStats,
 } from './actions';
@@ -137,8 +136,8 @@ export default function SellersPage() {
         setIsLoading(true);
       }
       try {
-        const [sellersRes, statsRes, managersRes] = await Promise.all([
-          getSellers({
+        const [sellersRes, leadsCheckRes, statsRes, managersRes] = await Promise.all([
+          api.sellers.getAll({
             page,
             pageSize: 50,
             search,
@@ -146,34 +145,24 @@ export default function SellersPage() {
             isActive: filterActive,
             managerId: filterManager,
           }),
+          api.sellers.checkAvailableLeads().catch(() => ({ has_available_leads: false, available_count: 0 })),
           getSellersStats(),
           getManagersList(),
         ]);
 
-        if (sellersRes.error) {
-          if (sellersRes.currentUserRole === 'smm') {
-            showToast('Доступ к базе продавцов закрыт для SMM-специалистов', 'error');
-            router.push('/leads');
-            return;
-          }
-          showToast(sellersRes.error, 'error');
-        }
-
-        setSellers(sellersRes.sellers);
-        setTotalCount(sellersRes.totalCount);
+        setSellers(sellersRes.items || []);
+        setTotalCount(sellersRes.total || 0);
         setStats(statsRes);
         setManagers(managersRes);
-
-        if (sellersRes.hasAvailableLeads !== undefined) {
-          setHasAvailableLeads(sellersRes.hasAvailableLeads);
-        }
-
-        if (sellersRes.currentUserRole) {
-          setCurrentUserRole(sellersRes.currentUserRole);
-        }
-      } catch (err) {
+        setHasAvailableLeads(Boolean(leadsCheckRes.has_available_leads));
+      } catch (err: any) {
         console.error(err);
-        showToast('Ошибка при загрузке базы продавцов', 'error');
+        if (err.status === 403 || err.message?.includes('SMM')) {
+          showToast('Доступ к базе продавцов закрыт для SMM-специалистов', 'error');
+          router.push('/leads');
+          return;
+        }
+        showToast(err.message || 'Ошибка при загрузке базы продавцов', 'error');
       } finally {
         if (!silent) {
           setIsLoading(false);
@@ -248,17 +237,12 @@ export default function SellersPage() {
     );
 
     try {
-      const res = await assignSellerManager(sellerPhone, managerId);
-      if (res.success) {
-        showToast('Куратор назначен. Связь в подключениях синхронизирована', 'success');
-        await fetchSellersData(1, searchQuery, true);
-      } else {
-        setSellers(previousSellers);
-        showToast(res.error || 'Ошибка назначения куратора', 'error');
-      }
-    } catch {
+      await api.sellers.update(sellerPhone, { manager_id: managerId });
+      showToast('Куратор назначен. Связь в подключениях синхронизирована', 'success');
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
       setSellers(previousSellers);
-      showToast('Ошибка при назначении куратора', 'error');
+      showToast(err.message || 'Ошибка при назначении куратора', 'error');
     }
   };
 

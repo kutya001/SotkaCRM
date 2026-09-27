@@ -5,10 +5,9 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
-  getPayouts,
   getPayoutsStats,
-  createPayout,
   getEmployeesList,
   getPayoutMonthsList,
   type PayoutItem,
@@ -117,7 +116,7 @@ export default function PayoutsPage() {
       const catFilter = cat !== undefined ? cat : selectedCategory;
 
       const [res, statsRes, monthsRes, employeesRes] = await Promise.all([
-        getPayouts({
+        api.payouts.getAll({
           page: 1,
           pageSize: 50,
           accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
@@ -128,18 +127,14 @@ export default function PayoutsPage() {
         getEmployeesList(),
       ]);
 
-      setPayouts(res.payouts);
-      setTotalCount(res.totalCount);
+      setPayouts(res.items || []);
+      setTotalCount(res.total || 0);
       setStats(statsRes);
       setAccrualMonths(monthsRes);
       setEmployees(employeesRes);
-
-      if (res.currentUserRole) {
-        setCurrentUserRole(res.currentUserRole);
-      }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load payouts:', err);
-      showToast('Ошибка при загрузке реестра выплат', 'error');
+      showToast(err.message || 'Ошибка при загрузке реестра выплат', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -182,25 +177,21 @@ export default function PayoutsPage() {
 
     setIsSubmitting(true);
     try {
-      const res = await createPayout(formData);
-      if (res.success) {
-        showToast('Выплата успешно зарегистрирована', 'success');
-        setIsCreateOpen(false);
-        setFormData({
-          user_id: '',
-          accrual_month: currentMonthStr,
-          payout_date: todayStr,
-          amount: 0,
-          payout_category: 'выплата зп',
-          payment_method: 'Mbank',
-          comment: '',
-        });
-        fetchData();
-      } else {
-        showToast(res.error || 'Ошибка при сохранении выплаты', 'error');
-      }
-    } catch {
-      showToast('Сбой при проведении выплаты', 'error');
+      await api.payouts.create(formData);
+      showToast('Выплата успешно зарегистрирована', 'success');
+      setIsCreateOpen(false);
+      setFormData({
+        user_id: '',
+        accrual_month: currentMonthStr,
+        payout_date: todayStr,
+        amount: 0,
+        payout_category: 'выплата зп',
+        payment_method: 'Mbank',
+        comment: '',
+      });
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при сохранении выплаты', 'error');
     } finally {
       setIsSubmitting(false);
     }

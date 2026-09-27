@@ -18,15 +18,10 @@ const LeadSellerMappingModal = dynamic(
   { ssr: false }
 );
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
-  getLeads,
-  createLead,
-  updateLead,
-  updateLeadStatus,
-  cancelLead,
   getConsultantsList,
   getLeadsStats,
-  assignLeadConsultant,
   type LeadItem,
 } from './actions';
 import {
@@ -122,19 +117,15 @@ function LeadsContent() {
     setIsLoading(true);
     try {
       const [leadsRes, statsRes, consultantsRes] = await Promise.all([
-        getLeads({ page: 1, pageSize: 100 }),
+        api.leads.getAll({ page: 1, limit: 100 }),
         getLeadsStats(),
         getConsultantsList(),
       ]);
 
-      setLeads(leadsRes.leads);
-      setTotalCount(leadsRes.totalCount);
+      setLeads(leadsRes.items || []);
+      setTotalCount(leadsRes.total || 0);
       setStats(statsRes);
       setConsultants(consultantsRes);
-
-      if (leadsRes.currentUserRole) {
-        setCurrentUserRole(leadsRes.currentUserRole as UserRole);
-      }
     } catch (err) {
       console.error(err);
       showToast('Ошибка при загрузке лидов', 'error');
@@ -277,15 +268,11 @@ function LeadsContent() {
                   onChange={async (e) => {
                     const newConsultantId = e.target.value || null;
                     try {
-                      const res = await assignLeadConsultant(row.lead_id, newConsultantId);
-                      if (res.success) {
-                        showToast(newConsultantId ? 'Консультант назначен' : 'Назначение отменено', 'success');
-                        fetchInitialData();
-                      } else {
-                        showToast(res.error || 'Ошибка назначения', 'error');
-                      }
-                    } catch {
-                      showToast('Ошибка при назначении консультанта', 'error');
+                      await api.leads.updateAssigned(row.lead_id, newConsultantId);
+                      showToast(newConsultantId ? 'Консультант назначен' : 'Назначение отменено', 'success');
+                      fetchInitialData();
+                    } catch (err: any) {
+                      showToast(err.message || 'Ошибка при назначении консультанта', 'error');
                     }
                   }}
                   className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
@@ -494,38 +481,37 @@ function LeadsContent() {
       showToast('Консультанту доступны только статусы «Назначен», «Подписан» или «Отмена»', 'error');
       return;
     }
-    const res = await updateLeadStatus(lead.lead_id, newStatus as LeadStatus);
-    if (!res.success) {
-      showToast(res.error || 'Ошибка при обновлении статуса лида', 'error');
-      return;
+    try {
+      await api.leads.updateStatus(lead.lead_id, newStatus);
+      setLeads((prev) =>
+        prev.map((item) =>
+          item.lead_id === lead.lead_id
+            ? { ...item, status: newStatus as LeadStatus }
+            : item
+        )
+      );
+      getLeadsStats().then(setStats);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при обновлении статуса лида', 'error');
     }
-    setLeads((prev) =>
-      prev.map((item) =>
-        item.lead_id === lead.lead_id
-          ? { ...item, status: newStatus as LeadStatus }
-          : item
-      )
-    );
-    getLeadsStats().then(setStats);
   };
 
   // Обработчики формы EntityModal
   const handleSaveLead = async (updated: LeadItem) => {
-    const res = await updateLead(updated.lead_id, {
-      client_name: updated.client_name,
-      phone: updated.phone,
-      country_code: updated.country_code,
-      instagram: updated.instagram,
-      comment: updated.comment,
-      assigned_to: updated.assigned_to,
-      status: updated.status,
-    });
-
-    if (!res.success) {
-      throw new Error(res.error || 'Ошибка при сохранении лида');
+    try {
+      await api.leads.update(updated.lead_id, {
+        client_name: updated.client_name,
+        phone: updated.phone,
+        country_code: updated.country_code,
+        instagram: updated.instagram,
+        comment: updated.comment,
+        assigned_to: updated.assigned_to,
+        status: updated.status,
+      });
+      await fetchInitialData();
+    } catch (err: any) {
+      throw new Error(err.message || 'Ошибка при сохранении лида');
     }
-
-    await fetchInitialData();
   };
 
   const handleCreateLead = async (newLeadData: Partial<LeadItem>) => {
@@ -540,29 +526,29 @@ function LeadsContent() {
         ? null
         : newLeadData.assigned_to || null;
 
-    const res = await createLead({
-      client_name: newLeadData.client_name,
-      phone: newLeadData.phone,
-      country_code: newLeadData.country_code || '996',
-      instagram: newLeadData.instagram || undefined,
-      comment: newLeadData.comment || undefined,
-      assigned_to: assignedConsultant,
-    });
-
-    if (!res.success) {
-      throw new Error(res.error || 'Ошибка создания лида');
+    try {
+      await api.leads.create({
+        client_name: newLeadData.client_name,
+        phone: newLeadData.phone,
+        country_code: newLeadData.country_code || '996',
+        instagram: newLeadData.instagram || undefined,
+        comment: newLeadData.comment || undefined,
+        assigned_to: assignedConsultant,
+      });
+      await fetchInitialData();
+    } catch (err: any) {
+      throw new Error(err.message || 'Ошибка создания лида');
     }
-
-    await fetchInitialData();
   };
 
   const handleStatusChangeInModal = async (newStatus: string) => {
     if (!modalState.selectedLead) return;
-    const res = await updateLeadStatus(modalState.selectedLead.lead_id, newStatus as LeadStatus);
-    if (!res.success) {
-      throw new Error(res.error || 'Ошибка при смене статуса');
+    try {
+      await api.leads.updateStatus(modalState.selectedLead.lead_id, newStatus);
+      await fetchInitialData();
+    } catch (err: any) {
+      throw new Error(err.message || 'Ошибка при смене статуса');
     }
-    await fetchInitialData();
   };
 
   const handleOpenCancelDialog = (lead: LeadItem) => {
@@ -580,16 +566,15 @@ function LeadsContent() {
       return;
     }
 
-    const res = await cancelLead(cancelDialog.leadId, cancelDialog.reason.trim());
-    if (!res.success) {
-      showToast(res.error || 'Ошибка при отмене сделки', 'error');
-      return;
+    try {
+      await api.leads.updateStatus(cancelDialog.leadId, 'Отмена', cancelDialog.reason.trim());
+      showToast('Лид переведен в статус «Отмена»', 'info');
+      setCancelDialog({ isOpen: false, leadId: null, clientName: '', reason: '' });
+      setModalState((prev) => ({ ...prev, isOpen: false }));
+      await fetchInitialData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при отмене сделки', 'error');
     }
-
-    showToast('Лид переведен в статус «Отмена»', 'info');
-    setCancelDialog({ isOpen: false, leadId: null, clientName: '', reason: '' });
-    setModalState((prev) => ({ ...prev, isOpen: false }));
-    await fetchInitialData();
   };
 
   const handleLinkSeller = (lead: LeadItem) => {

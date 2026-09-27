@@ -2,9 +2,10 @@
 
 import * as React from 'react';
 import { X, Link2, Search, UserCheck, Clock, Loader2, Store, Phone, Check } from 'lucide-react';
-import { getAvailableLeadsForSellerLinking, linkSellerToLeadAction, type SellerItem } from '@/app/sellers/actions';
+import { getAvailableLeadsForSellerLinking, type SellerItem } from '@/app/sellers/actions';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 
 interface LinkSellerLeadModalProps {
   isOpen: boolean;
@@ -83,19 +84,15 @@ export function LinkSellerLeadModal({
 
     setIsSubmitting(true);
     try {
-      const res = await linkSellerToLeadAction(seller.seller_phone, selectedLeadId);
-      if (res.success) {
-        showToast(
-          `Продавец успешно связан с лидом! Начислено вознаграждение: +${res.connectionFeeAmount || 0} сом`,
-          'success'
-        );
-        onSuccess();
-        onClose();
-      } else {
-        showToast(res.error || 'Ошибка при связывании', 'error');
-      }
-    } catch {
-      showToast('Сбой сервера при выполнении связывания', 'error');
+      const res = await api.sellers.linkLead(seller.seller_phone, selectedLeadId);
+      showToast(
+        `Продавец успешно связан с лидом! Начислено вознаграждение: +${res.connection_fee_amount || 0} сом`,
+        'success'
+      );
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при связывании', 'error');
     } finally {
       setIsSubmitting(false);
     }

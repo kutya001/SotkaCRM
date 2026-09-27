@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
+import { api } from '@/lib/api/client';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import type { UserRole } from '@/types/database.types';
@@ -57,8 +58,11 @@ export default function DashboardPage() {
     async function loadDashboardData() {
       setIsLoading(true);
       try {
-        const supabase = createClient();
-        const profileRes = await getUserProfileAndKpi();
+        const [profileRes, kpiRes, activityRes] = await Promise.all([
+          getUserProfileAndKpi(),
+          api.dashboard.getKpi(),
+          api.dashboard.getActivity(),
+        ]);
 
         if (profileRes.profile) {
           setProfile(profileRes.profile);
@@ -67,45 +71,17 @@ export default function DashboardPage() {
           setUserLogin(profileRes.profile.login);
         }
 
-        // Запрашиваем реальные счетчики через быстрые агрегаты
-        const [funnelRes, sellersCountRes, connCountRes, payoutsRes, recentLeadsRes] =
-          await Promise.all([
-            supabase.rpc('get_leads_funnel_stats'),
-            supabase.from('sellers').select('*', { count: 'exact', head: true }),
-            supabase.from('connections').select('*', { count: 'exact', head: true }),
-            supabase.from('employee_payouts').select('amount, payout_category'),
-            supabase
-              .from('leads')
-              .select('lead_id, client_name, phone, status, created_at')
-              .order('created_at', { ascending: false })
-              .limit(5),
-          ]);
-
-        const funnel = (funnelRes.data as any) || {};
-        const openCount = Number(funnel.open) || 0;
-        const signedCount = Number(funnel.signed) || 0;
-        const totalLeads = Number(funnel.total) || 0;
-
-        let payoutsSum = 0;
-        if (payoutsRes.data) {
-          for (const p of payoutsRes.data) {
-            if (p.payout_category !== 'удержание') {
-              payoutsSum += Number(p.amount) || 0;
-            }
-          }
-        }
-
         setCounts({
-          totalLeads,
-          openLeads: openCount,
-          signedLeads: signedCount,
-          totalSellers: sellersCountRes.count || 0,
-          totalConnections: connCountRes.count || 0,
-          monthPayouts: Math.round(payoutsSum),
+          totalLeads: kpiRes.total_leads,
+          openLeads: kpiRes.open_leads,
+          signedLeads: kpiRes.signed_leads,
+          totalSellers: kpiRes.active_sellers,
+          totalConnections: kpiRes.total_connections,
+          monthPayouts: Math.round(kpiRes.month_payouts),
         });
 
-        if (recentLeadsRes.data) {
-          setRecentLeads(recentLeadsRes.data);
+        if (activityRes.recent_leads) {
+          setRecentLeads(activityRes.recent_leads);
         }
       } catch (err) {
         console.error('Error loading dashboard:', err);

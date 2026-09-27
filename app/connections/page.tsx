@@ -6,10 +6,9 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
-  getConnections,
   getConnectionsStats,
-  updateConnectionClientStatus,
   getAccrualMonthsList,
   getActivePlansList,
   updateConnectionTariffAndPrice,
@@ -134,7 +133,7 @@ export default function ConnectionsPage() {
       const statusFilter = status !== undefined ? status : selectedStatus;
 
       const [res, statsRes, monthsRes, plansRes] = await Promise.all([
-        getConnections({
+        api.connections.getAll({
           page: 1,
           pageSize: 50,
           accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
@@ -145,24 +144,19 @@ export default function ConnectionsPage() {
         getActivePlansList(),
       ]);
 
-      if (res.currentUserRole === 'smm') {
+      setConnections(res.items || []);
+      setTotalCount(res.total || 0);
+      setStats(statsRes);
+      setAccrualMonths(monthsRes);
+      setActivePlans(plansRes);
+    } catch (err: any) {
+      console.error('Failed to load connections:', err);
+      if (err.status === 403 || err.message?.includes('SMM')) {
         setCurrentUserRole('smm');
         setIsLoading(false);
         return;
       }
-
-      setConnections(res.connections);
-      setTotalCount(res.totalCount);
-      setStats(statsRes);
-      setAccrualMonths(monthsRes);
-      setActivePlans(plansRes);
-
-      if (res.currentUserRole) {
-        setCurrentUserRole(res.currentUserRole);
-      }
-    } catch (err) {
-      console.error('Failed to load connections:', err);
-      showToast('Ошибка при загрузке реестра подключений', 'error');
+      showToast(err.message || 'Ошибка при загрузке реестра подключений', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -294,22 +288,17 @@ export default function ConnectionsPage() {
     if (!selectedConnection) return;
     setIsUpdatingStatus(true);
     try {
-      const res = await updateConnectionClientStatus(
-        selectedConnection.connection_id,
-        statusToUpdate
-      );
+      await api.connections.update(selectedConnection.connection_id, {
+        client_status: statusToUpdate,
+      });
 
-      if (res.success) {
-        showToast('Статус клиента успешно обновлен', 'success');
-        setSelectedConnection((prev) =>
-          prev ? { ...prev, client_status: statusToUpdate } : null
-        );
-        fetchData();
-      } else {
-        showToast(res.error || 'Ошибка при обновлении статуса', 'error');
-      }
-    } catch {
-      showToast('Не удалось обновить статус', 'error');
+      showToast('Статус клиента успешно обновлен', 'success');
+      setSelectedConnection((prev) =>
+        prev ? { ...prev, client_status: statusToUpdate } : null
+      );
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось обновить статус', 'error');
     } finally {
       setIsUpdatingStatus(false);
     }
@@ -319,19 +308,19 @@ export default function ConnectionsPage() {
   const handleRunMaintenanceBilling = async () => {
     setIsBillingLoading(true);
     try {
-      const result = await generateMonthlyMaintenanceAccruals(billingMonth);
+      const result = await api.connections.runMaintenance(billingMonth);
       setBillingResult(result);
       if (result.success) {
         showToast(
-          `Биллинг завершен: начислено ${result.count} клиентам на сумму ${result.totalAmount} сом`,
+          `Биллинг завершен: начислено ${result.count ?? result.accruals_created ?? 0} клиентам на сумму ${result.total_amount ?? result.totalAmount ?? 0} сом`,
           'success'
         );
         fetchData();
       } else {
         showToast(result.error || 'Ошибка при проведении биллинга', 'error');
       }
-    } catch {
-      showToast('Сбой при проведении начислений', 'error');
+    } catch (err: any) {
+      showToast(err.message || 'Сбой при проведении начислений', 'error');
     } finally {
       setIsBillingLoading(false);
     }

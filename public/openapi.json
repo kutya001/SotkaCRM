@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "SotkaCRM API & Integration Gateway",
+    "title": "SotkaCRM REST API & Gateway",
     "version": "1.0.0",
-    "description": "Спецификация API шлюза синхронизации SotkaCRM и внешних контрактов взаимодействия с Sotka HQ (обзор продавцов, карточка организации, вебхуки)."
+    "description": "Формализованная спецификация REST API SotkaCRM (v1) и интеграционного шлюза Sotka HQ. Охватывает авторизацию, управление лидами (с инвариантом soft-delete/отмены), базой продавцов, подключениями, выплатами сотрудникам, тарифами, ставками и аналитикой."
   },
   "servers": [
     {
@@ -12,10 +12,54 @@
     },
     {
       "url": "https://sotkacrm.vercel.app",
-      "description": "Production (Vercel)"
+      "description": "Production среда (Vercel)"
     }
   ],
   "tags": [
+    {
+      "name": "Authentication",
+      "description": "Управление сессией, вход, выход и данные текущего пользователя"
+    },
+    {
+      "name": "Dashboard",
+      "description": "Сводные KPI, воронка конверсии и журнал недавней активности"
+    },
+    {
+      "name": "Leads",
+      "description": "Воронка лидов: инвариант не удаляемости (soft-delete в статус 'Отмена'), связывание с продавцами, WhatsApp-клиент и скрипты"
+    },
+    {
+      "name": "Sellers",
+      "description": "Реестр продавцов: проверка свободных лидов, изоляция (approved), связывание и синхронизация"
+    },
+    {
+      "name": "Connections",
+      "description": "Связи лидов и продавцов, жизненный цикл клиента (новый, подключен, сопровождение) и ежемесячный биллинг"
+    },
+    {
+      "name": "Payouts",
+      "description": "Выплаты, авансы, удержания сотрудникам и калькулятор бонусов"
+    },
+    {
+      "name": "Employees",
+      "description": "Администрирование пользователей, ролевая модель (RBAC), цветовая дифференциация и пароли"
+    },
+    {
+      "name": "Rates",
+      "description": "Индивидуальные ставки сотрудников (% за подключение и % за сопровождение) с помесячной историей"
+    },
+    {
+      "name": "Plans",
+      "description": "Тарифная сетка, аудит изменений цен и исторические интервалы"
+    },
+    {
+      "name": "Analytics",
+      "description": "Сквозная аналитика: воронка, эффективность сотрудников, экспорт реестров"
+    },
+    {
+      "name": "Profile",
+      "description": "Персональный профиль, смена пароля, настройки интерфейса и проверка прав"
+    },
     {
       "name": "Sync Gateway",
       "description": "Внутренние эндпоинты синхронизации SotkaCRM"
@@ -26,21 +70,364 @@
     }
   ],
   "paths": {
-    "/api/sync/sotka": {
-      "get": {
-        "tags": ["Sync Gateway"],
-        "summary": "Проверка статуса шлюза синхронизации",
-        "description": "Служебный эндпоинт для проверки доступности шлюза и конфигурации API ключей.",
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Авторизация пользователя по логину и паролю",
+        "description": "Выполняет аутентификацию в Supabase Auth и возвращает JWT-токен, сессию и профиль сотрудника.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "login",
+                  "password"
+                ],
+                "properties": {
+                  "login": {
+                    "type": "string",
+                    "example": "admin"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "example": "password123"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Шлюз синхронизации активен",
+            "description": "Успешная авторизация",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "status": { "type": "string", "example": "ok" },
-                    "timestamp": { "type": "string", "format": "date-time", "example": "2026-09-27T10:00:00Z" }
+                    "user": {
+                      "type": "object"
+                    },
+                    "profile": {
+                      "$ref": "#/components/schemas/EmployeeProfile"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверный логин или пароль",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Завершение текущей пользовательской сессии",
+        "responses": {
+          "200": {
+            "description": "Сессия успешно завершена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Данные текущей активной сессии",
+        "description": "Возвращает информацию об аутентифицированном пользователе, его роли (admin, supervisor, consultant, smm) и правах.",
+        "responses": {
+          "200": {
+            "description": "Профиль авторизованного пользователя",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "full_name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Пользователь не авторизован",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/kpi": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Оперативные KPI-показатели системы",
+        "description": "Возвращает агрегированные метрики воронки лидов, активных продавцов, подключений и объема выплат за текущий месяц с учетом роли пользователя.",
+        "responses": {
+          "200": {
+            "description": "Сводные KPI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total_leads": {
+                      "type": "integer",
+                      "example": 120
+                    },
+                    "open_leads": {
+                      "type": "integer",
+                      "example": 45
+                    },
+                    "signed_leads": {
+                      "type": "integer",
+                      "example": 38
+                    },
+                    "cancelled_leads": {
+                      "type": "integer",
+                      "example": 12
+                    },
+                    "conversion_rate": {
+                      "type": "number",
+                      "example": 31.7
+                    },
+                    "active_sellers": {
+                      "type": "integer",
+                      "example": 84
+                    },
+                    "total_sellers_balance": {
+                      "type": "number",
+                      "example": 320500
+                    },
+                    "total_connections": {
+                      "type": "integer",
+                      "example": 92
+                    },
+                    "month_payouts": {
+                      "type": "number",
+                      "example": 145000
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/funnel": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Распределение лидов по этапам воронки",
+        "description": "Возвращает количество лидов на каждом этапе воронки продаж (Открыт, Обработан, Назначен, Подписан, Отмена).",
+        "responses": {
+          "200": {
+            "description": "Статистика воронки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "stage": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard/activity": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Журнал недавних событий и активности по лидам",
+        "responses": {
+          "200": {
+            "description": "Список последних действий",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recent_leads": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LeadItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads": {
+      "get": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Реестр лидов с фильтрацией, поиском и пагинацией",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "Открыт",
+                "Обработан",
+                "Назначен",
+                "Подписан",
+                "Отмена"
+              ]
+            }
+          },
+          {
+            "name": "assignedTo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "created_at"
+            }
+          },
+          {
+            "name": "sortOrder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список лидов с пагинацией",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LeadItem"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "pageSize": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
@@ -49,88 +436,2021 @@
         }
       },
       "post": {
-        "tags": ["Sync Gateway"],
-        "summary": "Вебхук синхронизации данных из Sotka",
-        "description": "Принимает входящие события от платформы Sotka (создание продавца, изменение статуса модерации, обновление лида).",
-        "parameters": [
-          {
-            "name": "x-api-key",
-            "in": "header",
-            "required": true,
-            "description": "Секретный ключ вебхука CRM для валидации источника",
-            "schema": { "type": "string" }
-          }
+        "tags": [
+          "Leads"
         ],
+        "summary": "Создание новой входящей карточки лида",
+        "description": "Создает лид в статусе 'Открыт'. Доступно ролям SMM и Admin (консультантам запрещено).",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SyncWebhookPayload" }
+              "schema": {
+                "$ref": "#/components/schemas/LeadCreatePayload"
+              }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Событие успешно обработано",
+          "201": {
+            "description": "Лид успешно создан",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": { "type": "boolean", "example": true },
-                    "processed_id": { "type": "integer", "example": 1024 }
-                  }
+                  "$ref": "#/components/schemas/LeadItem"
                 }
               }
             }
           },
-          "401": {
-            "description": "Недействительный или отсутствующий API-ключ",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-              }
-            }
-          },
           "422": {
-            "description": "Ошибка валидации структуры полезной нагрузки",
+            "description": "Ошибка валидации входных данных",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }
         }
       }
     },
+    "/api/v1/leads/{id}": {
+      "get": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Детальная карточка лида по ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Карточка лида",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Лид не найден"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Редактирование полей лида",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadUpdatePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Лид обновлен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadItem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Отмена лида (Инвариант: soft-delete)",
+        "description": "ФИЗИЧЕСКОЕ УДАЛЕНИЕ ЗАПРЕЩЕНО триггером prevent_lead_delete. Метод переводит лид в статус 'Отмена' с фиксацией причины.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Лид переведен в статус 'Отмена'",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "Отмена"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads/{id}/status": {
+      "patch": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Смена статуса лида по воронке",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "Открыт",
+                      "Обработан",
+                      "Назначен",
+                      "Подписан",
+                      "Отмена"
+                    ]
+                  },
+                  "cancel_reason": {
+                    "type": "string",
+                    "description": "Обязательно при переводе в статус 'Отмена'"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статус успешно изменен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads/{id}/assigned": {
+      "patch": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Назначение / сброс ответственного консультанта",
+        "description": "Доступно только администратору. При назначении консультанта лид автоматически переходит в статус 'Назначен'. При сбросе возвращается в 'Обработан'.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "assigned_to": {
+                    "type": "string",
+                    "nullable": true,
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Консультант назначен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads/{id}/link-seller": {
+      "post": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Ручное связывание лида с продавцом",
+        "description": "Связывает лид с продавцом по номеру seller_phone, переводит лид в статус 'Подписан', фиксирует запись в connections и начисляет бонус консультанту.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "seller_phone"
+                ],
+                "properties": {
+                  "seller_phone": {
+                    "type": "string",
+                    "example": "996555123456"
+                  },
+                  "manager_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Лид успешно связан",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "connection_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Разрыв связки лида с продавцом",
+        "description": "Удаляет связку продавца и лида (только admin).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Связка удалена"
+          }
+        }
+      }
+    },
+    "/api/v1/leads/{id}/whatsapp": {
+      "get": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Генерация прямой ссылки на диалог в WhatsApp",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ссылка WhatsApp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "phone": {
+                      "type": "string"
+                    },
+                    "client_name": {
+                      "type": "string"
+                    },
+                    "direct_url": {
+                      "type": "string",
+                      "example": "https://wa.me/996555123456"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads/scripts": {
+      "get": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Получение регламентов и скриптов продаж",
+        "parameters": [
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "first_contact",
+                "presentation",
+                "objection",
+                "closing"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список скриптов для консультантов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "scripts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sellers": {
+      "get": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Реестр продавцов с фильтрацией и RBAC-изоляцией",
+        "description": "Консультанты видят строго продавцов со статусом moderation = 'approved'. Роли SMM доступ запрещен (403).",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "moderation",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "pending",
+                "approved",
+                "rejected",
+                "blocked"
+              ]
+            }
+          },
+          {
+            "name": "isActive",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "managerId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "synced_at"
+            }
+          },
+          {
+            "name": "sortOrder",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список продавцов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SellerItem"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Доступ закрыт для SMM"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Ручное добавление продавца в реестр",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SellerCreatePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Продавец создан",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SellerItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sellers/{id}": {
+      "get": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Карточка продавца по телефону или organization_id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные продавца",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SellerItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Продавец не найден"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Обновление продавца и назначение куратора",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SellerUpdatePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Продавец обновлен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SellerItem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Удаление продавца (Admin/Supervisor)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Продавец удален"
+          }
+        }
+      }
+    },
+    "/api/v1/sellers/available-leads-check": {
+      "get": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Проверка наличия свободных лидов для связывания",
+        "description": "Определяет, отображать ли кнопку 'Связать с лидом' в карточках продавцов.",
+        "responses": {
+          "200": {
+            "description": "Результат проверки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_available_leads": {
+                      "type": "boolean"
+                    },
+                    "available_count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sellers/{id}/link-lead": {
+      "post": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Связывание продавца с выбранным лидом со стороны продавца",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lead_id"
+                ],
+                "properties": {
+                  "lead_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Связка создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "connection_fee_amount": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sellers/sync": {
+      "post": {
+        "tags": [
+          "Sellers"
+        ],
+        "summary": "Запуск API-синхронизации с api.sotka.kg (Только Admin)",
+        "description": "Пакетная выгрузка продавцов из Sotka HQ с сохранением локально назначенных менеджеров (manager_id).",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "offset": {
+                    "type": "integer",
+                    "default": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "default": 50
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Синхронизация завершена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "synced_count": {
+                      "type": "integer"
+                    },
+                    "total_available": {
+                      "type": "integer"
+                    },
+                    "duration_ms": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Синхронизация доступна исключительно роли Admin"
+          }
+        }
+      }
+    },
+    "/api/v1/connections": {
+      "get": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Реестр подключений и клиентского сопровождения",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "accrualMonth",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "2026-09"
+            }
+          },
+          {
+            "name": "clientStatus",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "новый",
+                "подключен",
+                "сопровождение",
+                "приостановлен",
+                "расторгнут"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список подключений",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ConnectionItem"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Ручное создание подключения",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подключение создано"
+          }
+        }
+      }
+    },
+    "/api/v1/connections/{id}": {
+      "patch": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Обновление статуса клиента или пересчет тарифа",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client_status": {
+                    "type": "string",
+                    "enum": [
+                      "новый",
+                      "подключен",
+                      "сопровождение",
+                      "приостановлен",
+                      "расторгнут"
+                    ]
+                  },
+                  "plan_id": {
+                    "type": "string"
+                  },
+                  "plan_price": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подключение обновлено"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Удаление подключения",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Подключение удалено"
+          }
+        }
+      }
+    },
+    "/api/v1/connections/maintenance/fk": {
+      "post": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Проведение ежемесячного биллинга сопровождения",
+        "description": "Генерирует начисления за сопровождение клиентов на выбранный расчетный месяц.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target_month": {
+                    "type": "string",
+                    "example": "2026-09"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Биллинг успешно проведен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "accruals_created": {
+                      "type": "integer"
+                    },
+                    "total_amount": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payouts": {
+      "get": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Реестр выплат и удержаний сотрудникам",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "accrualMonth",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "выплата зп",
+                "аванс",
+                "бонус",
+                "прочие начисления",
+                "удержание"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список транзакций выплат",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PayoutItem"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Регистрация новой выплаты / удержания",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutCreatePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Выплата создана"
+          }
+        }
+      }
+    },
+    "/api/v1/payouts/calculate": {
+      "post": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Калькулятор вознаграждения за подключение / сопровождение",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "user_id",
+                  "plan_price"
+                ],
+                "properties": {
+                  "user_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "plan_price": {
+                    "type": "number",
+                    "example": 2500
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "connection",
+                      "maintenance"
+                    ],
+                    "default": "connection"
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Расчет вознаграждения",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rate_percent": {
+                      "type": "number",
+                      "example": 30
+                    },
+                    "fee_amount": {
+                      "type": "number",
+                      "example": 750
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payouts/{id}": {
+      "patch": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Редактирование параметров выплаты",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Выплата обновлена"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Удаление выплаты",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Выплата удалена"
+          }
+        }
+      }
+    },
+    "/api/v1/payouts/{id}/status": {
+      "patch": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Смена статуса выплаты (pending, paid, cancelled)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "paid",
+                      "cancelled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статус выплаты обновлен"
+          }
+        }
+      }
+    },
+    "/api/v1/employees": {
+      "get": {
+        "tags": [
+          "Employees"
+        ],
+        "summary": "Список сотрудников CRM (Только Admin)",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "admin",
+                "consultant",
+                "smm",
+                "supervisor"
+              ]
+            }
+          },
+          {
+            "name": "isActive",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Реестр сотрудников",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmployeeProfile"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Employees"
+        ],
+        "summary": "Создание учетной записи нового сотрудника",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmployeeCreatePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Сотрудник создан"
+          }
+        }
+      }
+    },
+    "/api/v1/employees/{id}": {
+      "patch": {
+        "tags": [
+          "Employees"
+        ],
+        "summary": "Редактирование профиля сотрудника, роли и статуса активности",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmployeeUpdatePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Профиль сотрудника обновлен"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Employees"
+        ],
+        "summary": "Блокировка / деактивация сотрудника",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сотрудник деактивирован"
+          }
+        }
+      }
+    },
+    "/api/v1/employees/{id}/color": {
+      "patch": {
+        "tags": [
+          "Employees"
+        ],
+        "summary": "Обновление персонального идентификационного цвета сотрудника",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "color"
+                ],
+                "properties": {
+                  "color": {
+                    "type": "string",
+                    "example": "#3B82F6"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Цвет обновлен"
+          }
+        }
+      }
+    },
+    "/api/v1/rates": {
+      "get": {
+        "tags": [
+          "Rates"
+        ],
+        "summary": "Список индивидуальных процентных ставок сотрудников",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список ставок"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Rates"
+        ],
+        "summary": "Назначение / обновление ставки на расчетный месяц",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "user_id",
+                  "connection_percent",
+                  "maintenance_percent",
+                  "effective_from"
+                ],
+                "properties": {
+                  "user_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "connection_percent": {
+                    "type": "number",
+                    "example": 30
+                  },
+                  "maintenance_percent": {
+                    "type": "number",
+                    "example": 10
+                  },
+                  "effective_from": {
+                    "type": "string",
+                    "example": "2026-09"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Ставка зафиксирована"
+          }
+        }
+      }
+    },
+    "/api/v1/rates/{id}": {
+      "patch": {
+        "tags": [
+          "Rates"
+        ],
+        "summary": "Изменение параметров ставки",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ставка обновлена"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Rates"
+        ],
+        "summary": "Удаление периода ставки",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Период ставки удален"
+          }
+        }
+      }
+    },
+    "/api/v1/plans": {
+      "get": {
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Каталог тарифных планов Sotka",
+        "responses": {
+          "200": {
+            "description": "Список тарифов"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Добавление нового тарифа в каталог",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "plan_id",
+                  "plan_name",
+                  "price"
+                ],
+                "properties": {
+                  "plan_id": {
+                    "type": "string",
+                    "example": "standard"
+                  },
+                  "plan_name": {
+                    "type": "string",
+                    "example": "Стандартный"
+                  },
+                  "price": {
+                    "type": "number",
+                    "example": 2500
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "is_active": {
+                    "type": "boolean",
+                    "default": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Тариф создан"
+          }
+        }
+      }
+    },
+    "/api/v1/plans/{id}": {
+      "patch": {
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Обновление тарифа с автоматической фиксацией аудита цен",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Тариф обновлен"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Plans"
+        ],
+        "summary": "Удаление тарифа (если нет привязанных продавцов)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Тариф удален"
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/summary": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Сводные финансовые и операционные показатели",
+        "parameters": [
+          {
+            "name": "startDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сводные аналитические показатели"
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/funnel": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Глубокая конверсионная аналитика воронки лидов",
+        "responses": {
+          "200": {
+            "description": "Метрики конверсии воронки"
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/employees": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "KPI и результативность работы сотрудников",
+        "responses": {
+          "200": {
+            "description": "Аналитика по консультантам и SMM"
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/export": {
+      "post": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Экспорт данных аналитики в CSV / Excel",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "entity"
+                ],
+                "properties": {
+                  "entity": {
+                    "type": "string",
+                    "enum": [
+                      "leads",
+                      "sellers",
+                      "connections",
+                      "payouts"
+                    ]
+                  },
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "csv",
+                      "json"
+                    ],
+                    "default": "csv"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Экспортированные данные"
+          }
+        }
+      }
+    },
+    "/api/v1/profile": {
+      "get": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Профиль авторизованного пользователя и персональный KPI",
+        "responses": {
+          "200": {
+            "description": "Карточка профиля"
+          }
+        }
+      }
+    },
+    "/api/v1/profile/change-password": {
+      "post": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Смена пароля пользователя",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "newPassword"
+                ],
+                "properties": {
+                  "newPassword": {
+                    "type": "string",
+                    "minLength": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Пароль успешно изменен"
+          }
+        }
+      }
+    },
+    "/api/v1/profile/preferences": {
+      "patch": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Обновление персональных предпочтений интерфейса (тема, компактность)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Настройки сохранены"
+          }
+        }
+      }
+    },
+    "/api/v1/profile/permissions": {
+      "get": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Матрица разрешений и прав доступа пользователя",
+        "responses": {
+          "200": {
+            "description": "Права доступа"
+          }
+        }
+      }
+    },
+    "/api/sync/sotka": {
+      "get": {
+        "tags": [
+          "Sync Gateway"
+        ],
+        "summary": "Проверка статуса шлюза синхронизации",
+        "responses": {
+          "200": {
+            "description": "Шлюз синхронизации активен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sync Gateway"
+        ],
+        "summary": "Вебхук синхронизации данных из Sotka",
+        "parameters": [
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncWebhookPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Событие обработано"
+          }
+        }
+      }
+    },
     "/api/private/v1/admin/sellers-overview/": {
       "get": {
-        "tags": ["Sotka HQ Sellers"],
+        "tags": [
+          "Sotka HQ Sellers"
+        ],
         "summary": "Обзор реестра продавцов Sotka HQ",
-        "description": "Возвращает сводный список продавцов с пагинацией и агрегированными показателями (магазины, точки, баланс). Каждая запись упакована в корневой ключ `detail`.",
         "parameters": [
           {
             "name": "offset",
             "in": "query",
-            "required": false,
-            "description": "Смещение пагинации",
-            "schema": { "type": "integer", "default": 0 }
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
           },
           {
             "name": "limit",
             "in": "query",
-            "required": false,
-            "description": "Количество записей на страницу (максимум 200)",
-            "schema": { "type": "integer", "default": 50, "maximum": 200 }
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 200
+            }
           },
           {
             "name": "moderation_status",
             "in": "query",
-            "required": false,
-            "description": "Фильтр по статусу модерации",
             "schema": {
               "type": "string",
-              "enum": ["pending", "approved", "rejected", "blocked"]
+              "enum": [
+                "pending",
+                "approved",
+                "rejected",
+                "blocked"
+              ]
             }
           }
         ],
@@ -139,23 +2459,9 @@
             "description": "Список продавцов успешно получен",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SellersOverviewResponse" }
-              }
-            }
-          },
-          "401": {
-            "description": "Не авторизован",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
-              }
-            }
-          },
-          "403": {
-            "description": "Доступ запрещен",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/SellersOverviewResponse"
+                }
               }
             }
           }
@@ -164,16 +2470,18 @@
     },
     "/api/private/v1/admin/sellers-overview/{organization_id}/": {
       "get": {
-        "tags": ["Sotka HQ Sellers"],
+        "tags": [
+          "Sotka HQ Sellers"
+        ],
         "summary": "Детальная карточка продавца Sotka HQ",
-        "description": "Возвращает расширенную информацию по организации: контакты, юридические реквизиты, тарифную сетку, историю модерации и финансовые транзакции.",
         "parameters": [
           {
             "name": "organization_id",
             "in": "path",
             "required": true,
-            "description": "Идентификатор организации продавца в Sotka HQ",
-            "schema": { "type": "integer" }
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -181,15 +2489,9 @@
             "description": "Детальные данные продавца",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SellerDetailResponse" }
-              }
-            }
-          },
-          "404": {
-            "description": "Организация продавца не найдена",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/SellerDetailResponse"
+                }
               }
             }
           }
@@ -202,53 +2504,540 @@
       "ErrorResponse": {
         "type": "object",
         "properties": {
-          "detail": { "type": "string", "example": "Unauthorized or invalid payload" }
+          "detail": {
+            "type": "string",
+            "example": "Unauthorized or invalid payload"
+          },
+          "error": {
+            "type": "string",
+            "example": "FORBIDDEN"
+          },
+          "code": {
+            "type": "string",
+            "example": "ACCESS_DENIED"
+          }
         }
       },
       "SyncWebhookPayload": {
         "type": "object",
-        "required": ["event", "data"],
+        "required": [
+          "event",
+          "data"
+        ],
         "properties": {
           "event": {
             "type": "string",
-            "enum": ["seller.created", "seller.updated", "lead.assigned", "moderation.changed"],
+            "enum": [
+              "seller.created",
+              "seller.updated",
+              "lead.assigned",
+              "moderation.changed"
+            ],
             "example": "seller.updated"
           },
           "data": {
             "type": "object",
             "properties": {
-              "organization_id": { "type": "integer", "example": 451 },
-              "status": { "type": "string", "example": "approved" },
-              "comment": { "type": "string", "example": "Документы подтверждены" }
+              "organization_id": {
+                "type": "integer",
+                "example": 451
+              },
+              "status": {
+                "type": "string",
+                "example": "approved"
+              },
+              "comment": {
+                "type": "string",
+                "example": "Документы подтверждены"
+              }
             }
           }
         }
       },
-      "SellerOverviewItem": {
+      "LeadItem": {
         "type": "object",
         "properties": {
-          "organization_id": { "type": "integer", "example": 1024 },
-          "seller_name": { "type": "string", "example": "Алмаз Садыков" },
-          "seller_phone": { "type": "string", "example": "+996555123456" },
-          "iso_code": { "type": "string", "example": "KG" },
-          "store": { "type": "string", "example": "Sotka Store Bishkek" },
-          "moderation": { "type": "string", "enum": ["pending", "approved", "rejected", "blocked"], "example": "approved" },
-          "is_active": { "type": "boolean", "example": true },
-          "outlets_count": { "type": "integer", "example": 3 },
-          "employees_count": { "type": "integer", "example": 8 },
-          "plans": {
-            "type": "array",
-            "items": { "type": "string" },
-            "example": ["Standard", "POS Integration"]
+          "lead_id": {
+            "type": "string",
+            "format": "uuid"
           },
-          "brands": {
-            "type": "array",
-            "items": { "type": "string" },
-            "example": ["Apple", "Samsung", "Xiaomi"]
+          "client_name": {
+            "type": "string",
+            "example": "Магазин 'Океан'"
           },
-          "balance": { "type": "number", "example": 45200.5 },
-          "registered_at": { "type": "string", "format": "date-time", "example": "2026-02-14T09:30:00Z" },
-          "last_activity": { "type": "string", "format": "date-time", "nullable": true, "example": "2026-09-27T08:15:20Z" }
+          "phone": {
+            "type": "string",
+            "example": "700123456"
+          },
+          "country_code": {
+            "type": "string",
+            "example": "996"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "Открыт",
+              "Обработан",
+              "Назначен",
+              "Подписан",
+              "Отмена"
+            ]
+          },
+          "instagram": {
+            "type": "string",
+            "nullable": true
+          },
+          "comment": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "assigned_to": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "seller_phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "linked_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LeadCreatePayload": {
+        "type": "object",
+        "required": [
+          "client_name",
+          "phone"
+        ],
+        "properties": {
+          "client_name": {
+            "type": "string",
+            "minLength": 2,
+            "example": "Магазин 'Олимп'"
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 6,
+            "example": "555123456"
+          },
+          "country_code": {
+            "type": "string",
+            "default": "996"
+          },
+          "instagram": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "assigned_to": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        }
+      },
+      "LeadUpdatePayload": {
+        "type": "object",
+        "properties": {
+          "client_name": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "country_code": {
+            "type": "string"
+          },
+          "instagram": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "assigned_to": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "Открыт",
+              "Обработан",
+              "Назначен",
+              "Подписан",
+              "Отмена"
+            ]
+          }
+        }
+      },
+      "SellerItem": {
+        "type": "object",
+        "properties": {
+          "seller_phone": {
+            "type": "string",
+            "example": "996555123456"
+          },
+          "seller_name": {
+            "type": "string",
+            "example": "Улан Бакиров"
+          },
+          "store": {
+            "type": "string",
+            "example": "TechStore"
+          },
+          "balance": {
+            "type": "number",
+            "example": 12500
+          },
+          "plan_name": {
+            "type": "string",
+            "example": "Стандарт"
+          },
+          "moderation": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "blocked"
+            ]
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "manager_id": {
+            "type": "string",
+            "nullable": true,
+            "format": "uuid"
+          },
+          "outlets_count": {
+            "type": "integer",
+            "example": 2
+          },
+          "employees_count": {
+            "type": "integer",
+            "example": 5
+          }
+        }
+      },
+      "SellerCreatePayload": {
+        "type": "object",
+        "required": [
+          "seller_phone"
+        ],
+        "properties": {
+          "seller_phone": {
+            "type": "string",
+            "example": "996700112233"
+          },
+          "seller_name": {
+            "type": "string"
+          },
+          "store": {
+            "type": "string"
+          },
+          "balance": {
+            "type": "number",
+            "default": 0
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "moderation": {
+            "type": "string",
+            "default": "pending"
+          },
+          "manager_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        }
+      },
+      "SellerUpdatePayload": {
+        "type": "object",
+        "properties": {
+          "seller_name": {
+            "type": "string"
+          },
+          "store": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "moderation": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "manager_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        }
+      },
+      "ConnectionItem": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "seller_phone": {
+            "type": "string"
+          },
+          "seller_name": {
+            "type": "string"
+          },
+          "store": {
+            "type": "string"
+          },
+          "client_status": {
+            "type": "string",
+            "enum": [
+              "новый",
+              "подключен",
+              "сопровождение",
+              "приостановлен",
+              "расторгнут"
+            ]
+          },
+          "manager_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "plan_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "plan_price": {
+            "type": "number"
+          },
+          "connection_fee_percent": {
+            "type": "number"
+          },
+          "connection_fee_amount": {
+            "type": "number"
+          },
+          "accrual_month": {
+            "type": "string",
+            "example": "2026-09"
+          }
+        }
+      },
+      "PayoutItem": {
+        "type": "object",
+        "properties": {
+          "payout_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accrual_month": {
+            "type": "string"
+          },
+          "payout_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "payout_category": {
+            "type": "string",
+            "enum": [
+              "выплата зп",
+              "аванс",
+              "бонус",
+              "прочие начисления",
+              "удержание"
+            ]
+          },
+          "payment_method": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "paid",
+              "cancelled"
+            ]
+          },
+          "comment": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "PayoutCreatePayload": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "amount",
+          "payout_category"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accrual_month": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "payout_date": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-09-27"
+          },
+          "amount": {
+            "type": "number",
+            "example": 15000
+          },
+          "payout_category": {
+            "type": "string",
+            "enum": [
+              "выплата зп",
+              "аванс",
+              "бонус",
+              "прочие начисления",
+              "удержание"
+            ]
+          },
+          "payment_method": {
+            "type": "string",
+            "default": "Mbank"
+          },
+          "comment": {
+            "type": "string"
+          }
+        }
+      },
+      "EmployeeProfile": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "login": {
+            "type": "string",
+            "example": "consultant1"
+          },
+          "full_name": {
+            "type": "string",
+            "example": "Айбек Исаев"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "supervisor",
+              "consultant",
+              "smm"
+            ]
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "color": {
+            "type": "string",
+            "example": "#3B82F6"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "EmployeeCreatePayload": {
+        "type": "object",
+        "required": [
+          "login",
+          "password",
+          "full_name",
+          "role"
+        ],
+        "properties": {
+          "login": {
+            "type": "string",
+            "minLength": 3
+          },
+          "password": {
+            "type": "string",
+            "minLength": 6
+          },
+          "full_name": {
+            "type": "string",
+            "minLength": 2
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "supervisor",
+              "consultant",
+              "smm"
+            ]
+          },
+          "phone": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      },
+      "EmployeeUpdatePayload": {
+        "type": "object",
+        "properties": {
+          "full_name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "supervisor",
+              "consultant",
+              "smm"
+            ]
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "color": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
         }
       },
       "SellersOverviewResponse": {
@@ -257,16 +3046,24 @@
           "detail": {
             "type": "object",
             "properties": {
-              "items": {
-                "type": "array",
-                "items": { "$ref": "#/components/schemas/SellerOverviewItem" }
+              "count": {
+                "type": "integer",
+                "example": 142
               },
-              "total": { "type": "integer", "example": 142 },
-              "on_platform": { "type": "integer", "example": 110 },
-              "pending_moderation": { "type": "integer", "example": 12 },
-              "approved_moderation": { "type": "integer", "example": 115 },
-              "blocked_organizations": { "type": "integer", "example": 5 },
-              "total_balance": { "type": "number", "example": 1845000 }
+              "next": {
+                "type": "string",
+                "nullable": true
+              },
+              "previous": {
+                "type": "string",
+                "nullable": true
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SellerItem"
+                }
+              }
             }
           }
         }
@@ -277,84 +3074,18 @@
           "detail": {
             "type": "object",
             "properties": {
-              "contacts": {
-                "type": "object",
-                "properties": {
-                  "name": { "type": "string", "example": "Алмаз Садыков" },
-                  "phone": { "type": "string", "example": "+996555123456" },
-                  "iso_code": { "type": "string", "example": "KG" }
-                }
+              "organization_id": {
+                "type": "integer",
+                "example": 1024
+              },
+              "seller_name": {
+                "type": "string"
               },
               "store": {
-                "type": "object",
-                "properties": {
-                  "name": { "type": "string", "example": "Sotka Store Bishkek" },
-                  "address": { "type": "string", "example": "ул. Киевская, 120" },
-                  "region": { "type": "string", "example": "Бишкек" },
-                  "points": { "type": "integer", "example": 3 },
-                  "employees": { "type": "integer", "example": 8 },
-                  "moderation": { "type": "string", "example": "approved" },
-                  "is_active": { "type": "boolean", "example": true }
-                }
+                "type": "string"
               },
-              "legal_data": {
-                "type": "object",
-                "properties": {
-                  "form": { "type": "string", "example": "ИП" },
-                  "inn": { "type": "string", "example": "21405199501234" },
-                  "tax_address": { "type": "string", "example": "г. Бишкек, Первомайский район" }
-                }
-              },
-              "platform": {
-                "type": "object",
-                "properties": {
-                  "tariff": { "type": "string", "example": "Standard" },
-                  "subscription_status": { "type": "string", "example": "active" },
-                  "last_activity": { "type": "string", "format": "date-time", "example": "2026-09-27T08:15:20Z" },
-                  "registered_at": { "type": "string", "format": "date-time", "example": "2026-02-14T09:30:00Z" }
-                }
-              },
-              "brands": {
-                "type": "array",
-                "items": { "type": "string" },
-                "example": ["Apple", "Samsung", "Xiaomi"]
-              },
-              "moderation_history": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "type": "string", "example": "approved" },
-                    "comment": { "type": "string", "example": "Документы подтверждены" },
-                    "created_by": { "type": "string", "example": "Кутман" },
-                    "created_at": { "type": "string", "format": "date-time", "example": "2026-02-15T10:00:00Z" }
-                  }
-                }
-              },
-              "transactions": {
-                "type": "object",
-                "properties": {
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "date_time": { "type": "string", "format": "date-time", "example": "2026-09-24T15:36:14.032Z" },
-                        "tran_type": { "type": "string", "example": "topup" },
-                        "user_id": { "type": "integer", "example": 142 },
-                        "user_name": { "type": "string", "example": "Алмаз Садыков" },
-                        "user_phone": { "type": "string", "example": "+996555123456" },
-                        "description": { "type": "string", "example": "Пополнение баланса лицевого счета" },
-                        "status": { "type": "string", "example": "succeeded" },
-                        "amount": { "type": "number", "example": 15000 }
-                      }
-                    }
-                  },
-                  "total": { "type": "integer", "example": 1 },
-                  "total_topups": { "type": "number", "example": 15000 },
-                  "total_charges": { "type": "number", "example": 0 },
-                  "total_amount": { "type": "number", "example": 15000 }
-                }
+              "balance": {
+                "type": "number"
               }
             }
           }

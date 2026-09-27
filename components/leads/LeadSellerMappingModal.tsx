@@ -18,10 +18,10 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
   getAvailableSellersForMapping,
   getConsultantRate,
-  linkLeadToSeller,
   type AvailableSellerItem,
 } from '@/app/leads/mapping-actions';
 import type { LeadItem } from '@/app/leads/actions';
@@ -117,16 +117,11 @@ export function LeadSellerMappingModal({
 
     setIsSubmitting(true);
     try {
-      const res = await linkLeadToSeller({
-        leadId: lead.lead_id,
-        sellerPhone: selectedSeller.seller_phone,
-        managerId: selectedManagerId || lead.assigned_to || currentUserId,
-      });
-
-      if (!res.success) {
-        showToast(res.error || 'Ошибка при связывании лида', 'error');
-        return;
-      }
+      await api.leads.linkSeller(
+        lead.lead_id,
+        selectedSeller.seller_phone,
+        selectedManagerId || lead.assigned_to || currentUserId
+      );
 
       if ('vibrate' in navigator) navigator.vibrate([40, 60, 40]);
       showToast(
@@ -135,8 +130,8 @@ export function LeadSellerMappingModal({
       );
       onSuccess();
       onClose();
-    } catch {
-      showToast('Произошел непредвиденный сбой при связывании', 'error');
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка при связывании лида', 'error');
     } finally {
       setIsSubmitting(false);
     }

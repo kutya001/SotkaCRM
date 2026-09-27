@@ -6,11 +6,8 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { api } from '@/lib/api/client';
 import {
-  getPlans,
-  updatePlan,
-  createPlan,
-  deletePlan,
   getPlanHistory,
   getPlanPrices,
   upsertPlanPrice,
@@ -106,11 +103,8 @@ export default function PlansPage() {
   const fetchData = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await getPlans();
-      setPlans(res.plans);
-      if (res.currentUserRole) {
-        setCurrentUserRole(res.currentUserRole);
-      }
+      const res = await api.plans.getAll();
+      setPlans(res.items || []);
     } catch {
       showToast('Ошибка при загрузке тарифов', 'error');
     } finally {
@@ -216,26 +210,18 @@ export default function PlansPage() {
     setIsSubmitting(true);
     try {
       if (editModal.isNew) {
-        const res = await createPlan(formData);
-        if (res.success) {
-          showToast('Тариф успешно добавлен', 'success');
-          setEditModal({ isOpen: false, isNew: false, plan: null });
-          fetchData();
-        } else {
-          showToast(res.error || 'Ошибка при создании тарифа', 'error');
-        }
+        await api.plans.create(formData);
+        showToast('Тариф успешно добавлен', 'success');
+        setEditModal({ isOpen: false, isNew: false, plan: null });
+        fetchData();
       } else if (editModal.plan) {
-        const res = await updatePlan(editModal.plan.plan_id, formData);
-        if (res.success) {
-          showToast('Тариф успешно обновлен. Зафиксирован аудит цены.', 'success');
-          setEditModal({ isOpen: false, isNew: false, plan: null });
-          fetchData();
-        } else {
-          showToast(res.error || 'Ошибка при обновлении тарифа', 'error');
-        }
+        await api.plans.update(editModal.plan.plan_id, formData);
+        showToast('Тариф успешно обновлен. Зафиксирован аудит цены.', 'success');
+        setEditModal({ isOpen: false, isNew: false, plan: null });
+        fetchData();
       }
-    } catch {
-      showToast('Сбой при сохранении тарифа', 'error');
+    } catch (err: any) {
+      showToast(err.message || 'Сбой при сохранении тарифа', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -842,16 +828,12 @@ export default function PlansPage() {
                     if (!deleteDialog.plan) return;
                     setIsDeleting(true);
                     try {
-                      const res = await deletePlan(deleteDialog.plan.plan_id);
-                      if (res.success) {
-                        showToast('Тариф успешно удален', 'success');
-                        setDeleteDialog({ isOpen: false, plan: null });
-                        fetchData();
-                      } else {
-                        showToast(res.error || 'Ошибка при удалении тарифа', 'error');
-                      }
-                    } catch {
-                      showToast('Сбой сервера при удалении тарифа', 'error');
+                      await api.plans.delete(deleteDialog.plan.plan_id);
+                      showToast('Тариф успешно удален', 'success');
+                      setDeleteDialog({ isOpen: false, plan: null });
+                      fetchData();
+                    } catch (err: any) {
+                      showToast(err.message || 'Ошибка при удалении тарифа', 'error');
                     } finally {
                       setIsDeleting(false);
                     }

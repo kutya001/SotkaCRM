@@ -98,4 +98,13 @@ export const updateEmployeeSchema = z.object({
   color: HexColorSchema,
 });
 
+export const LeadUpdateSchema = z.object({
+  client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов').optional(),
+  phone: z.string().min(6, 'Укажите корректный номер телефона').optional(),
+  country_code: z.string().optional(),
+  instagram: z.string().optional().nullable(),
+  comment: z.string().optional().nullable(),
+  assigned_to: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор ответственного').nullable().optional(),
+});
+
 

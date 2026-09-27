@@ -505,17 +505,18 @@ export const api = {
       invalidateNamespaces('connections', 'payouts', 'dashboard', 'analytics');
       return res;
     },
-    accrueAll: async (month?: string) => {
+    accrueAll: async (month?: string, accrualType: 'all' | 'connection' | 'maintenance' = 'all') => {
       const res = await request<{
         success: boolean;
         settlement_month: string;
+        accrual_type: string;
         connection_bonuses_created: number;
         maintenance_bonuses_created: number;
         total_created: number;
         message: string;
       }>('/api/v1/connections/accrue-all', {
         method: 'POST',
-        body: JSON.stringify({ month, settlement_month: month }),
+        body: JSON.stringify({ month, settlement_month: month, accrual_type: accrualType }),
       });
       invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
       return res;

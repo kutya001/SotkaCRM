@@ -61,16 +61,18 @@ async function executeFetch<T>(
     headers,
   });
 
-  const contentType = response.headers.get('Content-Type') || '';
+  const contentType = (response.headers.get('Content-Type') || '').toLowerCase();
   let data: any = null;
 
-  if (contentType.includes('application/json')) {
-    data = await response.json();
+  if (response.status === 204) {
+    data = null;
+  } else if (contentType.includes('application/json')) {
+    data = await response.json().catch(() => null);
   } else if (contentType.includes('text/csv')) {
-    data = await response.blob();
+    data = await response.blob().catch(() => null);
     return data as T;
   } else {
-    data = await response.text();
+    data = await response.text().catch(() => '');
   }
 
   const serverTiming = response.headers.get('Server-Timing');
@@ -81,15 +83,24 @@ async function executeFetch<T>(
   }
 
   if (!response.ok) {
-    const errorMsg = data?.error || response.statusText || 'Ошибка сетевого запроса';
+    let errorMsg = 'Ошибка сетевого запроса';
+    if (typeof data === 'object' && data !== null) {
+      errorMsg = data.error || data.message || response.statusText || errorMsg;
+    } else if (typeof data === 'string' && data.trim().length > 0) {
+      const cleanText = data.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+      errorMsg = cleanText.length > 200 ? `${cleanText.slice(0, 200)}...` : (cleanText || response.statusText || errorMsg);
+    } else {
+      errorMsg = response.statusText || errorMsg;
+    }
+
     const err = new Error(errorMsg) as Error & {
       code?: string;
       details?: any;
       status: number;
       retryAfter?: number;
     };
-    err.code = data?.code || 'HTTP_ERROR';
-    err.details = data?.details;
+    err.code = (typeof data === 'object' && data?.code) ? data.code : 'HTTP_ERROR';
+    err.details = typeof data === 'object' ? data?.details : data;
     err.status = response.status;
     if (response.status === 429) {
       err.retryAfter = data?.retry_after
@@ -560,6 +571,16 @@ export const api = {
         body: JSON.stringify({ status, transaction_ref: transactionRef }),
       });
       invalidateNamespaces('payouts', 'dashboard', 'analytics');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(
+        `/api/v1/payouts/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      invalidateNamespaces('payouts', 'connections', 'profile', 'dashboard', 'analytics');
       return res;
     },
   },

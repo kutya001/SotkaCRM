@@ -37,6 +37,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Trash2,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -129,6 +130,34 @@ export default function ConnectionsPage() {
 
   // Модальное окно биллинга сопровождения
   const [isBillingModalOpen, setIsBillingModalOpen] = React.useState(false);
+
+  // Удаление подключения (Admin Only)
+  const [connectionToDelete, setConnectionToDelete] = React.useState<ConnectionItem | null>(null);
+  const [isDeletingConnection, setIsDeletingConnection] = React.useState(false);
+
+  const handleDeleteConnection = async (conn: ConnectionItem) => {
+    if (currentUserRole !== 'admin') {
+      showToast('Удаление подключений разрешено только администраторам', 'error');
+      return;
+    }
+    setIsDeletingConnection(true);
+    try {
+      await api.connections.delete(conn.connection_id);
+      showToast(
+        `Подключение ${conn.seller_name} удалено. Куратор продавца сброшен`,
+        'success'
+      );
+      setConnectionToDelete(null);
+      if (selectedConnection?.connection_id === conn.connection_id) {
+        setSelectedConnection(null);
+      }
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось удалить подключение', 'error');
+    } finally {
+      setIsDeletingConnection(false);
+    }
+  };
 
   // Загрузка данных
   const fetchData = React.useCallback(async (month?: string, status?: string) => {
@@ -629,6 +658,26 @@ export default function ConnectionsPage() {
     </div>
   );
 
+  const renderCustomRowActions = React.useCallback(
+    (row: ConnectionItem) => {
+      if (currentUserRole !== 'admin') return null;
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setConnectionToDelete(row);
+          }}
+          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+        >
+          <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
+          <span>Удалить подключение</span>
+        </button>
+      );
+    },
+    [currentUserRole]
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
@@ -674,6 +723,7 @@ export default function ConnectionsPage() {
           totalCount={totalCount}
           externalSearchQuery={searchQuery}
           customActions={connectionActions}
+          customRowActions={renderCustomRowActions}
         />
 
         {/* 4. Модальное окно деталей закрепления и смены статуса (Glassmorphism) */}
@@ -970,12 +1020,22 @@ export default function ConnectionsPage() {
                 />
               </div>
 
-              {/* Кнопка закрытия */}
-              <div className="flex justify-end pt-2">
+              {/* Кнопка закрытия и удаления */}
+              <div className="flex items-center justify-between pt-2">
+                {currentUserRole === 'admin' ? (
+                  <button
+                    type="button"
+                    onClick={() => setConnectionToDelete(selectedConnection)}
+                    className="h-9 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Удалить</span>
+                  </button>
+                ) : <div />}
                 <button
                   type="button"
                   onClick={() => setSelectedConnection(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                 >
                   Закрыть
                 </button>
@@ -990,6 +1050,66 @@ export default function ConnectionsPage() {
           onClose={() => setIsBillingModalOpen(false)}
           onSuccess={fetchData}
         />
+
+        {/* 6. Диалог подтверждения удаления подключения (Admin Only) */}
+        {connectionToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Удалить подключение?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {connectionToDelete.seller_name} (+{connectionToDelete.seller_phone})
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 space-y-1.5">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                  <span>Внимание: действие необратимо</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  Будут удалены все начисления куратора по этому клиенту, а назначенный куратор в карточке продавца будет автоматически сброшен.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingConnection}
+                  onClick={() => setConnectionToDelete(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingConnection}
+                  onClick={() => handleDeleteConnection(connectionToDelete)}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isDeletingConnection ? (
+                    <span>Удаление...</span>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Удалить подключение</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppLayout>
   );

@@ -102,6 +102,34 @@ export default function PayoutsPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [selectedPayout, setSelectedPayout] = React.useState<PayoutItem | null>(null);
 
+  // Удаление выплаты (Admin Only)
+  const [payoutToDelete, setPayoutToDelete] = React.useState<PayoutItem | null>(null);
+  const [isDeletingPayout, setIsDeletingPayout] = React.useState(false);
+
+  const handleDeletePayout = async (payout: PayoutItem) => {
+    if (currentUserRole !== 'admin') {
+      showToast('Удаление выплат разрешено только администраторам', 'error');
+      return;
+    }
+    setIsDeletingPayout(true);
+    try {
+      await api.payouts.delete(payout.payout_id);
+      showToast(
+        `Выплата сотруднику ${payout.recipient?.full_name || ''} удалена, начисления разблокированы`,
+        'success'
+      );
+      setPayoutToDelete(null);
+      if (selectedPayout?.payout_id === payout.payout_id) {
+        setSelectedPayout(null);
+      }
+      fetchData(selectedMonth, selectedCategory);
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось удалить выплату', 'error');
+    } finally {
+      setIsDeletingPayout(false);
+    }
+  };
+
   const currentMonthStr = new Date().toISOString().substring(0, 7);
   const todayStr = new Date().toISOString().substring(0, 10);
 
@@ -538,6 +566,26 @@ export default function PayoutsPage() {
     </div>
   );
 
+  const renderCustomRowActions = React.useCallback(
+    (row: PayoutItem) => {
+      if (currentUserRole !== 'admin') return null;
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPayoutToDelete(row);
+          }}
+          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+        >
+          <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
+          <span>Удалить выплату</span>
+        </button>
+      );
+    },
+    [currentUserRole]
+  );
+
   return (
     <AppLayout
       userRole={currentUserRole}
@@ -603,6 +651,7 @@ export default function PayoutsPage() {
           totalCount={totalCount}
           externalSearchQuery={searchQuery}
           customActions={payoutActions}
+          customRowActions={renderCustomRowActions}
         />
 
         {/* 4. Модальное окно просмотра деталей проводки */}
@@ -689,11 +738,21 @@ export default function PayoutsPage() {
                 )}
               </div>
 
-              <div className="flex justify-end pt-1">
+              <div className="flex items-center justify-between pt-1">
+                {currentUserRole === 'admin' ? (
+                  <button
+                    type="button"
+                    onClick={() => setPayoutToDelete(selectedPayout)}
+                    className="h-9 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Удалить</span>
+                  </button>
+                ) : <div />}
                 <button
                   type="button"
                   onClick={() => setSelectedPayout(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                 >
                   Закрыть
                 </button>
@@ -1012,6 +1071,66 @@ export default function PayoutsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        )}
+
+        {/* 6. Диалог подтверждения удаления выплаты (Admin Only) */}
+        {payoutToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Удалить запись о выплате?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {payoutToDelete.recipient?.full_name} • {payoutToDelete.amount.toLocaleString('ru-RU')} сом
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                  <span>Разблокировка начислений</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  Все начисления, привязанные к этой выплате, будут автоматически разблокированы (is_paid = false) и возвращены в статус ожидания выплаты.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingPayout}
+                  onClick={() => setPayoutToDelete(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingPayout}
+                  onClick={() => handleDeletePayout(payoutToDelete)}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isDeletingPayout ? (
+                    <span>Удаление...</span>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Удалить выплату</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

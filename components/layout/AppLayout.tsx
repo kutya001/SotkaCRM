@@ -64,6 +64,10 @@ export function AppLayout({
 
   React.useEffect(() => {
     try {
+      const savedCollapsed = localStorage.getItem('sotka_sidebar_collapsed');
+      if (savedCollapsed !== null) {
+        setSidebarCollapsed(savedCollapsed === 'true');
+      }
       const saved = localStorage.getItem('crm_last_sotka_sync');
       if (saved) setLastSyncedAt(saved);
       const savedWidth = localStorage.getItem('sotka_crm_layout_width');
@@ -71,6 +75,16 @@ export function AppLayout({
         setLayoutWidth(savedWidth);
       }
     } catch {}
+  }, []);
+
+  const handleToggleSidebar = React.useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('sotka_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
   }, []);
 
   const handleToggleLayoutWidth = () => {
@@ -131,7 +145,7 @@ export function AppLayout({
       {/* ДЕСКТОПНЫЙ СЛОЙ (экран >= 1024px) */}
       <DesktopSidebar
         collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+        onToggleCollapse={handleToggleSidebar}
         userRole={effectiveRole}
         userName={effectiveName}
         userLogin={effectiveLogin}

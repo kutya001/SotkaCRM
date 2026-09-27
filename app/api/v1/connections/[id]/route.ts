@@ -96,14 +96,61 @@ export async function DELETE(
     const { id } = await params;
     const { supabase } = await requireAdmin();
 
-    const { error } = await supabase
+    // 1. Поиск подключения для извлечения seller_phone
+    const { data: conn, error: getErr } = await supabase
+      .from('connections')
+      .select('connection_id, seller_phone')
+      .eq('connection_id', id)
+      .maybeSingle();
+
+    if (getErr) throw getErr;
+    if (!conn) {
+      return apiError('Подключение не найдено', 'NOT_FOUND', 404);
+    }
+
+    // 2. Сброс назначенного куратора у продавца в NULL
+    if (conn.seller_phone) {
+      const { error: sellerErr } = await supabase
+        .from('sellers')
+        .update({ manager_id: null })
+        .eq('seller_phone', conn.seller_phone);
+
+      if (sellerErr) {
+        console.error('[DELETE connection] Ошибка сброса куратора продавца:', sellerErr);
+      }
+    }
+
+    // 3. Удаление связанных начислений кураторам
+    const { error: accrualsErr } = await supabase
+      .from('connection_accruals')
+      .delete()
+      .eq('connection_id', id);
+
+    if (accrualsErr) {
+      console.error('[DELETE connection] Ошибка удаления connection_accruals:', accrualsErr);
+    }
+
+    // 4. Попытка удаления из client_maintenance (если таблица задействована)
+    try {
+      await supabase
+        .from('client_maintenance')
+        .delete()
+        .eq('connection_id', id);
+    } catch {}
+
+    // 5. Удаление самого подключения
+    const { error: delErr } = await supabase
       .from('connections')
       .delete()
       .eq('connection_id', id);
 
-    if (error) throw error;
+    if (delErr) throw delErr;
 
-    return apiSuccess({ success: true, deleted_id: id });
+    return apiSuccess({
+      success: true,
+      deleted_id: id,
+      reset_seller_phone: conn.seller_phone,
+    });
   } catch (err) {
     return handleApiError(err);
   }

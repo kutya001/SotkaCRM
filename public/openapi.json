@@ -1546,7 +1546,8 @@
         "tags": [
           "Connections"
         ],
-        "summary": "Удаление подключения",
+        "summary": "Удаление подключения (Admin Only)",
+        "description": "Удаление подключения администратором с автоматическим сбросом куратора продавца (sellers.manager_id = NULL) и каскадным удалением начислений из connection_accruals.",
         "parameters": [
           {
             "name": "id",
@@ -1560,7 +1561,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Подключение удалено"
+            "description": "Подключение успешно удалено, куратор продавца сброшен"
+          },
+          "403": {
+            "description": "Доступ запрещен (только admin)"
+          },
+          "404": {
+            "description": "Подключение не найдено"
           }
         }
       }
@@ -1818,7 +1825,8 @@
         "tags": [
           "Payouts"
         ],
-        "summary": "Удаление выплаты",
+        "summary": "Удаление выплаты (Admin Only)",
+        "description": "Удаление выплаты администратором с каскадной разблокировкой связанных начислений кураторам (connection_accruals.is_paid = false, payout_id = NULL, paid_at = NULL).",
         "parameters": [
           {
             "name": "id",
@@ -1832,7 +1840,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Выплата удалена"
+            "description": "Выплата удалена, связанные начисления успешно разблокированы"
+          },
+          "403": {
+            "description": "Доступ запрещен (только admin)"
+          },
+          "404": {
+            "description": "Выплата не найдена"
           }
         }
       }

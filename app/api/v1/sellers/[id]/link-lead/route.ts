@@ -18,6 +18,25 @@ export async function POST(
       return apiError('Параметр lead_id обязателен', 'MISSING_LEAD_ID', 400);
     }
 
+    // Проверка продавца: нельзя привязать лид к продавцу с назначенным куратором
+    const { data: sellerCheck, error: sellerCheckErr } = await supabase
+      .from('sellers')
+      .select('seller_phone, manager_id')
+      .eq('seller_phone', sellerPhone)
+      .maybeSingle();
+
+    if (sellerCheckErr) throw sellerCheckErr;
+    if (!sellerCheck) {
+      return apiError('Продавец не найден в базе данных Sotka', 'NOT_FOUND', 404);
+    }
+    if (sellerCheck.manager_id !== null) {
+      return apiError(
+        'Нельзя привязать лид к продавцу с назначенным куратором',
+        'SELLER_HAS_CURATOR',
+        400
+      );
+    }
+
     // Вызов атомарной процедуры в СУБД с блокировкой FOR UPDATE
     const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
       p_lead_id: leadId,

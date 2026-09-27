@@ -1788,6 +1788,69 @@
         }
       }
     },
+    "/api/v1/payouts/payroll-sheet": {
+      "get": {
+        "tags": [
+          "Payouts"
+        ],
+        "summary": "Интерактивный расчетный лист сотрудника за месяц",
+        "description": "Формирует сводный бухгалтерский расчетный лист с входящим сальдо, начислениями (+), удержаниями/штрафами (-) и исходящим сальдо к выплате.",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "2026-09"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сводный расчетный лист",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "opening_balance": {
+                      "type": "number",
+                      "example": 0
+                    },
+                    "total_accrued": {
+                      "type": "number",
+                      "example": 15000
+                    },
+                    "total_deductions": {
+                      "type": "number",
+                      "example": 500
+                    },
+                    "total_paid": {
+                      "type": "number",
+                      "example": 10000
+                    },
+                    "closing_balance": {
+                      "type": "number",
+                      "example": 4500
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payouts/{id}": {
       "patch": {
         "tags": [

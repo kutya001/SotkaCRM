@@ -19,6 +19,7 @@ import {
   Shield,
   Layers,
   Users,
+  Receipt,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
@@ -64,10 +65,10 @@ const NAV_ITEMS: NavItem[] = [
     roles: ['admin', 'supervisor', 'consultant'],
   },
   {
-    title: 'Выплаты',
+    title: 'Операции по ЗП',
     href: '/payouts',
-    icon: Banknote,
-    roles: ['admin', 'supervisor', 'consultant'],
+    icon: Receipt,
+    roles: ['admin', 'supervisor', 'consultant', 'smm'],
   },
   {
     title: 'Сотрудники',

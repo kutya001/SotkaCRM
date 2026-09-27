@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
+import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api/client';
@@ -12,7 +12,6 @@ import {
   getPayoutMonthsList,
   type PayoutItem,
   type PayoutsStats,
-  type CreatePayoutInput,
 } from './actions';
 import {
   Banknote,
@@ -20,52 +19,26 @@ import {
   Calendar,
   RotateCcw,
   Layers,
-  CreditCard,
-  UserCheck,
   X,
   TrendingDown,
   TrendingUp,
   Receipt,
   FileSpreadsheet,
-  CheckCircle2,
-  Clock,
   Smartphone,
   Wallet,
   Landmark,
   Building2,
   Trash2,
 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
-import type { PayoutCategoryType, UserRole } from '@/types/database.types';
-
-const CATEGORY_STATUS_OPTIONS: StatusOption[] = [
-  {
-    value: 'выплата зп',
-    label: 'Выплата ЗП',
-    colorClass: 'bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-  },
-  {
-    value: 'аванс',
-    label: 'Аванс',
-    colorClass: 'bg-amber-500/10 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20',
-  },
-  {
-    value: 'бонус',
-    label: 'Бонус',
-    colorClass: 'bg-purple-500/10 dark:bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20',
-  },
-  {
-    value: 'прочие начисления',
-    label: 'Прочие начисления',
-    colorClass: 'bg-blue-500/10 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20',
-  },
-  {
-    value: 'удержание',
-    label: 'Удержание',
-    colorClass: 'bg-rose-500/10 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/20',
-  },
-];
+import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
+import { PayrollSheetModal } from '@/components/payouts/PayrollSheetModal';
+import {
+  SALARY_OPERATION_TYPE_LABELS,
+  type SalaryOperationType,
+  type SalaryOperationSign,
+} from '@/lib/validations';
+import type { UserRole } from '@/types/database.types';
 
 export default function PayoutsPage() {
   const { showToast } = useToast();
@@ -80,42 +53,44 @@ export default function PayoutsPage() {
 
   // Статистика
   const [stats, setStats] = React.useState<PayoutsStats>({
+    totalAccrued: 0,
     totalPaid: 0,
     totalAdvances: 0,
     totalDeductions: 0,
     transactionsCount: 0,
   });
 
-  // Поиск и Фильтры (ЯРУС 1)
+  // Поиск и Фильтры
   const [searchQuery, setSearchQuery] = React.useState('');
   const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
 
-  // Список сотрудников для создания выплаты
+  // Список сотрудников
   const [employees, setEmployees] = React.useState<
-    { user_id: string; full_name: string; role: string; login: string }[]
+    { user_id: string; full_name: string; role: string; login: string; color?: string }[]
   >([]);
 
-  // Состояние диалога создания выплаты
+  // Состояние модальных окон
+  const [isPayrollSheetOpen, setIsPayrollSheetOpen] = React.useState(false);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [selectedPayout, setSelectedPayout] = React.useState<PayoutItem | null>(null);
 
-  // Удаление выплаты (Admin Only)
+  // Удаление операции (Admin Only)
   const [payoutToDelete, setPayoutToDelete] = React.useState<PayoutItem | null>(null);
   const [isDeletingPayout, setIsDeletingPayout] = React.useState(false);
 
   const handleDeletePayout = async (payout: PayoutItem) => {
     if (currentUserRole !== 'admin') {
-      showToast('Удаление выплат разрешено только администраторам', 'error');
+      showToast('Удаление операций по ЗП разрешено только администраторам', 'error');
       return;
     }
     setIsDeletingPayout(true);
     try {
       await api.payouts.delete(payout.payout_id);
       showToast(
-        `Выплата сотруднику ${payout.recipient?.full_name || ''} удалена, начисления разблокированы`,
+        `Операция сотрудника ${payout.recipient?.full_name || ''} удалена`,
         'success'
       );
       setPayoutToDelete(null);
@@ -124,7 +99,7 @@ export default function PayoutsPage() {
       }
       fetchData(selectedMonth, selectedCategory);
     } catch (err: any) {
-      showToast(err.message || 'Не удалось удалить выплату', 'error');
+      showToast(err.message || 'Не удалось удалить операцию', 'error');
     } finally {
       setIsDeletingPayout(false);
     }
@@ -133,30 +108,35 @@ export default function PayoutsPage() {
   const currentMonthStr = new Date().toISOString().substring(0, 7);
   const todayStr = new Date().toISOString().substring(0, 10);
 
-  const [formData, setFormData] = React.useState<CreatePayoutInput>({
+  // Состояние формы создания операции (Admin)
+  const [formData, setFormData] = React.useState<{
+    user_id: string;
+    operation_type: SalaryOperationType;
+    amount: number;
+    actual_date: string;
+    settlement_month: string;
+    payment_method: string;
+    note: string;
+  }>({
     user_id: '',
-    accrual_month: currentMonthStr,
-    payout_date: todayStr,
+    operation_type: 'salary_base',
     amount: 0,
-    payout_category: 'выплата зп',
-    operation_type: 'payout',
+    actual_date: todayStr,
+    settlement_month: currentMonthStr,
     payment_method: 'mbank',
-    comment: '',
+    note: '',
   });
 
-  const [unpaidAccruals, setUnpaidAccruals] = React.useState<any[]>([]);
-  const [selectedAccrualIds, setSelectedAccrualIds] = React.useState<string[]>([]);
-  const [isLoadingAccruals, setIsLoadingAccruals] = React.useState(false);
-  const [payrollSheet, setPayrollSheet] = React.useState<{
+  const [payrollPreview, setPayrollPreview] = React.useState<{
     opening_balance: number;
     total_accrued: number;
     total_deductions: number;
     total_paid: number;
     closing_balance: number;
   } | null>(null);
-  const [isLoadingPayroll, setIsLoadingPayroll] = React.useState(false);
+  const [isLoadingPreview, setIsLoadingPreview] = React.useState(false);
 
-  // Загрузка данных
+  // Загрузка данных журнала
   const fetchData = React.useCallback(async (month?: string, cat?: string) => {
     setIsLoading(true);
     try {
@@ -181,8 +161,8 @@ export default function PayoutsPage() {
       setAccrualMonths(monthsRes);
       setEmployees(employeesRes);
     } catch (err: any) {
-      console.error('Failed to load payouts:', err);
-      showToast(err.message || 'Ошибка при загрузке реестра выплат', 'error');
+      console.error('Failed to load salary operations:', err);
+      showToast(err.message || 'Ошибка при загрузке реестра операций по ЗП', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -212,20 +192,18 @@ export default function PayoutsPage() {
     fetchData(selectedMonth, val);
   };
 
-  // Автоматическая загрузка неоплаченных начислений и расчетного листка при выборе сотрудника
+  // Автоматическая загрузка расчетного листка при выборе сотрудника в форме создания
   React.useEffect(() => {
     if (!isCreateOpen || !formData.user_id) {
-      setUnpaidAccruals([]);
-      setSelectedAccrualIds([]);
-      setPayrollSheet(null);
+      setPayrollPreview(null);
       return;
     }
 
-    setIsLoadingPayroll(true);
-    api.profile
-      .getPayrollSheet({ employeeId: formData.user_id, month: formData.accrual_month })
+    setIsLoadingPreview(true);
+    api.payouts
+      .getPayrollSheet({ employeeId: formData.user_id, month: formData.settlement_month })
       .then((sheet) => {
-        setPayrollSheet({
+        setPayrollPreview({
           opening_balance: Number(sheet.opening_balance) || 0,
           total_accrued: Number(sheet.total_accrued) || 0,
           total_deductions: Number(sheet.total_deductions) || 0,
@@ -233,94 +211,76 @@ export default function PayoutsPage() {
           closing_balance: Number(sheet.closing_balance) || 0,
         });
       })
-      .catch((err) => console.error('Failed to load payroll sheet:', err))
-      .finally(() => setIsLoadingPayroll(false));
+      .catch((err) => console.error('Failed to load payroll preview:', err))
+      .finally(() => setIsLoadingPreview(false));
+  }, [isCreateOpen, formData.user_id, formData.settlement_month]);
 
-    if (formData.operation_type === 'deduction') {
-      setUnpaidAccruals([]);
-      setSelectedAccrualIds([]);
-      return;
-    }
-
-    setIsLoadingAccruals(true);
-    api.payouts
-      .getUnpaidAccruals({ employeeId: formData.user_id, settlementMonth: formData.accrual_month })
-      .then((res) => {
-        const list = res.accruals || [];
-        setUnpaidAccruals(list);
-        const ids = list.map((a: any) => a.id);
-        setSelectedAccrualIds(ids);
-        const total = list.reduce((sum: number, a: any) => sum + (Number(a.amount) || 0), 0);
-        if (total > 0) {
-          setFormData((prev) => ({ ...prev, amount: total }));
-        }
-      })
-      .catch((err) => console.error('Failed to load unpaid accruals:', err))
-      .finally(() => setIsLoadingAccruals(false));
-  }, [isCreateOpen, formData.user_id, formData.accrual_month, formData.operation_type]);
-
-  const toggleAccrualSelection = (id: string) => {
-    setSelectedAccrualIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      const nextTotal = unpaidAccruals
-        .filter((a) => next.includes(a.id))
-        .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
-      setFormData((f) => ({ ...f, amount: nextTotal }));
-      return next;
-    });
-  };
-
+  // Обработка отправки формы создания
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.user_id) {
-      showToast('Выберите сотрудника-получателя', 'error');
+      showToast('Выберите сотрудника', 'error');
       return;
     }
-    if (!formData.amount || formData.amount <= 0) {
-      showToast('Укажите корректную сумму', 'error');
+    if (formData.amount <= 0) {
+      showToast('Сумма операции должна быть больше нуля', 'error');
       return;
     }
+
+    const isAccrual = ['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(
+      formData.operation_type
+    );
+    const sign: SalaryOperationSign = isAccrual ? '+' : '-';
 
     setIsSubmitting(true);
     try {
       await api.payouts.create({
-        ...formData,
-        accrual_ids:
-          formData.operation_type === 'payout' && selectedAccrualIds.length > 0
-            ? selectedAccrualIds
-            : undefined,
+        user_id: formData.user_id,
+        employee_id: formData.user_id,
+        operation_sign: sign,
+        operation_type: formData.operation_type,
+        amount: Number(formData.amount),
+        actual_date: formData.actual_date,
+        settlement_month: formData.settlement_month,
+        payment_method: formData.operation_type === 'payout' ? formData.payment_method : null,
+        note: formData.note.trim() || undefined,
       });
-      showToast(
-        formData.operation_type === 'deduction'
-          ? 'Удержание успешно зарегистрировано'
-          : 'Выплата успешно зарегистрирована',
-        'success'
-      );
+
+      showToast('Операция по ЗП успешно проведена', 'success');
       setIsCreateOpen(false);
       setFormData({
         user_id: '',
-        accrual_month: currentMonthStr,
-        payout_date: todayStr,
+        operation_type: 'salary_base',
         amount: 0,
-        payout_category: 'выплата зп',
-        operation_type: 'payout',
+        actual_date: todayStr,
+        settlement_month: currentMonthStr,
         payment_method: 'mbank',
-        comment: '',
+        note: '',
       });
-      setSelectedAccrualIds([]);
-      setUnpaidAccruals([]);
-      setPayrollSheet(null);
+      setPayrollPreview(null);
       fetchData();
     } catch (err: any) {
-      showToast(err.message || 'Ошибка при сохранении выплаты', 'error');
+      showToast(err.message || 'Ошибка при проведении операции по ЗП', 'error');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Колонки DataJournal (мемоизированы для стабилизации виртуализатора)
+  // Колонки реестра DataJournal
   const columns: ColumnDef<PayoutItem>[] = React.useMemo(
     () => [
+      {
+        key: 'payout_id',
+        label: 'ID',
+        width: 100,
+        minWidth: 80,
+        sortable: true,
+        renderCell: (row) => (
+          <span className="font-mono text-[11px] text-zinc-500 font-medium">
+            #{row.payout_id.slice(0, 8)}
+          </span>
+        ),
+      },
       {
         key: 'recipient',
         label: 'Сотрудник',
@@ -330,29 +290,71 @@ export default function PayoutsPage() {
         filterable: true,
         renderCell: (row) => (
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-xl bg-zinc-800 dark:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-bold flex items-center justify-center flex-shrink-0">
-              {row.recipient?.full_name?.charAt(0) || 'U'}
-            </div>
-            <div className="flex flex-col truncate">
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs truncate">
-                {row.recipient?.full_name || 'Неизвестный'}
-              </span>
-              <span className="text-[10px] text-zinc-400 capitalize">
-                {row.recipient?.role || 'Сотрудник'} • @{row.recipient?.login || 'user'}
-              </span>
-            </div>
+            <EmployeeBadge
+              name={row.recipient?.full_name || 'Неизвестный'}
+              color={row.recipient?.color}
+              size="sm"
+            />
+            <span className="text-[10px] text-zinc-400 font-mono">
+              @{row.recipient?.login || 'user'}
+            </span>
           </div>
         ),
       },
       {
-        key: 'payout_category',
-        label: 'Категория',
-        width: 160,
-        minWidth: 140,
+        key: 'operation_sign',
+        label: 'Знак',
+        width: 80,
+        minWidth: 70,
+        sortable: true,
+        renderCell: (row) => {
+          const isPlus = row.operation_sign === '+';
+          return (
+            <span
+              className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-xs ${
+                isPlus
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                  : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+              }`}
+            >
+              {row.operation_sign}
+            </span>
+          );
+        },
+      },
+      {
+        key: 'operation_type',
+        label: 'Вид операции',
+        width: 210,
+        minWidth: 175,
         sortable: true,
         filterable: true,
-        type: 'status',
-        statusOptions: CATEGORY_STATUS_OPTIONS,
+        renderCell: (row) => {
+          const label = SALARY_OPERATION_TYPE_LABELS[row.operation_type] || row.operation_type;
+          let colorClass = 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700';
+
+          if (row.operation_type === 'accrual_connection') {
+            colorClass = 'bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/20';
+          } else if (row.operation_type === 'accrual_maintenance') {
+            colorClass = 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/20';
+          } else if (row.operation_type === 'salary_base') {
+            colorClass = 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20';
+          } else if (row.operation_type === 'bonus_other') {
+            colorClass = 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20';
+          } else if (row.operation_type === 'deduction') {
+            colorClass = 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
+          } else if (row.operation_type === 'fine') {
+            colorClass = 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20';
+          } else if (row.operation_type === 'payout') {
+            colorClass = 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20';
+          }
+
+          return (
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border ${colorClass}`}>
+              {label}
+            </span>
+          );
+        },
       },
       {
         key: 'amount',
@@ -362,29 +364,58 @@ export default function PayoutsPage() {
         sortable: true,
         filterable: true,
         renderCell: (row) => {
-          const isDeduction = row.payout_category === 'удержание';
+          const isPlus = row.operation_sign === '+';
           return (
             <span
               className={`font-mono text-xs font-bold ${
-                isDeduction
-                  ? 'text-rose-600 dark:text-rose-400'
-                  : 'text-emerald-600 dark:text-emerald-400'
+                isPlus
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-rose-600 dark:text-rose-400'
               }`}
             >
-              {isDeduction ? '-' : '+'}
+              {isPlus ? '+' : '-'}
               {Number(row.amount).toLocaleString('ru-RU')} сом
             </span>
           );
         },
       },
       {
+        key: 'actual_date',
+        label: 'Дата операции',
+        width: 130,
+        minWidth: 110,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+            <FormattedDate date={row.actual_date} type="date" />
+          </span>
+        ),
+      },
+      {
+        key: 'settlement_month',
+        label: 'Месяц начисления',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: true,
+        renderCell: (row) => (
+          <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
+            {row.settlement_month}
+          </span>
+        ),
+      },
+      {
         key: 'payment_method',
         label: 'Кошелек',
-        width: 150,
-        minWidth: 130,
+        width: 140,
+        minWidth: 120,
         sortable: true,
         filterable: true,
         renderCell: (row) => {
+          if (!row.payment_method && row.operation_type !== 'payout') {
+            return <span className="text-[11px] text-zinc-400">—</span>;
+          }
           const method = (row.payment_method || '').toLowerCase();
           let badgeColor = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50';
           let label = row.payment_method || '—';
@@ -421,68 +452,15 @@ export default function PayoutsPage() {
         },
       },
       {
-        key: 'accrual_month',
-        label: 'Период',
-        width: 110,
-        minWidth: 95,
-        sortable: true,
-        filterable: true,
-        renderCell: (row) => (
-          <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-            {row.accrual_month}
-          </span>
-        ),
-      },
-      {
-        key: 'payout_date',
-        label: 'Дата выплаты',
-        width: 130,
-        minWidth: 110,
-        sortable: true,
-        filterable: true,
-        renderCell: (row) => (
-          <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-            <FormattedDate date={row.payout_date} type="date" />
-          </span>
-        ),
-      },
-      {
-        key: 'status',
-        label: 'Статус',
-        width: 120,
-        minWidth: 100,
-        sortable: true,
-        filterable: true,
-        renderCell: (row) => {
-          const isPaid = (row.status || 'paid') === 'paid';
-          return (
-            <span
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold border ${
-                isPaid
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-              }`}
-            >
-              {isPaid ? (
-                <CheckCircle2 className="w-3 h-3" strokeWidth={1.75} />
-              ) : (
-                <Clock className="w-3 h-3" strokeWidth={1.75} />
-              )}
-              <span>{isPaid ? 'Выплачено' : 'В обработке'}</span>
-            </span>
-          );
-        },
-      },
-      {
-        key: 'comment',
+        key: 'note',
         label: 'Примечание',
         width: 200,
         minWidth: 150,
         sortable: false,
         filterable: true,
         renderCell: (row) => (
-          <span className="text-xs text-zinc-500 dark:text-zinc-400 truncate max-w-xs block">
-            {row.comment || '—'}
+          <span className="text-xs text-zinc-600 dark:text-zinc-400 truncate block" title={row.note || ''}>
+            {row.note || '—'}
           </span>
         ),
       },
@@ -490,11 +468,10 @@ export default function PayoutsPage() {
     []
   );
 
-  // Расчет количества активных фильтров (ЯРУС 1)
   const activeFilterCount =
     (selectedMonth !== 'all' ? 1 : 0) + (selectedCategory !== 'all' ? 1 : 0);
 
-  // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
+  // Фильтры TopHeader
   const filterContent = (
     <div className="space-y-3.5">
       <div>
@@ -506,7 +483,7 @@ export default function PayoutsPage() {
           onChange={handleMonthChange}
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
-          <option value="all">Все месяцы</option>
+          <option value="all">Все периоды</option>
           {accrualMonths.map((m) => (
             <option key={m} value={m}>
               {m}
@@ -517,48 +494,44 @@ export default function PayoutsPage() {
 
       <div>
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
-          Категория
+          Вид операции
         </label>
         <select
           value={selectedCategory}
           onChange={handleCategoryChange}
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
-          <option value="all">Все категории</option>
-          <option value="выплата зп">Выплата ЗП</option>
-          <option value="аванс">Аванс</option>
-          <option value="бонус">Бонус</option>
-          <option value="прочие начисления">Прочие</option>
-          <option value="удержание">Удержание</option>
+          <option value="all">Все виды операций</option>
+          <option value="accrual_connection">Бонус за подключение</option>
+          <option value="accrual_maintenance">Бонус за сопровождение</option>
+          <option value="salary_base">Оклад</option>
+          <option value="bonus_other">Прочая надбавка</option>
+          <option value="payout">Выплата ЗП</option>
+          <option value="deduction">Удержание</option>
+          <option value="fine">Штраф</option>
         </select>
       </div>
-
-      {activeFilterCount > 0 && (
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedMonth('all');
-            setSelectedCategory('all');
-            fetchData('all', 'all');
-          }}
-          className="w-full h-9 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5"
-        >
-          <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>Сбросить фильтры</span>
-        </button>
-      )}
     </div>
   );
 
-  // Контекстные действия тулбара реестра выплат (ЯРУС 3)
+  // Контекстные действия тулбара реестра
   const payoutActions = (
     <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
       <button
         type="button"
+        onClick={() => setIsPayrollSheetOpen(true)}
+        className="h-9 md:h-11 px-3 md:px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
+        title="Открыть расчётный лист"
+      >
+        <FileSpreadsheet className="w-4 h-4" strokeWidth={1.75} />
+        <span className="hidden sm:inline">Расчётный лист</span>
+      </button>
+
+      <button
+        type="button"
         onClick={() => fetchData()}
-        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
+        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0 cursor-pointer"
         title="Обновить журнал"
-        aria-label="Обновить журнал"
       >
         <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
         <span className="hidden md:inline">Обновить</span>
@@ -579,7 +552,7 @@ export default function PayoutsPage() {
           className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
         >
           <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
-          <span>Удалить выплату</span>
+          <span>Удалить операцию</span>
         </button>
       );
     },
@@ -593,60 +566,63 @@ export default function PayoutsPage() {
       userLogin={userLogin}
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
-      searchPlaceholder="Поиск по сотруднику, назначению или комментарию..."
+      searchPlaceholder="Поиск по сотруднику, виду операции или примечанию..."
       filterCount={activeFilterCount}
       filterContent={filterContent}
       onCreateClick={currentUserRole === 'admin' ? () => setIsCreateOpen(true) : undefined}
-      createTooltip="Оформить выплату"
+      createTooltip="Оформить операцию по ЗП"
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: KPI сводка (Адаптивная сетка: 2x2 на мобильных, 4 в ряд на десктопе) */}
+        {/* KPI сводка операций по ЗП */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
             <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Фонд выплат</span>
+              <span className="truncate">Начислено (+)</span>
             </span>
-            <p className="text-sm sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 font-mono truncate">
-              {stats.totalPaid.toLocaleString('ru-RU')} сом
+            <p className="text-sm sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
+              +{stats.totalAccrued.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
-              <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Авансы</span>
+
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
+              <Wallet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Выплачено (-)</span>
             </span>
-            <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
-              {stats.totalAdvances.toLocaleString('ru-RU')} сом
+            <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
+              -{stats.totalPaid.toLocaleString('ru-RU')} сом
             </p>
           </div>
+
           <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
             <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1 truncate">
               <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Удержания</span>
+              <span className="truncate">Удержания (-)</span>
             </span>
             <p className="text-sm sm:text-xl font-bold text-rose-700 dark:text-rose-300 font-mono truncate">
-              {stats.totalDeductions.toLocaleString('ru-RU')} сом
+              -{stats.totalDeductions.toLocaleString('ru-RU')} сом
             </p>
           </div>
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
-              <FileSpreadsheet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Транзакции</span>
+
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
+              <Receipt className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Операций в реестре</span>
             </span>
-            <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
+            <p className="text-sm sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 font-mono truncate">
               {stats.transactionsCount}
             </p>
           </div>
         </div>
 
-        {/* ЯРУС 3: Универсальный реестр DataJournal */}
+        {/* Универсальный реестр DataJournal */}
         <DataJournal<PayoutItem>
           data={payouts}
           columns={columns}
           keyField="payout_id"
-          storageKey="payouts_journal"
-          searchPlaceholder="Поиск по сотруднику, назначению или комментарию..."
+          storageKey="salary_operations_journal"
+          searchPlaceholder="Поиск по сотруднику, виду операции или примечанию..."
           onRowClick={(row) => setSelectedPayout(row)}
           totalCount={totalCount}
           externalSearchQuery={searchQuery}
@@ -654,7 +630,7 @@ export default function PayoutsPage() {
           customRowActions={renderCustomRowActions}
         />
 
-        {/* 4. Модальное окно просмотра деталей проводки */}
+        {/* Модальное окно просмотра деталей операции */}
         {selectedPayout && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
             <div
@@ -664,75 +640,79 @@ export default function PayoutsPage() {
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                    <Banknote className="w-5 h-5" strokeWidth={2} />
+                    <Receipt className="w-5 h-5" strokeWidth={2} />
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
                       {selectedPayout.recipient?.full_name}
                     </h3>
-                    <p className="text-xs text-zinc-400 capitalize">
-                      {selectedPayout.recipient?.role} • @{selectedPayout.recipient?.login}
+                    <p className="text-xs text-zinc-400">
+                      @{selectedPayout.recipient?.login} • #{selectedPayout.payout_id.slice(0, 8)}
                     </p>
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setSelectedPayout(null)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500"
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
                 >
                   <X className="w-4 h-4" strokeWidth={2} />
                 </button>
               </div>
 
               <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-2.5 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Категория:</span>
-                  <span className="font-semibold text-zinc-900 dark:text-zinc-100 capitalize">
-                    {selectedPayout.payout_category}
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-400">Вид операции:</span>
+                  <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                    {SALARY_OPERATION_TYPE_LABELS[selectedPayout.operation_type] || selectedPayout.operation_type}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Сумма:</span>
-                  <span className="font-mono font-bold text-sm text-emerald-600 dark:text-emerald-400">
-                    {selectedPayout.amount.toLocaleString('ru-RU')} сом
+                  <span
+                    className={`font-mono font-bold text-sm ${
+                      selectedPayout.operation_sign === '+'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400'
+                    }`}
+                  >
+                    {selectedPayout.operation_sign}
+                    {Number(selectedPayout.amount).toLocaleString('ru-RU')} сом
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Кошелек:</span>
-                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                    {(() => {
-                      const m = (selectedPayout.payment_method || '').toLowerCase();
-                      if (m === 'mbank') return 'МБанк';
-                      if (m === 'odengi' || m === 'oney') return 'О!Деньги';
-                      if (m === 'bakai') return 'Бакай Банк';
-                      if (m === 'abank') return 'АБанк';
-                      if (m === 'cash') return 'Наличка';
-                      return selectedPayout.payment_method;
-                    })()}
-                  </span>
-                </div>
-                <div className="flex justify-between">
+                {selectedPayout.payment_method && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-400">Кошелек:</span>
+                    <span className="font-semibold text-zinc-900 dark:text-zinc-100 uppercase">
+                      {selectedPayout.payment_method}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Расчетный месяц:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    {selectedPayout.accrual_month}
+                    {selectedPayout.settlement_month}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Дата выдачи:</span>
+                <div className="flex justify-between items-center">
+                  <span className="text-zinc-400">Дата операции:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    <FormattedDate date={selectedPayout.payout_date} type="date" />
+                    <FormattedDate date={selectedPayout.actual_date} type="date" />
                   </span>
                 </div>
-                <div className="flex justify-between border-t border-zinc-200/50 dark:border-zinc-700/50 pt-2">
-                  <span className="text-zinc-400">Провел операцию:</span>
-                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                    {selectedPayout.creator?.full_name || 'Администратор'}
-                  </span>
-                </div>
-                {selectedPayout.comment && (
+                {selectedPayout.seller_phone && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-400">Продавец:</span>
+                    <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                      +{selectedPayout.seller_phone}
+                    </span>
+                  </div>
+                )}
+                {selectedPayout.note && (
                   <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50">
                     <span className="text-zinc-400 block mb-1">Примечание:</span>
                     <p className="text-zinc-800 dark:text-zinc-200 bg-white dark:bg-zinc-800 p-2.5 rounded-xl border border-zinc-200/60 dark:border-zinc-700/60">
-                      {selectedPayout.comment}
+                      {selectedPayout.note}
                     </p>
                   </div>
                 )}
@@ -761,7 +741,7 @@ export default function PayoutsPage() {
           </div>
         )}
 
-        {/* 5. Модальное окно создания выплаты (только admin) */}
+        {/* Модальное окно создания операции (Admin Only) */}
         {isCreateOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
             <form
@@ -776,65 +756,27 @@ export default function PayoutsPage() {
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      Оформление выплаты
+                      Новая операция по ЗП
                     </h3>
                     <p className="text-xs text-zinc-400">
-                      Фиксация перечисления средств сотруднику в расчетный период
+                      Регистрация начисления, удержания или выплаты сотруднику
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsCreateOpen(false)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500"
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
                 >
                   <X className="w-4 h-4" strokeWidth={2} />
                 </button>
               </div>
 
               <div className="space-y-3 text-xs">
-                {/* Переключатель: Выплата vs Удержание */}
-                <div className="flex rounded-xl bg-zinc-100 dark:bg-zinc-800 p-1 mb-1">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFormData((p) => ({
-                        ...p,
-                        operation_type: 'payout',
-                        payout_category: 'выплата зп',
-                      }))
-                    }
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                      formData.operation_type !== 'deduction'
-                        ? 'bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
-                        : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-                    }`}
-                  >
-                    Выплата сотруднику
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFormData((p) => ({
-                        ...p,
-                        operation_type: 'deduction',
-                        payout_category: 'удержание',
-                      }))
-                    }
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                      formData.operation_type === 'deduction'
-                        ? 'bg-white dark:bg-zinc-900 text-rose-600 dark:text-rose-400 shadow-xs'
-                        : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-                    }`}
-                  >
-                    Удержание / Штраф
-                  </button>
-                </div>
-
                 {/* Выбор сотрудника */}
                 <div className="space-y-1">
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Сотрудник-получатель *
+                    Сотрудник *
                   </label>
                   <select
                     value={formData.user_id}
@@ -851,42 +793,42 @@ export default function PayoutsPage() {
                   </select>
                 </div>
 
-                {/* Интерактивный расчетный листок выбранного сотрудника */}
+                {/* Балансовая сводка выбранного сотрудника */}
                 {formData.user_id && (
-                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-zinc-50 to-zinc-100/70 dark:from-zinc-800/60 dark:to-zinc-800/30 border border-zinc-200/80 dark:border-zinc-700/60 space-y-2.5">
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-zinc-50 to-zinc-100/70 dark:from-zinc-800/60 dark:to-zinc-800/30 border border-zinc-200/80 dark:border-zinc-700/60 space-y-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                       <div className="flex items-center gap-1.5">
                         <FileSpreadsheet className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
-                        <span>Расчетный листок ({formData.accrual_month})</span>
+                        <span>Текущий расчетный лист ({formData.settlement_month})</span>
                       </div>
-                      {isLoadingPayroll && (
-                        <span className="text-[11px] text-zinc-400 font-normal">Обновление сальдо...</span>
+                      {isLoadingPreview && (
+                        <span className="text-[11px] text-zinc-400 font-normal">Загрузка сальдо...</span>
                       )}
                     </div>
-                    {payrollSheet ? (
+                    {payrollPreview ? (
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                         <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
                           <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Вх. сальдо</span>
                           <span className="font-mono font-bold text-zinc-800 dark:text-zinc-200">
-                            {payrollSheet.opening_balance.toLocaleString('ru-RU')} сом
+                            {payrollPreview.opening_balance.toLocaleString('ru-RU')} с
                           </span>
                         </div>
                         <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
                           <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Начислено</span>
                           <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                            +{payrollSheet.total_accrued.toLocaleString('ru-RU')} сом
+                            +{payrollPreview.total_accrued.toLocaleString('ru-RU')} с
                           </span>
                         </div>
                         <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
-                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Удержано / Выпл.</span>
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Удерж./Выпл.</span>
                           <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
-                            -{(payrollSheet.total_deductions + payrollSheet.total_paid).toLocaleString('ru-RU')} сом
+                            -{(payrollPreview.total_deductions + payrollPreview.total_paid).toLocaleString('ru-RU')} с
                           </span>
                         </div>
                         <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
                           <span className="text-emerald-700 dark:text-emerald-300 block text-[10px] font-semibold">К выплате</span>
                           <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
-                            {payrollSheet.closing_balance.toLocaleString('ru-RU')} сом
+                            {payrollPreview.closing_balance.toLocaleString('ru-RU')} с
                           </span>
                         </div>
                       </div>
@@ -894,48 +836,28 @@ export default function PayoutsPage() {
                   </div>
                 )}
 
-                {/* Чекбоксы неоплаченных начислений для выплаты */}
-                {formData.user_id && formData.operation_type !== 'deduction' && (
-                  <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 space-y-2">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
-                      <span>Неоплаченные начисления ({unpaidAccruals.length}):</span>
-                      <span className="text-[10px] text-zinc-400">Отметьте для выплаты</span>
-                    </div>
-                    {isLoadingAccruals ? (
-                      <div className="text-[11px] text-zinc-400 py-1">Поиск начислений...</div>
-                    ) : unpaidAccruals.length === 0 ? (
-                      <div className="text-[11px] text-zinc-400 py-1">Нет неоплаченных начислений за выбранный период</div>
-                    ) : (
-                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                        {unpaidAccruals.map((acc: any) => {
-                          const isChecked = selectedAccrualIds.includes(acc.id);
-                          return (
-                            <label
-                              key={acc.id}
-                              className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700/50 cursor-pointer text-xs transition-colors"
-                            >
-                              <div className="flex items-center gap-2 truncate">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => toggleAccrualSelection(acc.id)}
-                                  className="rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
-                                />
-                                <span className="truncate">
-                                  {acc.accrual_type === 'connection' ? 'Подключение' : 'Сопровождение'}
-                                  {acc.sellers?.store ? ` • ${acc.sellers.store}` : ''}
-                                </span>
-                              </div>
-                              <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
-                                +{Number(acc.amount).toLocaleString('ru-RU')} сом
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Вид операции */}
+                <div className="space-y-1">
+                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
+                    Вид операции *
+                  </label>
+                  <select
+                    value={formData.operation_type}
+                    onChange={(e) =>
+                      setFormData((p) => ({
+                        ...p,
+                        operation_type: e.target.value as SalaryOperationType,
+                      }))
+                    }
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="salary_base">Оклад (+ Начисление)</option>
+                    <option value="bonus_other">Прочая надбавка / Премия (+ Начисление)</option>
+                    <option value="payout">Выплата ЗП (- Выплата)</option>
+                    <option value="deduction">Удержание (- Удержание)</option>
+                    <option value="fine">Штраф (- Удержание)</option>
+                  </select>
+                </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   {/* Сумма */}
@@ -957,46 +879,50 @@ export default function PayoutsPage() {
                     />
                   </div>
 
-                  {/* Категория */}
+                  {/* Расчетный месяц */}
                   <div className="space-y-1">
                     <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Категория *
+                      Расчетный месяц *
                     </label>
-                    <select
-                      value={formData.payout_category}
+                    <input
+                      type="text"
+                      pattern="^\d{4}-\d{2}$"
+                      required
+                      value={formData.settlement_month}
                       onChange={(e) =>
-                        setFormData((p) => ({
-                          ...p,
-                          payout_category: e.target.value as PayoutCategoryType,
-                        }))
+                        setFormData((p) => ({ ...p, settlement_month: e.target.value }))
                       }
-                      disabled={formData.operation_type === 'deduction'}
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-75"
-                    >
-                      {formData.operation_type === 'deduction' ? (
-                        <option value="удержание">Удержание</option>
-                      ) : (
-                        <>
-                          <option value="выплата зп">Выплата ЗП</option>
-                          <option value="аванс">Аванс</option>
-                          <option value="бонус">Бонус</option>
-                          <option value="прочие начисления">Прочие начисления</option>
-                        </>
-                      )}
-                    </select>
+                      placeholder="2026-09"
+                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  {/* Кошелек */}
+                  {/* Дата операции */}
                   <div className="space-y-1">
                     <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Кошелек *
+                      Дата операции *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.actual_date}
+                      onChange={(e) => setFormData((p) => ({ ...p, actual_date: e.target.value }))}
+                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
+                  </div>
+
+                  {/* Кошелек (только если выплата) */}
+                  <div className="space-y-1">
+                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
+                      Кошелек {formData.operation_type === 'payout' ? '*' : '(не требуется)'}
                     </label>
                     <select
                       value={formData.payment_method}
                       onChange={(e) => setFormData((p) => ({ ...p, payment_method: e.target.value }))}
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      disabled={formData.operation_type !== 'payout'}
+                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                     >
                       <option value="mbank">МБанк</option>
                       <option value="odengi">О!Деньги</option>
@@ -1005,50 +931,18 @@ export default function PayoutsPage() {
                       <option value="cash">Наличка</option>
                     </select>
                   </div>
-
-                  {/* Расчетный месяц */}
-                  <div className="space-y-1">
-                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Расчетный месяц (YYYY-MM) *
-                    </label>
-                    <input
-                      type="text"
-                      pattern="^\d{4}-\d{2}$"
-                      required
-                      value={formData.accrual_month}
-                      onChange={(e) =>
-                        setFormData((p) => ({ ...p, accrual_month: e.target.value }))
-                      }
-                      placeholder="2026-09"
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                    />
-                  </div>
                 </div>
 
-                {/* Дата фактической выплаты */}
+                {/* Примечание */}
                 <div className="space-y-1">
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Дата проводки *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.payout_date}
-                    onChange={(e) => setFormData((p) => ({ ...p, payout_date: e.target.value }))}
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                  />
-                </div>
-
-                {/* Комментарий */}
-                <div className="space-y-1">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Служебная заметка / Обоснование
+                    Примечание
                   </label>
                   <textarea
                     rows={2}
-                    value={formData.comment || ''}
-                    onChange={(e) => setFormData((p) => ({ ...p, comment: e.target.value }))}
-                    placeholder="Например: Бонус за перевыполнение KPI..."
+                    value={formData.note}
+                    onChange={(e) => setFormData((p) => ({ ...p, note: e.target.value }))}
+                    placeholder="Например: Премия за перевыполнение плана..."
                     className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
@@ -1067,14 +961,24 @@ export default function PayoutsPage() {
                   disabled={isSubmitting}
                   className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Проведение...' : 'Подтвердить выплату'}
+                  {isSubmitting ? 'Проведение...' : 'Подтвердить операцию'}
                 </button>
               </div>
             </form>
           </div>
         )}
 
-        {/* 6. Диалог подтверждения удаления выплаты (Admin Only) */}
+        {/* Модальное окно «Расчётный лист» */}
+        <PayrollSheetModal
+          isOpen={isPayrollSheetOpen}
+          onClose={() => setIsPayrollSheetOpen(false)}
+          currentUserRole={currentUserRole}
+          currentUserId={user.profile?.user_id || ''}
+          employees={employees}
+          months={accrualMonths}
+        />
+
+        {/* Диалог подтверждения удаления операции (Admin Only) */}
         {payoutToDelete && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
             <div
@@ -1087,21 +991,17 @@ export default function PayoutsPage() {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Удалить запись о выплате?
+                    Удалить операцию по ЗП?
                   </h3>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {payoutToDelete.recipient?.full_name} • {payoutToDelete.amount.toLocaleString('ru-RU')} сом
+                    {payoutToDelete.recipient?.full_name} • {payoutToDelete.operation_sign}{Number(payoutToDelete.amount).toLocaleString('ru-RU')} сом
                   </p>
                 </div>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
-                <div className="font-semibold flex items-center gap-1.5">
-                  <Clock className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-                  <span>Разблокировка начислений</span>
-                </div>
                 <p className="text-[11px] leading-relaxed">
-                  Все начисления, привязанные к этой выплате, будут автоматически разблокированы (is_paid = false) и возвращены в статус ожидания выплаты.
+                  Запись будет безвозвратно удалена из регистра операций по ЗП. Если операция была привязана к начислениям подключений, они будут разблокированы.
                 </p>
               </div>
 
@@ -1125,7 +1025,7 @@ export default function PayoutsPage() {
                   ) : (
                     <>
                       <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Удалить выплату</span>
+                      <span>Удалить операцию</span>
                     </>
                   )}
                 </button>

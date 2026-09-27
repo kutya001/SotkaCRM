@@ -30,6 +30,8 @@ import {
   RotateCcw,
   Plus,
   Trash2,
+  Users,
+  UserMinus,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import dynamic from 'next/dynamic';
@@ -118,8 +120,8 @@ export default function SellersPage() {
 
   // Поиск и Фильтры (ЯРУС 1)
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [filterModeration, setFilterModeration] = React.useState<string>(
-    user.role === 'consultant' ? 'approved' : 'all'
+  const [curatorTab, setCuratorTab] = React.useState<string>(
+    user.role === 'consultant' ? 'my' : 'all'
   );
   const [filterActive, setFilterActive] = React.useState<string>('all');
   const [filterManager, setFilterManager] = React.useState<string>('all');
@@ -137,19 +139,29 @@ export default function SellersPage() {
 
   // Загрузка начальных данных
   const fetchSellersData = React.useCallback(
-    async (page = 1, search = '', silent = false, moderationOverride?: string) => {
+    async (page = 1, search = '', silent = false, tabOverride?: string) => {
       if (!silent) {
         setIsLoading(true);
       }
       try {
+        const activeTab = tabOverride !== undefined ? tabOverride : curatorTab;
+        let effectiveManagerId = filterManager;
+        if (activeTab === 'my') {
+          effectiveManagerId = 'my';
+        } else if (activeTab === 'unassigned') {
+          effectiveManagerId = 'unassigned';
+        } else if (activeTab === 'all') {
+          effectiveManagerId = filterManager !== 'all' ? filterManager : 'all';
+        }
+
         const [sellersRes, leadsCheckRes, statsRes, managersRes] = await Promise.all([
           api.sellers.getAll({
             page,
             pageSize: 50,
             search,
-            moderation: moderationOverride !== undefined ? moderationOverride : filterModeration,
+            moderation: 'all',
             isActive: filterActive,
-            managerId: filterManager,
+            managerId: effectiveManagerId,
           }),
           api.sellers.checkAvailableLeads().catch(() => ({ has_available_leads: false, available_count: 0 })),
           getSellersStats(),
@@ -175,7 +187,7 @@ export default function SellersPage() {
         }
       }
     },
-    [filterModeration, filterActive, filterManager, router, showToast]
+    [curatorTab, filterActive, filterManager, router, showToast]
   );
 
   const handleBatchManager = async (managerId: string | null, clearSelection: () => void) => {
@@ -218,24 +230,17 @@ export default function SellersPage() {
     }
   };
 
-  // Вкладки статуса модерации для DataJournal
+  // Вкладки категорий кураторства для DataJournal
   const sellerTabs: DataJournalTab[] = React.useMemo(() => {
-    if (currentUserRole === 'consultant') {
-      return [
-        { id: 'approved', label: 'Одобрено', count: stats.total },
-      ];
-    }
     return [
-      { id: 'all', label: 'Все продавцы', count: stats.total },
-      { id: 'pending', label: 'На модерации', count: stats.pendingModeration },
-      { id: 'approved', label: 'Одобрен', count: stats.active },
-      { id: 'rejected', label: 'Отклонен' },
-      { id: 'blocked', label: 'Заблокирован' },
+      { id: 'all', label: 'Все', icon: Users, count: stats.total },
+      { id: 'my', label: 'Мои продавцы', icon: UserCheck, count: currentUserRole === 'consultant' ? stats.assigned : undefined },
+      { id: 'unassigned', label: 'Без куратора', icon: UserMinus, count: Math.max(0, stats.total - stats.assigned) },
     ];
   }, [stats, currentUserRole]);
 
   const handleTabChange = (tabId: string) => {
-    setFilterModeration(tabId);
+    setCuratorTab(tabId);
     fetchSellersData(1, searchQuery, false, tabId);
   };
 
@@ -406,13 +411,26 @@ export default function SellersPage() {
       {
         key: 'moderation',
         label: 'Модерация',
-        type: 'status',
         width: 140,
         minWidth: 120,
         sortable: true,
         filterable: true,
         groupable: true,
-        statusOptions: SELLER_MODERATION_OPTIONS,
+        renderCell: (row: SellerItem) => {
+          const modOpt =
+            SELLER_MODERATION_OPTIONS.find((o) => o.value === row.moderation) ||
+            SELLER_MODERATION_OPTIONS[0];
+          return (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-semibold border ${modOpt.colorClass}`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${modOpt.dotColor || 'bg-current'}`}
+              />
+              {modOpt.label}
+            </span>
+          );
+        },
       },
       {
         key: 'is_active',
@@ -524,7 +542,7 @@ export default function SellersPage() {
             );
           }
 
-          if (hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) {
+          if (!row.manager_id && hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) {
             return (
               <button
                 type="button"
@@ -541,7 +559,11 @@ export default function SellersPage() {
             );
           }
 
-          return <span className="text-[11px] text-zinc-400 italic">—</span>;
+          return (
+            <span className="text-[11px] text-zinc-400 italic">
+              {row.manager_id ? 'Куратор назначен' : '—'}
+            </span>
+          );
         },
       },
     ],
@@ -734,31 +756,12 @@ export default function SellersPage() {
 
   // Расчет количества активных фильтров (ЯРУС 1)
   const activeFilterCount =
-    (currentUserRole !== 'consultant' && filterModeration !== 'all' ? 1 : 0) +
     (filterActive !== 'all' ? 1 : 0) +
     (filterManager !== 'all' ? 1 : 0);
 
   // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
   const filterContent = (
     <div className="space-y-3.5">
-      {currentUserRole !== 'consultant' && (
-        <div>
-          <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
-            Модерация
-          </label>
-          <select
-            value={filterModeration}
-            onChange={(e) => setFilterModeration(e.target.value)}
-            className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
-          >
-            <option value="all">Любая модерация</option>
-            <option value="approved">● Одобрен</option>
-            <option value="pending">● На модерации</option>
-            <option value="rejected">● Отклонен</option>
-            <option value="blocked">● Заблокирован</option>
-          </select>
-        </div>
-      )}
 
       <div>
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
@@ -808,7 +811,7 @@ export default function SellersPage() {
         <button
           type="button"
           onClick={() => {
-            setFilterModeration(currentUserRole === 'consultant' ? 'approved' : 'all');
+            setCuratorTab(currentUserRole === 'consultant' ? 'my' : 'all');
             setFilterActive('all');
             setFilterManager('all');
           }}
@@ -1010,7 +1013,7 @@ export default function SellersPage() {
                   </span>
                 </div>
               </div>
-            ) : (hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) ? (
+            ) : (!seller.manager_id && hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) ? (
               <button
                 type="button"
                 onClick={() => setLinkLeadModal({ isOpen: true, seller })}
@@ -1020,7 +1023,9 @@ export default function SellersPage() {
                 <span>Связать с лидом</span>
               </button>
             ) : (
-              <span className="text-[11px] text-zinc-400 italic">Прямое подключение</span>
+              <span className="text-[11px] text-zinc-400 italic">
+                {seller.manager_id ? 'Куратор назначен' : 'Прямое подключение'}
+              </span>
             )}
           </div>
         </div>
@@ -1033,7 +1038,7 @@ export default function SellersPage() {
       if (!hasAvailableLeads || (currentUserRole !== 'admin' && currentUserRole !== 'consultant')) {
         return null;
       }
-      if (row.linked_lead) {
+      if (row.linked_lead || row.manager_id) {
         return null;
       }
       return (
@@ -1097,17 +1102,17 @@ export default function SellersPage() {
             </div>
           </div>
 
-          {/* На модерации */}
+          {/* Без куратора */}
           <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
             <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
-              <Clock className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+              <UserMinus className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
             </div>
             <div className="min-w-0">
               <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                На модерации
+                Без куратора
               </div>
               <div className="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
-                {stats.pendingModeration}
+                {Math.max(0, stats.total - stats.assigned)}
               </div>
             </div>
           </div>
@@ -1162,7 +1167,7 @@ export default function SellersPage() {
             externalSearchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             tabs={sellerTabs}
-            activeTab={filterModeration}
+            activeTab={curatorTab}
             onTabChange={handleTabChange}
             enableSelection={currentUserRole === 'admin'}
             selectedIds={selectedSellerIds}

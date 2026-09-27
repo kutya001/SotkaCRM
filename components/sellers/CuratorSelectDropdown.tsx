@@ -133,13 +133,13 @@ export const CuratorSelectDropdown: React.FC<CuratorSelectDropdownProps> = ({
 
   const handleSelect = async (mgrId: string | null) => {
     if (disabled || isUpdating) return;
+    setIsOpen(false);
+    setSearchTerm('');
     setIsUpdating(true);
     try {
       await onChange(mgrId);
     } finally {
       setIsUpdating(false);
-      setIsOpen(false);
-      setSearchTerm('');
     }
   };
 

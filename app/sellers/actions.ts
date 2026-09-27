@@ -606,6 +606,19 @@ export async function linkSellerToLeadAction(
       return { success: false, error: 'Не указан продавец или лид' };
     }
 
+    const { data: sellerCheck } = await supabase
+      .from('sellers')
+      .select('seller_phone, manager_id')
+      .eq('seller_phone', sellerPhone)
+      .maybeSingle();
+
+    if (sellerCheck && sellerCheck.manager_id !== null) {
+      return {
+        success: false,
+        error: 'У продавца уже назначен куратор. Чтобы привязать лид, сначала снимите куратора',
+      };
+    }
+
     const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
       p_lead_id: leadId,
       p_seller_phone: sellerPhone,

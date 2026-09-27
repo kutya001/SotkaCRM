@@ -67,10 +67,42 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const enriched = (connections || []).map((c) => ({
-      ...c,
-      manager_user: c.manager_id ? managersMap.get(c.manager_id) || null : null,
-    }));
+    // Обогащаем данными начислений/выплат
+    const connectionIds = (connections || []).map((c) => c.connection_id);
+    const accrualsMap = new Map<string, { totalBonus: number; totalPaid: number }>();
+    if (connectionIds.length > 0) {
+      const { data: accruals } = await supabase
+        .from('connection_accruals')
+        .select('connection_id, amount, is_paid')
+        .in('connection_id', connectionIds);
+
+      if (accruals) {
+        accruals.forEach((a) => {
+          const cur = accrualsMap.get(a.connection_id) || { totalBonus: 0, totalPaid: 0 };
+          const amt = Number(a.amount) || 0;
+          cur.totalBonus += amt;
+          if (a.is_paid) {
+            cur.totalPaid += amt;
+          }
+          accrualsMap.set(a.connection_id, cur);
+        });
+      }
+    }
+
+    const enriched = (connections || []).map((c) => {
+      const acc = accrualsMap.get(c.connection_id) || { totalBonus: 0, totalPaid: 0 };
+      const totalBonus = acc.totalBonus || Number(c.connection_fee_amount || 0);
+      const totalPaid = acc.totalPaid || 0;
+      const balanceRemaining = Math.max(0, totalBonus - totalPaid);
+
+      return {
+        ...c,
+        total_bonus: totalBonus,
+        total_paid: totalPaid,
+        balance_remaining: balanceRemaining,
+        manager_user: c.manager_id ? managersMap.get(c.manager_id) || null : null,
+      };
+    });
 
     return apiSuccess({
       items: enriched,

@@ -23,11 +23,16 @@ export async function GET(req: NextRequest) {
 
     let query = supabase.from('sellers').select('*', { count: 'exact' });
 
-    // Изоляция: консультант видит строго только своих закрепленных approved продавцов
+    // Изоляция: консультант видит только не назначенных либо своих approved продавцов
     if (profile.role === 'consultant') {
-      query = query
-        .eq('moderation', 'approved')
-        .eq('manager_id', profile.user_id);
+      query = query.eq('moderation', 'approved');
+      if (managerId === 'unassigned') {
+        query = query.is('manager_id', null);
+      } else if (managerId === profile.user_id || managerId === 'my') {
+        query = query.eq('manager_id', profile.user_id);
+      } else {
+        query = query.or(`manager_id.is.null,manager_id.eq.${profile.user_id}`);
+      }
     } else {
       if (moderation && moderation !== 'all') {
         query = query.eq('moderation', moderation as SellerModerationStatus);
@@ -35,6 +40,8 @@ export async function GET(req: NextRequest) {
       if (managerId && managerId !== 'all') {
         if (managerId === 'unassigned') {
           query = query.is('manager_id', null);
+        } else if (managerId === 'my') {
+          query = query.eq('manager_id', profile.user_id);
         } else {
           query = query.eq('manager_id', managerId);
         }

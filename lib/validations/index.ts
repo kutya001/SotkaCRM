@@ -17,19 +17,47 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: 'Наличка',
 };
 
+export const salaryOperationSignSchema = z.enum(['+', '-']);
+export type SalaryOperationSign = z.infer<typeof salaryOperationSignSchema>;
+
+export const salaryOperationTypeSchema = z.enum([
+  'accrual_connection',
+  'accrual_maintenance',
+  'salary_base',
+  'bonus_other',
+  'deduction',
+  'fine',
+  'payout',
+]);
+export type SalaryOperationType = z.infer<typeof salaryOperationTypeSchema>;
+
+export const SALARY_OPERATION_TYPE_LABELS: Record<SalaryOperationType, string> = {
+  accrual_connection: 'Начисление по подключению',
+  accrual_maintenance: 'Начисление по сопровождению',
+  salary_base: 'Оклад',
+  bonus_other: 'Прочая надбавка',
+  deduction: 'Удержание',
+  fine: 'Штраф',
+  payout: 'Выплата',
+};
+
 export const PayoutSchema = z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
-  accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ'),
+  employee_id: z.string().regex(PG_UUID_REGEX).optional().nullable(),
+  accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ').optional(),
   settlement_month: z.string().regex(/^\d{4}-\d{2}$/, 'Расчетный месяц должен быть в формате ГГГГ-ММ').optional().nullable(),
-  payout_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата выплаты должна быть в формате ГГГГ-ММ-ДД'),
-  amount: z.coerce.number().positive('Сумма выплаты должна быть больше нуля'),
-  payout_category: z.enum(['аванс', 'выплата зп', 'бонус', 'прочие начисления', 'удержание'], {
-    message: 'Недопустимая категория выплаты',
-  }),
-  operation_type: z.enum(['payout', 'deduction']).optional().default('payout'),
-  payment_method: paymentMethodSchema,
+  payout_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата выплаты должна быть в формате ГГГГ-ММ-ДД').optional(),
+  actual_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата операции должна быть в формате ГГГГ-ММ-ДД').optional(),
+  amount: z.coerce.number().positive('Сумма операции должна быть больше нуля'),
+  operation_sign: salaryOperationSignSchema.optional(),
+  operation_type: salaryOperationTypeSchema.optional().default('payout'),
+  payout_category: z.enum(['аванс', 'выплата зп', 'бонус', 'прочие начисления', 'удержание']).optional(),
+  payment_method: paymentMethodSchema.optional().nullable(),
   comment: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
+  connection_id: z.string().regex(PG_UUID_REGEX).optional().nullable(),
+  seller_phone: z.string().optional().nullable(),
   accrual_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional().nullable(),
 });
 

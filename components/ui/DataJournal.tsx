@@ -93,6 +93,7 @@ export interface DataJournalTab {
   label: string;
   count?: number;
   color?: string;
+  icon?: React.ElementType;
 }
 
 export interface DataJournalProps<T extends Record<string, any>> {
@@ -2437,6 +2438,9 @@ export function DataJournal<T extends Record<string, any>>({
                     : 'bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-white dark:hover:bg-zinc-800'
                 }`}
               >
+                {tab.icon && (
+                  <tab.icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                )}
                 <span>{tab.label}</span>
                 {tab.count !== undefined && (
                   <span

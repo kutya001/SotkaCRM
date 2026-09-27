@@ -395,43 +395,33 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 
 ---
 
-**3.8. Таблица `employee_payouts` (Журнал выплат персоналу)**
+**3.8. Таблица `employee_payouts` (Единый регистр операций по ЗП: начисления и выплаты)**
 
-* **Назначение:** Учет взаиморасчетов с сотрудниками (авансы, зарплаты, удержания).
-* **Источник наполнения:** Ручная регистрация выплат администратором.
-* **Регламент удаления (Admin Only):** При удалении выплаты через `DELETE /api/v1/payouts/[id]` выполняется каскадная разблокировка связанных начислений куратора (`connection_accruals.is_paid = false, payout_id = NULL, paid_at = NULL`), возвращая их в реестр к начислению.
-
-
+* **Назначение:** Единый бухгалтерский регистр начислений и выплат сотрудникам (оклады, премии, бонусы за подключение/сопровождение, удержания, штрафы, выплаты).
+* **Источник наполнения:** Ручная регистрация операций администратором, а также системные триггеры/функции (`link_lead_to_seller`, `run_maintenance_billing`).
+* **Регламент удаления (Admin Only):** При удалении операции через `DELETE /api/v1/payouts/[id]` выполняется каскадная разблокировка связанных начислений куратора (`connection_accruals.is_paid = false, payout_id = NULL, paid_at = NULL`), возвращая их в реестр к начислению.
 
 | Поле | Тип данных | Ограничения | Описание |
 | --- | --- | --- | --- |
-| `payout_id` | `UUID` | `PRIMARY KEY, DEFAULT gen_random_uuid()` | Идентификатор платежа.
-
- |
-| `user_id` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Сотрудник-получатель.
-
- |
-| `accrual_month` | `VARCHAR(7)` | `NOT NULL` | К какому расчетному месяцу относится выплата (`YYYY-MM`).
-
- |
-| `payout_date` | `DATE` | `NOT NULL, DEFAULT CURRENT_DATE` | Дата фактической выдачи средств.
-
- |
-| `amount` | `NUMERIC(12,2)` | `NOT NULL` | Сумма выплаты/удержания в сомах.
-
- |
-| `payout_category` | `payout_category_type` | `NOT NULL` | Категория финансовой проводки.
-
- |
-| `payment_method` | `VARCHAR(50)` | `NOT NULL` | Инструмент расчета (`Mbank`, `О!Деньги`, `Наличные`, `kaspi`, `halyk`, `card_transfer`). |
+| `payout_id` | `UUID` | `PRIMARY KEY, DEFAULT gen_random_uuid()` | Идентификатор финансовой проводки. |
+| `user_id` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Сотрудник-получатель (псевдоним `employee_id`). |
+| `employee_id` | `UUID` | `NULL, REFERENCES users(user_id)` | Идентификатор сотрудника. |
+| `operation_sign` | `VARCHAR(1)` | `NOT NULL, CHECK (operation_sign IN ('+', '-'))` | Знак операции (`+` начисление/бонус/оклад, `-` выплата/удержание/штраф). |
+| `operation_type` | `VARCHAR(30)` | `NOT NULL, CHECK (operation_type IN ('accrual_connection', 'accrual_maintenance', 'salary_base', 'bonus_other', 'deduction', 'fine', 'payout'))` | Вид операции по ЗП. |
+| `amount` | `NUMERIC(12,2)` | `NOT NULL, CHECK (amount > 0)` | Сумма операции в сомах. |
+| `actual_date` | `DATE` | `NOT NULL, DEFAULT CURRENT_DATE` | Дата фактической операции (выдачи/начисления). |
+| `settlement_month` | `VARCHAR(7)` | `NOT NULL` | Расчетный месяц начисления (`YYYY-MM`). |
+| `accrual_month` | `VARCHAR(7)` | `NOT NULL` | Период начисления (`YYYY-MM`). |
+| `payout_date` | `DATE` | `NOT NULL, DEFAULT CURRENT_DATE` | Дата проводки. |
+| `payout_category` | `payout_category_type` | `NOT NULL, DEFAULT 'выплата зп'` | Категория финансовой проводки. |
+| `payment_method` | `VARCHAR(50)` | `NULL` | Инструмент расчета (`mbank`, `odengi`, `bakai`, `abank`, `cash`). |
+| `connection_id` | `UUID` | `NULL, REFERENCES connections(connection_id) ON DELETE SET NULL` | Привязка к сделке/подключению. |
+| `seller_phone` | `VARCHAR(20)` | `NULL, REFERENCES sellers(seller_phone) ON DELETE SET NULL` | Привязка к продавцу. |
 | `status` | `VARCHAR(20)` | `NOT NULL, DEFAULT 'paid'` | Статус финансовой проводки (`paid`, `pending`, `cancelled`). |
-| `employee_id` | `UUID` | `NULL, REFERENCES users(user_id)` | Идентификатор сотрудника (псевдоним `user_id`). |
-| `settlement_month` | `VARCHAR(7)` | `NULL` | Расчетный период начисления (`YYYY-MM`). |
-| `operation_type` | `VARCHAR(20)` | `NOT NULL, DEFAULT 'payout'` | Тип финансовой операции (`payout`, `deduction`). |
-| `description` | `TEXT` | `NULL` | Текстовое обоснование проводки. |
-| `comment` | `TEXT` | `NULL` | Служебная заметка. |
-| `created_by` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Администратор, выполнивший проводку. |
-| `created_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Дата и время проведения записи. |
+| `note` | `TEXT` | `NULL` | Служебная заметка / комментарий. |
+| `comment` | `TEXT` | `NULL` | Дополнительное текстовое обоснование проводки. |
+| `created_by` | `UUID` | `NOT NULL, REFERENCES users(user_id)` | Пользователь/администратор, создавший операцию. |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL, DEFAULT now()` | Дата и время регистрации записи. |
 
 ---
 

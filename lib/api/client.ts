@@ -557,6 +557,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(params),
       }),
+    getPayrollSheet: (params: { employeeId?: string; month?: string; bypassCache?: boolean }) =>
+      request<any>(`/api/v1/payouts/payroll-sheet${buildQuery(params)}`, {
+        method: 'GET',
+        bypassCache: params?.bypassCache,
+      }),
     update: async (id: string, data: any) => {
       const res = await request<any>(`/api/v1/payouts/${encodeURIComponent(id)}`, {
         method: 'PATCH',

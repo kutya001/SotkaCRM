@@ -38,6 +38,7 @@ import {
   ChevronUp,
   Clock,
   Trash2,
+  Receipt,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -556,14 +557,71 @@ export default function ConnectionsPage() {
         },
       },
       {
+        key: 'total_bonus',
+        label: 'Итого бонусы',
+        width: 140,
+        minWidth: 120,
+        sortable: true,
+        filterable: false,
+        renderCell: (row) => (
+          <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
+            +{Number(row.total_bonus ?? row.connection_fee_amount).toLocaleString('ru-RU')} сом
+          </span>
+        ),
+      },
+      {
+        key: 'total_paid',
+        label: 'Выплачено',
+        width: 130,
+        minWidth: 110,
+        sortable: true,
+        filterable: false,
+        renderCell: (row) => (
+          <span className="font-mono text-xs font-semibold text-blue-600 dark:text-blue-400">
+            {Number(row.total_paid ?? 0).toLocaleString('ru-RU')} сом
+          </span>
+        ),
+      },
+      {
+        key: 'balance_remaining',
+        label: 'Остаток',
+        width: 130,
+        minWidth: 110,
+        sortable: true,
+        filterable: false,
+        renderCell: (row) => {
+          const rem = Number(row.balance_remaining ?? 0);
+          return (
+            <span
+              className={`font-mono text-xs font-bold ${
+                rem > 0 ? 'text-purple-600 dark:text-purple-400' : 'text-zinc-400'
+              }`}
+            >
+              {rem.toLocaleString('ru-RU')} сом
+            </span>
+          );
+        },
+      },
+      {
         key: 'client_status',
         label: 'Статус клиента',
         width: 150,
         minWidth: 130,
         sortable: true,
         filterable: true,
-        type: 'status',
-        statusOptions: CLIENT_STATUS_OPTIONS,
+        renderCell: (row) => {
+          const opt =
+            CLIENT_STATUS_OPTIONS.find((o) => o.value === row.client_status) ||
+            CLIENT_STATUS_OPTIONS[0];
+          return (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border ${opt.colorClass}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              <span>{opt.label}</span>
+            </span>
+          );
+        },
       },
     ],
     []
@@ -969,50 +1027,57 @@ export default function ConnectionsPage() {
                 )}
               </div>
 
-              {/* Сопровождение и статус жизненного цикла */}
+              {/* Сопровождение и статус жизненного цикла (FSM) */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Статус жизненного цикла:
+                    Статус жизненного цикла (FSM):
                   </label>
                   <span className="text-[11px] text-zinc-400">
                     Сопровождение: {selectedConnection.maintenance_months_accrued} из {selectedConnection.maintenance_months_limit} мес.
                   </span>
                 </div>
 
-                {currentUserRole === 'admin' ? (
+                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <select
-                      value={statusToUpdate}
-                      onChange={(e) => setStatusToUpdate(e.target.value as ClientLifecycleStatus)}
-                      className="flex-1 px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                    >
-                      <option value="новый">Новый</option>
-                      <option value="подключен">Подключен</option>
-                      <option value="сопровождение">Сопровождение</option>
-                      <option value="готов">Готов (Выплачен)</option>
-                      <option value="приостановлен">Приостановлен</option>
-                      <option value="расторгнут">Расторгнут</option>
-                      <option value="отменен">Отменен</option>
-                    </select>
-                    <button
-                      onClick={handleSaveStatus}
-                      disabled={isUpdatingStatus || statusToUpdate === selectedConnection.client_status}
-                      className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isUpdatingStatus ? 'Сохранение...' : 'Обновить'}
-                    </button>
+                    {(() => {
+                      const opt =
+                        CLIENT_STATUS_OPTIONS.find((o) => o.value === selectedConnection.client_status) ||
+                        CLIENT_STATUS_OPTIONS[0];
+                      return (
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border ${opt.colorClass}`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                          <span>{opt.label}</span>
+                        </span>
+                      );
+                    })()}
                   </div>
-                ) : (
-                  <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-xs font-medium text-zinc-600 dark:text-zinc-300 flex items-center justify-between">
-                    <span>Текущий статус:</span>
-                    <span className="font-semibold capitalize">{selectedConnection.client_status}</span>
-                  </div>
-                )}
+                  <span className="text-[10px] text-zinc-400 italic">
+                    Автоматический переход (FSM)
+                  </span>
+                </div>
               </div>
 
-              {/* График и реестр начислений куратору */}
-              <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50">
+              {/* История начислений ЗП */}
+              <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <Receipt className="w-3.5 h-3.5 text-blue-500" strokeWidth={1.75} />
+                    <span>История начислений ЗП</span>
+                  </span>
+                  <div className="flex items-center gap-2 font-mono text-[11px]">
+                    <span className="text-zinc-400">Бонусы:</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                      +{Number(selectedConnection.total_bonus ?? selectedConnection.connection_fee_amount).toLocaleString('ru-RU')} с
+                    </span>
+                    <span className="text-zinc-400">Выплачено:</span>
+                    <span className="text-blue-600 dark:text-blue-400 font-bold">
+                      {Number(selectedConnection.total_paid ?? 0).toLocaleString('ru-RU')} с
+                    </span>
+                  </div>
+                </div>
                 <ConnectionAccrualsSection
                   connectionId={selectedConnection.connection_id}
                   isAdmin={currentUserRole === 'admin'}

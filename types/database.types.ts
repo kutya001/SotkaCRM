@@ -294,51 +294,87 @@ export type Database = {
       employee_payouts: {
         Row: {
           accrual_month: string
+          actual_date: string
           amount: number
           comment: string | null
+          connection_id: string | null
           created_at: string
           created_by: string
           description: string | null
           employee_id: string | null
-          operation_type: "payout" | "deduction"
-          payment_method: string
+          note: string | null
+          operation_sign: "+" | "-"
+          operation_type:
+            | "accrual_connection"
+            | "accrual_maintenance"
+            | "salary_base"
+            | "bonus_other"
+            | "deduction"
+            | "fine"
+            | "payout"
+          payment_method: string | null
           payout_category: Database["public"]["Enums"]["payout_category_type"]
           payout_date: string
           payout_id: string
+          seller_phone: string | null
           settlement_month: string
           status: string
           user_id: string
         }
         Insert: {
-          accrual_month: string
+          accrual_month?: string
+          actual_date?: string
           amount: number
           comment?: string | null
+          connection_id?: string | null
           created_at?: string
           created_by: string
           description?: string | null
           employee_id?: string | null
-          operation_type?: "payout" | "deduction"
-          payment_method: string
-          payout_category: Database["public"]["Enums"]["payout_category_type"]
+          note?: string | null
+          operation_sign?: "+" | "-"
+          operation_type?:
+            | "accrual_connection"
+            | "accrual_maintenance"
+            | "salary_base"
+            | "bonus_other"
+            | "deduction"
+            | "fine"
+            | "payout"
+          payment_method?: string | null
+          payout_category?: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
           payout_id?: string
+          seller_phone?: string | null
           settlement_month?: string
           status?: string
           user_id: string
         }
         Update: {
           accrual_month?: string
+          actual_date?: string
           amount?: number
           comment?: string | null
+          connection_id?: string | null
           created_at?: string
           created_by?: string
           description?: string | null
           employee_id?: string | null
-          operation_type?: "payout" | "deduction"
-          payment_method?: string
+          note?: string | null
+          operation_sign?: "+" | "-"
+          operation_type?:
+            | "accrual_connection"
+            | "accrual_maintenance"
+            | "salary_base"
+            | "bonus_other"
+            | "deduction"
+            | "fine"
+            | "payout"
+          payment_method?: string | null
           payout_category?: Database["public"]["Enums"]["payout_category_type"]
           payout_date?: string
           payout_id?: string
+          seller_phone?: string | null
           settlement_month?: string
           status?: string
           user_id?: string
@@ -955,13 +991,16 @@ export type Database = {
           p_amount: number
           p_comment: string
           p_created_by: string
-          p_payment_method: string
+          p_payment_method?: string | null
           p_payout_category: Database["public"]["Enums"]["payout_category_type"]
           p_payout_date: string
           p_user_id: string
           p_operation_type?: string
           p_settlement_month?: string
           p_accrual_ids?: string[]
+          p_operation_sign?: string
+          p_connection_id?: string
+          p_seller_phone?: string
         }
         Returns: Json
       }

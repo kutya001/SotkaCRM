@@ -26,6 +26,9 @@ export interface ConnectionItem {
   maintenance_months_limit: number;
   maintenance_months_accrued: number;
   client_status: ClientLifecycleStatus;
+  total_bonus?: number;
+  total_paid?: number;
+  balance_remaining?: number;
   manager_user?: {
     user_id: string;
     full_name: string;
@@ -210,14 +213,46 @@ export async function getConnections(
     }
   }
 
-  const enriched: ConnectionItem[] = (rawConnections || []).map((conn) => ({
-    ...conn,
-    plan_price: Number(conn.plan_price) || 0,
-    connection_fee_percent: Number(conn.connection_fee_percent) || 0,
-    connection_fee_amount: Number(conn.connection_fee_amount) || 0,
-    manager_user: usersMap.get(conn.manager_id) || null,
-    assigned_user: usersMap.get(conn.assigned_by) || null,
-  }));
+  // Обогащение данными начислений/выплат
+  const connectionIds = (rawConnections || []).map((c) => c.connection_id);
+  const accrualsMap = new Map<string, { totalBonus: number; totalPaid: number }>();
+  if (connectionIds.length > 0) {
+    const { data: accrualsData } = await supabase
+      .from('connection_accruals')
+      .select('connection_id, amount, is_paid')
+      .in('connection_id', connectionIds);
+
+    if (accrualsData) {
+      accrualsData.forEach((a) => {
+        const cur = accrualsMap.get(a.connection_id) || { totalBonus: 0, totalPaid: 0 };
+        const amt = Number(a.amount) || 0;
+        cur.totalBonus += amt;
+        if (a.is_paid) {
+          cur.totalPaid += amt;
+        }
+        accrualsMap.set(a.connection_id, cur);
+      });
+    }
+  }
+
+  const enriched: ConnectionItem[] = (rawConnections || []).map((conn) => {
+    const acc = accrualsMap.get(conn.connection_id) || { totalBonus: 0, totalPaid: 0 };
+    const totalBonus = acc.totalBonus || Number(conn.connection_fee_amount || 0);
+    const totalPaid = acc.totalPaid || 0;
+    const balanceRemaining = Math.max(0, totalBonus - totalPaid);
+
+    return {
+      ...conn,
+      plan_price: Number(conn.plan_price) || 0,
+      connection_fee_percent: Number(conn.connection_fee_percent) || 0,
+      connection_fee_amount: Number(conn.connection_fee_amount) || 0,
+      total_bonus: totalBonus,
+      total_paid: totalPaid,
+      balance_remaining: balanceRemaining,
+      manager_user: usersMap.get(conn.manager_id) || null,
+      assigned_user: usersMap.get(conn.assigned_by) || null,
+    };
+  });
 
   return {
     connections: enriched,

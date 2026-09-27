@@ -47,6 +47,8 @@ import {
   Lock,
   ExternalLink,
   Palette,
+  BookOpen,
+  ArrowUpRight,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
@@ -428,6 +430,35 @@ export default function ProfilePage() {
             </button>
           </div>
         </div>
+
+        {/* Ссылка на документацию API (Swagger) — строго для роли Администратора */}
+        {currentUserRole === 'admin' && (
+          <Link
+            href="/docs"
+            className="flex items-center justify-between p-4 sm:p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 hover:border-blue-500/40 hover:bg-blue-50/20 dark:hover:bg-zinc-800/60 transition-all group shadow-sm"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="p-2.5 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                <BookOpen className="w-5 h-5" strokeWidth={1.75} />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                  <span>Документация API (Swagger)</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono font-semibold">
+                    OpenAPI 3.0
+                  </span>
+                </div>
+                <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Интерактивная спецификация эндпоинтов и шлюз синхронизации Sotka HQ
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400">
+              <span className="hidden sm:inline">Открыть Swagger UI</span>
+              <ArrowUpRight className="w-4 h-4 text-zinc-400 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" strokeWidth={2} />
+            </div>
+          </Link>
+        )}
 
         {/* 2. Персональный KPI-дашборд в зависимости от отображаемой роли */}
 

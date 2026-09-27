@@ -1,10 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Search, SlidersHorizontal, X, Menu } from 'lucide-react';
+import { Search, SlidersHorizontal, X, Menu, User } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { MobileMenuDrawer } from '@/components/layout/MobileMenuDrawer';
+import { useUser } from '@/components/auth/AuthProvider';
 
 interface MobileHeaderProps {
   onOpenFilter?: () => void;
@@ -35,6 +37,8 @@ export function MobileHeader({
   filterContent,
 }: MobileHeaderProps) {
   const pathname = usePathname();
+  const user = useUser();
+  const userInitials = user.userName ? user.userName.slice(0, 2).toUpperCase() : null;
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
   const [isFilterModalOpen, setIsFilterModalOpen] = React.useState(false);
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = React.useState(false);
@@ -116,9 +120,18 @@ export function MobileHeader({
                 </button>
               )}
 
-              <div className="flex items-center justify-center min-w-[44px] min-h-[44px]">
+              <div className="flex items-center justify-center min-w-[40px] min-h-[40px]">
                 <ThemeToggle />
               </div>
+
+              <Link
+                href="/profile"
+                aria-label="Профиль"
+                className="flex items-center justify-center w-8 h-8 rounded-full border border-zinc-200/60 dark:border-zinc-700/60 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-semibold text-xs shrink-0 ml-1 active:scale-95 transition-transform"
+                title={`Профиль: ${user.userName || 'Пользователь'}`}
+              >
+                {userInitials || <User className="w-4 h-4" strokeWidth={1.75} />}
+              </Link>
             </div>
           </>
         ) : (

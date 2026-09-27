@@ -212,17 +212,13 @@ export function DesktopSidebar({
       {/* Пользовательский профиль внизу сайдбара */}
       <div className="p-3 border-t border-zinc-200/40 dark:border-zinc-800/40">
         {!collapsed ? (
-          <div className="flex items-center justify-between p-2 rounded-2xl bg-zinc-200/40 dark:bg-zinc-800/40 hover:bg-zinc-200/70 dark:hover:bg-zinc-800/70 transition-colors">
-            <Link
-              href="/profile"
-              className="flex items-center gap-2.5 overflow-hidden flex-1 group"
-              title="Перейти в профиль"
-            >
-              <div className="w-8 h-8 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 flex-shrink-0 group-hover:scale-105 transition-transform">
+          <div className="flex items-center justify-between p-2 rounded-2xl bg-zinc-200/40 dark:bg-zinc-800/40 transition-colors">
+            <div className="flex items-center gap-2.5 overflow-hidden flex-1">
+              <div className="w-8 h-8 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 flex-shrink-0">
                 {effectiveName.slice(0, 2).toUpperCase()}
               </div>
               <div className="flex flex-col truncate">
-                <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {effectiveName}
                 </span>
                 <span className="text-[10px] text-zinc-500 flex items-center gap-1 truncate">
@@ -230,7 +226,7 @@ export function DesktopSidebar({
                   {currentRoleLabel}
                 </span>
               </div>
-            </Link>
+            </div>
 
             {onSignOut && (
               <button
@@ -245,13 +241,12 @@ export function DesktopSidebar({
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">
-            <Link
-              href="/profile"
-              className="w-9 h-9 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 hover:ring-2 hover:ring-blue-500 transition-all"
-              title={`Профиль: ${effectiveName} (${currentRoleLabel})`}
+            <div
+              className="w-9 h-9 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200"
+              title={`${effectiveName} (${currentRoleLabel})`}
             >
               {effectiveName.slice(0, 2).toUpperCase()}
-            </Link>
+            </div>
             {onSignOut && (
               <button
                 type="button"

@@ -37,6 +37,13 @@ const MODULE_TITLES: Record<string, string> = {
   '/profile': 'Мой профиль',
 };
 
+const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Админ',
+  supervisor: 'Руководитель',
+  consultant: 'Консультант',
+  smm: 'SMM',
+};
+
 export function TopHeader({
   collapsed,
   userRole = 'admin',
@@ -155,13 +162,23 @@ export function TopHeader({
         {/* Переключатель темы оформления */}
         <ThemeToggle />
 
-        {/* Мини-аватар профиля с переходом в /profile */}
+        {/* Блок пользователя (Имя + Роль + Аватар) с переходом в /profile */}
         <Link
           href="/profile"
-          className="w-10 h-10 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center text-xs font-bold shadow-sm flex-shrink-0 hover:opacity-85 transition-opacity"
-          title={`Профиль: ${userName}`}
+          className="flex items-center gap-2.5 p-1.5 rounded-xl hover:bg-zinc-200/50 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer group"
+          title={`Перейти в профиль: ${userName}`}
         >
-          {userName.slice(0, 2).toUpperCase()}
+          <div className="flex flex-col text-right hidden sm:flex">
+            <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors leading-tight">
+              {userName}
+            </span>
+            <span className="text-[10px] text-zinc-500 dark:text-zinc-400 leading-tight">
+              {ROLE_LABELS[userRole] || userRole}
+            </span>
+          </div>
+          <div className="w-9 h-9 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center text-xs font-bold shadow-sm flex-shrink-0 group-hover:scale-105 transition-transform">
+            {userName.slice(0, 2).toUpperCase()}
+          </div>
         </Link>
       </div>
     </header>

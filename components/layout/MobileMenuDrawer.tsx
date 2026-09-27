@@ -12,7 +12,6 @@ import {
   Users,
   BookOpen,
   BarChart3,
-  User,
   X,
   LogOut,
   Layers,
@@ -84,12 +83,6 @@ const ALL_NAV_ITEMS: NavItem[] = [
     href: '/analytics',
     icon: BarChart3,
     roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Профиль',
-    href: '/profile',
-    icon: User,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
   },
 ];
 

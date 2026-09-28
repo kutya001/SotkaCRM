@@ -400,7 +400,7 @@ CREATE TYPE seller_moderation_status AS ENUM ('approved', 'pending', 'rejected',
 
  |
 
-| `organization_id` | `VARCHAR(100)` | `NULL, UNIQUE` | Идентификатор юридической организации во внешней системе (Sotka HQ). Используется для безопасного upsert (`sellers_organization_id_key`).
+| `organization_id` | `VARCHAR(100)` | `NULL, INDEX` | Идентификатор юридической организации во внешней системе (Sotka HQ). Индексирован (`idx_sellers_organization_id`) для быстрого поиска и агрегации.
 
 
 

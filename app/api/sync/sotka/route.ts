@@ -229,27 +229,25 @@ async function handleSync(request: Request) {
           synced_at: s.synced_at,
         }));
 
-      // Гарантированная дедупликация продавцов по organization_id / sotka_id
-      const dedupedOrgMap = new Map<string, any>();
-      for (const s of sellersToUpsert) {
-        const orgKey = s.organization_id || s.seller_phone;
-        const existing = dedupedOrgMap.get(orgKey);
-        dedupedOrgMap.set(orgKey, {
-          ...existing,
-          ...s,
-        });
-      }
-
-      // Вторичная строгая дедупликация по первичному ключу seller_phone
+      // Гарантированная дедупликация по первичному ключу seller_phone
       // исключает ошибку Postgres: ON CONFLICT DO UPDATE command cannot affect row a second time
       const sellersMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
-      for (const s of dedupedOrgMap.values()) {
+      for (const s of sellersToUpsert) {
         if (!s.seller_phone) continue;
         const existing = sellersMap.get(s.seller_phone);
-        sellersMap.set(s.seller_phone, {
-          ...existing,
-          ...s,
-        });
+        if (existing) {
+          sellersMap.set(s.seller_phone, {
+            ...existing,
+            ...s,
+            is_active: Boolean(existing.is_active || s.is_active),
+            manager_id: existing.manager_id || s.manager_id || null,
+            store: s.store || existing.store,
+            organization_id: s.organization_id || existing.organization_id || null,
+            brands: s.brands || existing.brands || null,
+          });
+        } else {
+          sellersMap.set(s.seller_phone, s);
+        }
       }
       const uniqueSellers = Array.from(sellersMap.values());
 

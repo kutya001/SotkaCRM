@@ -796,24 +796,10 @@ export async function syncSellersFromSotka(
       });
     });
 
-    // 6. Гарантированная дедупликация по ключу sotka_id / organization_id
-    const dedupedSellersMap = new Map<string | number, any>();
-    for (const seller of normalizedSellers) {
-      const idKey = (seller as any).sotka_id || seller.organization_id || seller.seller_phone;
-      if (!idKey) continue;
-      // Если запись уже есть, объединяем поля, отдавая приоритет последней
-      const existing = dedupedSellersMap.get(idKey);
-      dedupedSellersMap.set(idKey, {
-        ...existing,
-        ...seller,
-        updated_at: new Date().toISOString(),
-      });
-    }
-
-    // Вторичная строгая дедупликация по первичному ключу seller_phone
+    // 6. Гарантированная дедупликация по первичному ключу seller_phone
     // во избежание ошибки Postgres: ON CONFLICT DO UPDATE command cannot affect row a second time
     const dedupedByPhoneMap = new Map<string, Database['public']['Tables']['sellers']['Insert']>();
-    for (const s of dedupedSellersMap.values()) {
+    for (const s of normalizedSellers) {
       if (!s.seller_phone) continue;
       const row: Database['public']['Tables']['sellers']['Insert'] = {
         seller_phone: s.seller_phone,
@@ -834,11 +820,22 @@ export async function syncSellersFromSotka(
         synced_at: s.synced_at || new Date().toISOString(),
         is_deleted_from_source: false,
       };
+
       const existing = dedupedByPhoneMap.get(s.seller_phone);
-      dedupedByPhoneMap.set(s.seller_phone, {
-        ...existing,
-        ...row,
-      });
+      if (existing) {
+        // При наличии дубликатов по номеру объединяем свойства с приоритетом активности и сохраненного менеджера
+        dedupedByPhoneMap.set(s.seller_phone, {
+          ...existing,
+          ...row,
+          is_active: Boolean(existing.is_active || row.is_active),
+          manager_id: existing.manager_id || row.manager_id || null,
+          store: row.store || existing.store,
+          organization_id: row.organization_id || existing.organization_id || null,
+          brands: row.brands || existing.brands || null,
+        });
+      } else {
+        dedupedByPhoneMap.set(s.seller_phone, row);
+      }
     }
 
     const uniqueSellers = Array.from(dedupedByPhoneMap.values());

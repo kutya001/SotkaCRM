@@ -846,12 +846,30 @@ export async function syncSellersFromSotka(
     // 7. Сохранение пакетами (чанками) по 50 записей для предотвращения лимита параметров Postgres
     const CHUNK_SIZE = 50;
     let savedCount = 0;
+    let hasDeletedFromSourceCol = true;
 
     for (let i = 0; i < uniqueSellers.length; i += CHUNK_SIZE) {
-      const chunk = uniqueSellers.slice(i, i + CHUNK_SIZE);
-      const { error: chunkUpsertErr } = await supabase
+      let chunk = uniqueSellers.slice(i, i + CHUNK_SIZE);
+      if (!hasDeletedFromSourceCol) {
+        chunk = chunk.map(({ is_deleted_from_source, ...rest }: any) => rest);
+      }
+
+      let { error: chunkUpsertErr } = await supabase
         .from('sellers')
         .upsert(chunk, { onConflict: 'seller_phone', ignoreDuplicates: false });
+
+      // Грациозный fallback: если колонка is_deleted_from_source еще не создана в БД
+      if (chunkUpsertErr && chunkUpsertErr.message?.includes('is_deleted_from_source')) {
+        console.warn(
+          `[syncSellersFromSotka] Колонка is_deleted_from_source отсутствует в схеме БД. Повторяем сохранение без нее...`
+        );
+        hasDeletedFromSourceCol = false;
+        const sanitizedChunk = chunk.map(({ is_deleted_from_source, ...rest }: any) => rest);
+        const retryRes = await supabase
+          .from('sellers')
+          .upsert(sanitizedChunk, { onConflict: 'seller_phone', ignoreDuplicates: false });
+        chunkUpsertErr = retryRes.error;
+      }
 
       if (chunkUpsertErr) {
         console.error(
@@ -868,7 +886,7 @@ export async function syncSellersFromSotka(
       .map((item) => (item.organization_id !== undefined && item.organization_id !== null ? String(item.organization_id) : ''))
       .filter(Boolean);
 
-    if (syncedOrgIds.length > 0) {
+    if (syncedOrgIds.length > 0 && hasDeletedFromSourceCol) {
       try {
         // Получаем всех локальных продавцов с organization_id
         const { data: allLocalSellers } = await supabase

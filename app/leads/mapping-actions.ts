@@ -329,9 +329,45 @@ export async function linkLeadToSeller(params: {
     return { success: false, error: connectionError.message };
   }
 
+  // Создаем начисление за подключение в connection_accruals и employee_payouts
+  if (connectionData?.connection_id && connectionFeeAmount > 0) {
+    const sellerLabel = seller.seller_name || lead.client_name || params.sellerPhone;
+
+    await supabase.from('connection_accruals').insert({
+      connection_id: connectionData.connection_id,
+      seller_phone: params.sellerPhone,
+      employee_id: responsibleManagerId,
+      accrual_type: 'connection',
+      settlement_month: currentMonth,
+      amount: connectionFeeAmount,
+      is_paid: false,
+      notes: `Бонус за подключение: ${sellerLabel}`,
+    });
+
+    await supabase.from('employee_payouts').insert({
+      user_id: responsibleManagerId,
+      employee_id: responsibleManagerId,
+      connection_id: connectionData.connection_id,
+      seller_phone: params.sellerPhone,
+      operation_sign: '+',
+      operation_type: 'accrual_connection',
+      payout_category: 'бонус',
+      amount: connectionFeeAmount,
+      settlement_month: currentMonth,
+      accrual_month: currentMonth,
+      actual_date: nowIso.slice(0, 10),
+      payout_date: nowIso.slice(0, 10),
+      status: 'completed',
+      note: `Бонус за подключение: ${sellerLabel}`,
+      comment: `Бонус за подключение: ${sellerLabel}`,
+      created_by: currentProfile.user_id,
+    } as any);
+  }
+
   revalidatePath('/leads');
   revalidatePath('/sellers');
   revalidatePath('/connections');
+  revalidatePath('/payouts');
 
   return {
     success: true,

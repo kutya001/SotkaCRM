@@ -120,15 +120,17 @@ export async function DELETE(
       }
     }
 
-    // 3. Удаление связанных начислений кураторам
-    const { error: accrualsErr } = await supabase
+    // 3. Удаление связанных начислений кураторам из обоих регистров
+    await supabase
       .from('connection_accruals')
       .delete()
       .eq('connection_id', id);
 
-    if (accrualsErr) {
-      console.error('[DELETE connection] Ошибка удаления connection_accruals:', accrualsErr);
-    }
+    await supabase
+      .from('employee_payouts')
+      .delete()
+      .eq('connection_id', id)
+      .eq('operation_sign', '+');
 
     // 4. Попытка удаления из client_maintenance (если таблица задействована)
     try {

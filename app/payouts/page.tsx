@@ -512,6 +512,7 @@ export default function PayoutsPage() {
           <option value="salary_base">Оклад</option>
           <option value="bonus_other">Прочая надбавка</option>
           <option value="payout">Выплата ЗП</option>
+          <option value="advance">Аванс</option>
           <option value="deduction">Удержание</option>
           <option value="fine">Штраф</option>
         </select>

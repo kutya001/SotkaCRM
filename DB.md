@@ -2805,4 +2805,22 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * Маппинг типов: `connection` → `accrual_connection`, `maintenance` → `accrual_maintenance`.
 * Дедупликация по `(connection_id, operation_type, settlement_month)`.
 
+## 23. Спецификация Миграции 024 (`024_guaranteed_accruals_and_bonuses_sync.sql`)
+
+### 23.1. Двусторонний триггер синхронизации начислений:
+* Триггерная функция `public.fn_sync_conn_accrual_to_employee_payout()` на таблице `connection_accruals`:
+  * `AFTER INSERT`: Создает соответствующую строку в `employee_payouts` со знаком `+`, типом `accrual_connection` или `accrual_maintenance`, категорией `'бонус'`, суммой, датой и привязкой к куратору и продавцу.
+  * `AFTER UPDATE`: Синхронно обновляет `amount`, `settlement_month`, `actual_date`, `is_paid` в соответствующей строке `employee_payouts`.
+  * `AFTER DELETE`: Автоматически удаляет соответствующую проводку из `employee_payouts`.
+
+### 23.2. Каскадная очистка при удалении подключения:
+* Триггер `trg_cleanup_connection_payouts` на таблице `connections`:
+  * `AFTER DELETE`: При удалении договора подключения автоматически удаляет все непогашенные начисления по нему из `employee_payouts` и `connection_accruals`.
+
+### 23.3. Функция самоисцеления (Self-Healing Backfill):
+* Хранимая процедура `public.sync_missing_connection_accruals() RETURNS JSONB`:
+  * Проверяет наличие любых несинхронизированных записей в `connection_accruals` и выполняет атомарный перенос в `employee_payouts`.
+  * Вызывается автоматически серверным кодом в `app/payouts/actions.ts` при нулевых результатах для администратора.
+
+
 

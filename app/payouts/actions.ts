@@ -96,6 +96,80 @@ export interface CreatePayoutInput {
 }
 
 /**
+ * Автоматическое самоисцеление (Self-Healing Backfill):
+ * Проверяет наличие записей в connection_accruals, отсутствующих в employee_payouts,
+ * и мгновенно переносит их в единый зарплатный регистр.
+ */
+async function autoHealMissingAccruals(supabase: any): Promise<number> {
+  // 1. Попытка вызова быстрой RPC функции из миграции 024
+  try {
+    const { data: rpcRes, error: rpcErr } = await supabase.rpc('sync_missing_connection_accruals');
+    if (!rpcErr && rpcRes && (rpcRes as any).synced_count > 0) {
+      return (rpcRes as any).synced_count;
+    }
+  } catch {}
+
+  // 2. Нативный TypeScript-перенос при отсутствии RPC
+  try {
+    const { data: missingAccruals } = await supabase
+      .from('connection_accruals')
+      .select('*')
+      .limit(200);
+
+    if (!missingAccruals || missingAccruals.length === 0) return 0;
+
+    const { data: existingPayouts } = await supabase
+      .from('employee_payouts')
+      .select('connection_id, operation_type, settlement_month')
+      .in('operation_type', ['accrual_connection', 'accrual_maintenance']);
+
+    const existingMap = new Set(
+      (existingPayouts || []).map(
+        (p: any) => `${p.connection_id}_${p.operation_type}_${p.settlement_month || ''}`
+      )
+    );
+
+    let synced = 0;
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    for (const ma of missingAccruals) {
+      const opType = ma.accrual_type === 'connection' ? 'accrual_connection' : 'accrual_maintenance';
+      const key = `${ma.connection_id}_${opType}_${ma.settlement_month || ''}`;
+
+      if (!existingMap.has(key)) {
+        const { error: insErr } = await supabase.from('employee_payouts').insert({
+          user_id: ma.employee_id,
+          employee_id: ma.employee_id,
+          connection_id: ma.connection_id,
+          seller_phone: ma.seller_phone,
+          operation_sign: '+',
+          operation_type: opType,
+          payout_category: 'бонус',
+          amount: Number(ma.amount) || 0,
+          settlement_month: ma.settlement_month,
+          accrual_month: ma.settlement_month,
+          actual_date: ma.paid_at ? ma.paid_at.slice(0, 10) : ma.created_at?.slice(0, 10) || todayStr,
+          payout_date: ma.paid_at ? ma.paid_at.slice(0, 10) : ma.created_at?.slice(0, 10) || todayStr,
+          status: ma.is_paid ? 'paid' : 'completed',
+          note: ma.notes || (opType === 'accrual_connection' ? 'Бонус за подключение' : 'Бонус за сопровождение'),
+          comment: ma.notes || (opType === 'accrual_connection' ? 'Бонус за подключение' : 'Бонус за сопровождение'),
+          created_by: ma.employee_id,
+        } as any);
+
+        if (!insErr) {
+          synced++;
+          existingMap.add(key);
+        }
+      }
+    }
+    return synced;
+  } catch (err) {
+    console.warn('[AutoHeal] Could not auto-sync connection accruals:', err);
+    return 0;
+  }
+}
+
+/**
  * Получение реестра операций по ЗП с учетом ролевой модели (RBAC)
  * admin / supervisor: видят операции всех сотрудников
  * consultant / smm: видят строго свои строки
@@ -184,7 +258,16 @@ export async function getPayouts(
   const to = from + pageSize - 1;
   query = query.range(from, to);
 
-  const { data, count, error } = await query;
+  let { data, count, error } = await query;
+
+  if (isPrivileged && (!data || data.length === 0)) {
+    const healed = await autoHealMissingAccruals(supabase);
+    if (healed > 0) {
+      const retry = await query;
+      data = retry.data;
+      count = retry.count;
+    }
+  }
 
   if (error) {
     console.error('Error fetching salary operations:', error);
@@ -269,7 +352,16 @@ export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsSta
     query = query.or(`settlement_month.eq.${accrualMonth},accrual_month.eq.${accrualMonth}`);
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
+
+  if ((!data || data.length === 0) && (profile?.role === 'admin' || profile?.role === 'supervisor')) {
+    const healed = await autoHealMissingAccruals(supabase);
+    if (healed > 0) {
+      const retry = await query;
+      data = retry.data;
+    }
+  }
+
   if (error || !data) {
     return { totalAccrued: 0, totalPaid: 0, totalAdvances: 0, totalDeductions: 0, transactionsCount: 0 };
   }

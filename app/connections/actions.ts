@@ -741,6 +741,82 @@ export async function updateConnectionRetroactive(params: {
         .eq('accrual_month', conn.accrual_month);
     }
 
+    // Синхронизация начисления за подключение в connection_accruals
+    const { data: existingConnAccrual } = await supabase
+      .from('connection_accruals')
+      .select('id')
+      .eq('connection_id', params.connection_id)
+      .eq('accrual_type', 'connection')
+      .maybeSingle();
+
+    if (existingConnAccrual) {
+      await supabase
+        .from('connection_accruals')
+        .update({
+          settlement_month: newAccrualMonth,
+          amount: recalculatedBonus,
+          notes: `Бонус за подключение: ${conn.seller_name || conn.store || conn.seller_phone} (пересчет: ${targetPrice} сом)`,
+        })
+        .eq('id', existingConnAccrual.id);
+    } else if (conn.manager_id && recalculatedBonus > 0) {
+      await supabase
+        .from('connection_accruals')
+        .insert({
+          connection_id: params.connection_id,
+          seller_phone: conn.seller_phone,
+          employee_id: conn.manager_id,
+          accrual_type: 'connection',
+          settlement_month: newAccrualMonth,
+          amount: recalculatedBonus,
+          is_paid: false,
+          notes: `Бонус за подключение: ${conn.seller_name || conn.store || conn.seller_phone}`,
+        });
+    }
+
+    // Синхронизация начисления за подключение в едином реестре employee_payouts
+    const { data: existingPayout } = await supabase
+      .from('employee_payouts')
+      .select('payout_id')
+      .eq('connection_id', params.connection_id)
+      .eq('operation_type', 'accrual_connection')
+      .maybeSingle();
+
+    if (existingPayout) {
+      await supabase
+        .from('employee_payouts')
+        .update({
+          amount: recalculatedBonus,
+          settlement_month: newAccrualMonth,
+          accrual_month: newAccrualMonth,
+          actual_date: pDate,
+          payout_date: pDate,
+          note: `Бонус за подключение: ${conn.seller_name || conn.store || conn.seller_phone} (пересчет: ${targetPrice} сом)`,
+          comment: `Бонус за подключение: ${conn.seller_name || conn.store || conn.seller_phone}`,
+        })
+        .eq('payout_id', existingPayout.payout_id);
+    } else if (conn.manager_id && recalculatedBonus > 0) {
+      await supabase
+        .from('employee_payouts')
+        .insert({
+          user_id: conn.manager_id,
+          employee_id: conn.manager_id,
+          connection_id: params.connection_id,
+          seller_phone: conn.seller_phone,
+          operation_sign: '+',
+          operation_type: 'accrual_connection',
+          payout_category: 'бонус',
+          amount: recalculatedBonus,
+          settlement_month: newAccrualMonth,
+          accrual_month: newAccrualMonth,
+          actual_date: pDate,
+          payout_date: pDate,
+          status: 'completed',
+          note: `Бонус за подключение: ${conn.seller_name || conn.store || conn.seller_phone}`,
+          comment: `Бонус за подключение: ${conn.seller_name || conn.store || conn.seller_phone}`,
+          created_by: conn.manager_id,
+        } as any);
+    }
+
     revalidatePath('/connections');
     revalidatePath('/payouts');
     revalidatePath('/analytics');

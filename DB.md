@@ -2845,5 +2845,25 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * Исключает показ плановых ставок тарифа в столбцах бонусов до проведения начислений.
 
 ### 24.3. Хранимая процедура `accrue_connection_bonuses_v2`:
-* Сигнатура: `public.accrue_connection_bonuses_v2(p_settlement_month VARCHAR DEFAULT NULL, p_accrual_type VARCHAR DEFAULT 'all', p_connection_ids UUID[] DEFAULT NULL) RETURNS JSONB`.
+* Сигнатура: `public.accrue_connection_bonuses_v2(p_mode VARCHAR(20) DEFAULT 'all', p_settlement_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
 * Выполняет пакетное или точечное создание проводок со знаком `+` в `employee_payouts` с дедупликацией по месяцу и типу операции.
+
+## 25. Спецификация Миграции 027 (`027_guaranteed_accruals_with_rates_fallback.sql`)
+
+### 25.1. Таблица справочных ставок `rates`:
+* Структура: `id UUID PRIMARY KEY`, `rate_type VARCHAR(50)`, `rate_amount NUMERIC(12, 2)`, `created_at TIMESTAMPTZ`.
+* Содержит стандартные ставки: `connection` (500.00 сом), `maintenance` (300.00 сом).
+
+### 25.2. Совместимость алиасов (`id`, `seller_id`):
+* Добавлены алиасы `id` и `seller_id` в таблицы `connections`, `sellers` и `employee_payouts` для совместимости процедур и клиентских запросов.
+* Колонка `payment_method` в таблице `employee_payouts` переведена в `NULLABLE` с дефолтом `'система'` для поддержки автоматических начислений.
+
+### 25.3. Пересоздание хранимой процедуры `accrue_connection_bonuses_v2`:
+* Сигнатура: `public.accrue_connection_bonuses_v2(p_mode VARCHAR(20) DEFAULT 'all', p_settlement_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Инварианты:
+  * Устранена блокировка по нулевым ставкам: при `connection_fee <= 0` вычисляется ставка по тарифу, из таблицы `rates` или стандартный fallback `500.00 сом`, с сохранением в `connections.connection_fee`.
+  * При `maintenance_fee_monthly <= 0` вычисляется ставка по тарифу, из таблицы `rates` или fallback `300.00 сом`, с сохранением в `connections.maintenance_fee_monthly`.
+  * Не блокируется начисление при неактивном флаге продавца при наличии куратора: `(s.is_active IS NULL OR s.is_active = true)`.
+  * Автоматическая нормализация аргументов: корректно обрабатывает вызов с любым порядком параметров (`mode, month` или `month, mode`).
+  * Сквозное создание записей в `employee_payouts` со знаком `+`, привязкой к подключению, продавцу и расчетному месяцу.
+

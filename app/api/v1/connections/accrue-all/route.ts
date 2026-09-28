@@ -41,8 +41,8 @@ export async function POST(req: NextRequest) {
     // 1. Попытка вызвать хранимую процедуру accrue_connection_bonuses_v2
     try {
       const rpcRes = await (supabase.rpc as any)('accrue_connection_bonuses_v2', {
+        p_mode: accrualType,
         p_settlement_month: targetMonth,
-        p_accrual_type: accrualType,
       });
       if (!rpcRes.error && rpcRes.data && (rpcRes.data as any).success) {
         resultData = rpcRes.data;

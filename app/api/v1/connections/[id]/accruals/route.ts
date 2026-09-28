@@ -56,7 +56,7 @@ export async function GET(
           status,
           payment_method,
           created_at,
-          users:user_id(user_id, full_name, role)
+          users:users!employee_payouts_user_id_fkey(user_id, full_name, role)
         `)
         .eq('connection_id', id)
         .order('actual_date', { ascending: false, nullsFirst: false })

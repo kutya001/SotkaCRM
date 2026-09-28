@@ -2822,5 +2822,28 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
   * Проверяет наличие любых несинхронизированных записей в `connection_accruals` и выполняет атомарный перенос в `employee_payouts`.
   * Вызывается автоматически серверным кодом в `app/payouts/actions.ts` при нулевых результатах для администратора.
 
+## 24. Спецификация Миграции 026 (`026_strict_zero_bonuses_until_accrued.sql`)
 
+### 24.1. Добавление колонок и снятие ограничений в `employee_payouts`:
+* Таблица `employee_payouts` расширена колонками:
+  * `connection_id UUID REFERENCES connections(connection_id) ON DELETE SET NULL`
+  * `seller_phone VARCHAR(50)`
+  * `operation_sign VARCHAR(1) DEFAULT '+' CHECK (operation_sign IN ('+', '-'))`
+  * `actual_date DATE DEFAULT CURRENT_DATE`
+  * `note TEXT`
+  * `employee_id UUID REFERENCES users(user_id) ON DELETE SET NULL`
+  * `status VARCHAR(20) DEFAULT 'completed'`
+  * `settlement_month VARCHAR(7)`
+* Ограничение `employee_payouts_operation_type_check` обновлено для поддержки всех типов операций: `payout`, `deduction`, `accrual_connection`, `accrual_maintenance`, `salary_base`, `bonus_other`, `advance`, `fine`.
 
+### 24.2. Представление `connections_with_accruals`:
+* Вычисляет фактические начисленные бонусы из регистра `employee_payouts`:
+  * `bonus_connection_accrued`: $\sum$ проводок `ep.operation_type = 'accrual_connection' AND ep.operation_sign = '+'` по данному подключению (строго `0`, если проводки не было).
+  * `bonus_maintenance_accrued`: $\sum$ проводок `ep.operation_type = 'accrual_maintenance' AND ep.operation_sign = '+'` (строго `0`, если проводки не было).
+  * `total_bonuses_accrued`: общая сумма начислений со знаком `+`.
+  * `maintenance_months_accrued_count`: количество уникальных месяцев сопровождения со знаком `+`.
+* Исключает показ плановых ставок тарифа в столбцах бонусов до проведения начислений.
+
+### 24.3. Хранимая процедура `accrue_connection_bonuses_v2`:
+* Сигнатура: `public.accrue_connection_bonuses_v2(p_settlement_month VARCHAR DEFAULT NULL, p_accrual_type VARCHAR DEFAULT 'all', p_connection_ids UUID[] DEFAULT NULL) RETURNS JSONB`.
+* Выполняет пакетное или точечное создание проводок со знаком `+` в `employee_payouts` с дедупликацией по месяцу и типу операции.

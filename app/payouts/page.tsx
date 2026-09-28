@@ -458,15 +458,22 @@ export default function PayoutsPage() {
       },
       {
         key: 'note',
-        label: 'Примечание',
-        width: 200,
-        minWidth: 150,
+        label: 'Основание / Клиент',
+        width: 240,
+        minWidth: 180,
         sortable: false,
         filterable: true,
         renderCell: (row) => (
-          <span className="text-xs text-zinc-600 dark:text-zinc-400 truncate block" title={row.note || ''}>
-            {row.note || '—'}
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-200 truncate block" title={row.note || ''}>
+              {row.note || '—'}
+            </span>
+            {row.seller_phone && (
+              <span className="text-[10px] font-mono text-zinc-400">
+                тел: +{row.seller_phone}
+              </span>
+            )}
+          </div>
         ),
       },
     ],

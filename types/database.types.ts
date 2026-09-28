@@ -926,6 +926,16 @@ export type Database = {
         }
         Relationships: []
       }
+      connections_with_accruals: {
+        Row: Database["public"]["Tables"]["connections"]["Row"] & {
+          id: string
+          bonus_connection_accrued: number
+          bonus_maintenance_accrued: number
+          total_bonuses_accrued: number
+          maintenance_months_accrued_count: number
+        }
+        Relationships: []
+      }
     }
     Functions: {
       create_crm_user: {

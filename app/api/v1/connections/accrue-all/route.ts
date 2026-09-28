@@ -38,17 +38,31 @@ export async function POST(req: NextRequest) {
 
     let resultData: any = null;
 
-    // 1. Попытка вызвать хранимую процедуру process_unified_connection_accruals
+    // 1. Попытка вызвать хранимую процедуру accrue_connection_bonuses_v2
     try {
-      const rpcRes = await supabase.rpc('process_unified_connection_accruals', {
+      const rpcRes = await (supabase.rpc as any)('accrue_connection_bonuses_v2', {
         p_settlement_month: targetMonth,
         p_accrual_type: accrualType,
       });
-      if (!rpcRes.error && rpcRes.data) {
+      if (!rpcRes.error && rpcRes.data && (rpcRes.data as any).success) {
         resultData = rpcRes.data;
       }
     } catch {
-      // Игнорируем ошибку RPC и переходим к нативному выполнению
+      // Игнорируем ошибку RPC и пробуем process_unified_connection_accruals
+    }
+
+    if (!resultData) {
+      try {
+        const rpcRes2 = await supabase.rpc('process_unified_connection_accruals', {
+          p_settlement_month: targetMonth,
+          p_accrual_type: accrualType,
+        });
+        if (!rpcRes2.error && rpcRes2.data) {
+          resultData = rpcRes2.data;
+        }
+      } catch {
+        // Игнорируем ошибку RPC и переходим к нативному выполнению
+      }
     }
 
     // 2. Если RPC недоступна или вернула ошибку, выполняем надежную нативную обработку в TypeScript

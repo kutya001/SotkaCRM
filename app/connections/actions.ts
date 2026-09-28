@@ -27,6 +27,11 @@ export interface ConnectionItem {
   maintenance_months_accrued: number;
   client_status: ClientLifecycleStatus;
   total_bonus?: number;
+  total_bonuses?: number;
+  bonus_connection?: number;
+  bonus_maintenance?: number;
+  tariff_connection_fee?: number;
+  tariff_maintenance_fee_monthly?: number;
   total_paid?: number;
   balance_remaining?: number;
   connection_bonus_accrued?: number;
@@ -324,7 +329,9 @@ export async function getConnectionsStats(accrualMonth?: string): Promise<Connec
     return { total: 0, newThisMonth: 0, inMaintenance: 0, totalBonusAmount: 0 };
   }
 
-  let query = supabase.from('connections').select('client_status, connection_fee_amount, accrual_month, manager_id');
+  let query = (supabase as any)
+    .from('connections_with_accruals')
+    .select('client_status, total_bonuses_accrued, accrual_month, manager_id');
 
   if (profile.role === 'consultant') {
     query = query.eq('manager_id', profile.user_id);
@@ -353,7 +360,7 @@ export async function getConnectionsStats(accrualMonth?: string): Promise<Connec
     if (c.client_status === 'сопровождение' || c.client_status === 'подключен') {
       inMaintenance++;
     }
-    totalBonusAmount += Number(c.connection_fee_amount) || 0;
+    totalBonusAmount += Number((c as any).total_bonuses_accrued || 0);
   }
 
   return {

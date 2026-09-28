@@ -602,9 +602,8 @@ export default function ConnectionsPage() {
         sortable: true,
         filterable: true,
         renderCell: (row) => {
-          const hasAccrual = row.has_connection_accrual || (row.connection_bonus_accrued || 0) > 0;
-          const amt = row.connection_bonus_accrued || 0;
-          if (!hasAccrual || amt <= 0) {
+          const amt = Number(row.bonus_connection ?? row.connection_bonus_accrued ?? 0);
+          if (amt <= 0) {
             return (
               <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
                 0 сом
@@ -613,7 +612,7 @@ export default function ConnectionsPage() {
           }
           return (
             <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-              +{Number(amt).toLocaleString('ru-RU')} сом
+              +{amt.toLocaleString('ru-RU')} сом
             </span>
           );
         },
@@ -666,9 +665,8 @@ export default function ConnectionsPage() {
         sortable: true,
         filterable: false,
         renderCell: (row) => {
-          const hasAccrual = row.has_maintenance_accrual || (row.maintenance_bonus_accrued || 0) > 0;
-          const amt = row.maintenance_bonus_accrued || 0;
-          if (!hasAccrual || amt <= 0) {
+          const amt = Number(row.bonus_maintenance ?? row.maintenance_bonus_accrued ?? 0);
+          if (amt <= 0) {
             return (
               <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
                 0 сом
@@ -677,7 +675,7 @@ export default function ConnectionsPage() {
           }
           return (
             <span className="font-mono text-xs font-bold text-purple-600 dark:text-purple-400">
-              +{Number(amt).toLocaleString('ru-RU')} сом
+              +{amt.toLocaleString('ru-RU')} сом
             </span>
           );
         },
@@ -690,7 +688,7 @@ export default function ConnectionsPage() {
         sortable: true,
         filterable: false,
         renderCell: (row) => {
-          const total = Number(row.total_bonus || 0);
+          const total = Number(row.total_bonuses ?? row.total_bonus ?? 0);
           if (total <= 0) {
             return (
               <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
@@ -1150,10 +1148,22 @@ export default function ConnectionsPage() {
                         {selectedConnection.connection_fee_percent}%
                       </span>
                     </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-600 dark:text-zinc-400">Плановый бонус подключения:</span>
+                      <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                        {Number(selectedConnection.tariff_connection_fee || selectedConnection.connection_fee || selectedConnection.connection_fee_amount || 0).toLocaleString('ru-RU')} сом
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-600 dark:text-zinc-400">Плановый бонус сопровождения:</span>
+                      <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                        {Number(selectedConnection.tariff_maintenance_fee_monthly || selectedConnection.maintenance_fee_monthly || 0).toLocaleString('ru-RU')} сом/мес.
+                      </span>
+                    </div>
                     <div className="flex items-center justify-between text-sm pt-1 border-t border-emerald-500/20 font-bold">
-                      <span className="text-emerald-700 dark:text-emerald-300">Начисленный бонус:</span>
+                      <span className="text-emerald-700 dark:text-emerald-300">Фактически начислено:</span>
                       <span className="font-mono text-emerald-600 dark:text-emerald-400 text-base">
-                        +{Number(selectedConnection.connection_fee_amount).toLocaleString('ru-RU')} сом
+                        +{Number(selectedConnection.total_bonuses ?? selectedConnection.total_bonus ?? 0).toLocaleString('ru-RU')} сом
                       </span>
                     </div>
                   </>

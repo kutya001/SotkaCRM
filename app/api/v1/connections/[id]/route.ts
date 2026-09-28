@@ -14,13 +14,9 @@ export async function GET(
       return apiError('У роли SMM отсутствует доступ к подключениям', 'FORBIDDEN', 403);
     }
 
-    let query = supabase
-      .from('connections')
-      .select(`
-        *,
-        seller:sellers(seller_name, store, plan_id, plan_expires_at, is_active),
-        manager:users!connections_manager_id_fkey(user_id, full_name, role)
-      `)
+    let query = (supabase as any)
+      .from('connections_with_accruals')
+      .select('*')
       .eq('connection_id', id);
 
     if (profile.role === 'consultant') {
@@ -32,7 +28,43 @@ export async function GET(
       return apiError('Подключение не найдено', 'NOT_FOUND', 404);
     }
 
-    return apiSuccess(conn);
+    // Обогащаем данными продавца и менеджера
+    let seller = null;
+    let manager = null;
+    if (conn.seller_phone) {
+      const { data: s } = await supabase
+        .from('sellers')
+        .select('seller_name, store, plan_id, plan_expires_at, is_active')
+        .eq('seller_phone', conn.seller_phone)
+        .maybeSingle();
+      seller = s;
+    }
+    if (conn.manager_id) {
+      const { data: m } = await supabase
+        .from('users')
+        .select('user_id, full_name, role')
+        .eq('user_id', conn.manager_id)
+        .maybeSingle();
+      manager = m;
+    }
+
+    const result = {
+      ...conn,
+      bonus_connection: Number(conn.bonus_connection_accrued || 0),
+      bonus_maintenance: Number(conn.bonus_maintenance_accrued || 0),
+      total_bonuses: Number(conn.total_bonuses_accrued || 0),
+      total_bonus: Number(conn.total_bonuses_accrued || 0),
+      connection_bonus_accrued: Number(conn.bonus_connection_accrued || 0),
+      maintenance_bonus_accrued: Number(conn.bonus_maintenance_accrued || 0),
+      has_connection_accrual: Number(conn.bonus_connection_accrued || 0) > 0,
+      has_maintenance_accrual: Number(conn.bonus_maintenance_accrued || 0) > 0,
+      tariff_connection_fee: Number(conn.connection_fee || conn.connection_fee_amount || 0),
+      tariff_maintenance_fee_monthly: Number(conn.maintenance_fee_monthly || 0),
+      seller,
+      manager,
+    };
+
+    return apiSuccess(result);
   } catch (err) {
     return handleApiError(err);
   }

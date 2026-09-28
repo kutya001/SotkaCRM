@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     const sortBy = searchParams.get('sortBy') || 'assigned_at';
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc';
 
-    let query = supabase.from('connections').select('*', { count: 'exact' });
+    let query = (supabase as any).from('connections_with_accruals').select('*', { count: 'exact' });
 
     if (profile.role === 'consultant') {
       query = query.eq('manager_id', profile.user_id);
@@ -51,8 +51,8 @@ export async function GET(req: NextRequest) {
     if (error) throw error;
 
     // Обогащаем данными менеджеров
-    const managerIds = Array.from(
-      new Set((connections || []).map((c) => c.manager_id).filter(Boolean))
+    const managerIds: string[] = Array.from(
+      new Set((connections || []).map((c: any) => c.manager_id).filter(Boolean))
     );
 
     let managersMap = new Map();
@@ -67,39 +67,50 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Обогащаем данными начислений/выплат
-    const connectionIds = (connections || []).map((c) => c.connection_id);
-    const accrualsMap = new Map<string, { totalBonus: number; totalPaid: number }>();
+    // Обогащаем данными оплат
+    const connectionIds: string[] = (connections || []).map((c: any) => c.connection_id).filter(Boolean);
+    const accrualsMap = new Map<string, { totalPaid: number }>();
     if (connectionIds.length > 0) {
-      const { data: accruals } = await supabase
-        .from('connection_accruals')
-        .select('connection_id, amount, is_paid')
-        .in('connection_id', connectionIds);
+      const { data: payouts } = await supabase
+        .from('employee_payouts')
+        .select('connection_id, amount, status')
+        .in('connection_id', connectionIds)
+        .eq('operation_sign', '+');
 
-      if (accruals) {
-        accruals.forEach((a) => {
-          const cur = accrualsMap.get(a.connection_id) || { totalBonus: 0, totalPaid: 0 };
-          const amt = Number(a.amount) || 0;
-          cur.totalBonus += amt;
-          if (a.is_paid) {
+      if (payouts) {
+        payouts.forEach((p: any) => {
+          const cur = accrualsMap.get(p.connection_id) || { totalPaid: 0 };
+          const amt = Number(p.amount) || 0;
+          if (p.status === 'paid') {
             cur.totalPaid += amt;
           }
-          accrualsMap.set(a.connection_id, cur);
+          accrualsMap.set(p.connection_id, cur);
         });
       }
     }
 
-    const enriched = (connections || []).map((c) => {
-      const acc = accrualsMap.get(c.connection_id) || { totalBonus: 0, totalPaid: 0 };
-      const totalBonus = acc.totalBonus || Number(c.connection_fee_amount || 0);
+    const enriched = (connections || []).map((c: any) => {
+      const acc = accrualsMap.get(c.connection_id) || { totalPaid: 0 };
+      const bonusConnection = Number(c.bonus_connection_accrued || 0);
+      const bonusMaintenance = Number(c.bonus_maintenance_accrued || 0);
+      const totalBonus = Number(c.total_bonuses_accrued || 0);
       const totalPaid = acc.totalPaid || 0;
       const balanceRemaining = Math.max(0, totalBonus - totalPaid);
 
       return {
         ...c,
+        bonus_connection: bonusConnection,
+        bonus_maintenance: bonusMaintenance,
+        total_bonuses: totalBonus,
         total_bonus: totalBonus,
+        connection_bonus_accrued: bonusConnection,
+        maintenance_bonus_accrued: bonusMaintenance,
+        has_connection_accrual: bonusConnection > 0,
+        has_maintenance_accrual: bonusMaintenance > 0,
         total_paid: totalPaid,
         balance_remaining: balanceRemaining,
+        tariff_connection_fee: Number(c.connection_fee || c.connection_fee_amount || 0),
+        tariff_maintenance_fee_monthly: Number(c.maintenance_fee_monthly || 0),
         manager_user: c.manager_id ? managersMap.get(c.manager_id) || null : null,
       };
     });

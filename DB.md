@@ -2867,3 +2867,18 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
   * Автоматическая нормализация аргументов: корректно обрабатывает вызов с любым порядком параметров (`mode, month` или `month, mode`).
   * Сквозное создание записей в `employee_payouts` со знаком `+`, привязкой к подключению, продавцу и расчетному месяцу.
 
+---
+
+## 26. Спецификация Миграции 028 (`028_fix_payroll_sheet_accruals_and_source_links.sql`)
+
+### 26.1. Хранимая процедура `get_employee_payroll_sheet`:
+* Сигнатура: `public.get_employee_payroll_sheet(p_employee_id UUID, p_month VARCHAR(7) DEFAULT NULL) RETURNS JSONB`.
+* Инварианты расчета и классификации:
+  * Источник начислений и выплат: таблица `employee_payouts` с объединением `sellers` и `connections` для получения источников сделок.
+  * Входящий остаток (`opening_balance`): сальдо всех операций сотрудника (`user_id = p_employee_id OR employee_id = p_employee_id`) за предыдущие месяцы (`COALESCE(settlement_month, accrual_month) < p_month`).
+  * Начисления (`accruals`): операции за расчетный месяц со знаком `+` (`operation_sign = '+'` или `operation_type IN ('salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance')`). Включает `connection_id`, `seller_phone`, `source_name`, `store`, `seller_name`.
+  * Удержания и авансы (`deductions` / `deductions_and_advances`): операции за расчетный месяц со знаком `-` (`operation_type IN ('advance', 'deduction', 'fine')` или `payout_category IN ('удержание', 'штраф', 'аванс')`).
+  * Выплаты (`payouts`): фактические выплаты за расчетный месяц со знаком `-` (`operation_type = 'payout'` или категория выплаты).
+  * Итоговый остаток к выплате (`closing_balance`): `opening_balance + total_accrued - total_deductions - total_paid`.
+  * Возвращает полный структурированный JSONB с объектами: `employee`, `employee_id`, `month`, `settlement_month`, `period`, `opening_balance`, `total_accrued`, `total_deductions`, `total_paid`, `closing_balance`, `accruals`, `deductions`, `deductions_and_advances`, `payouts`, `operations`.
+

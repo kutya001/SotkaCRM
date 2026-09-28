@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
@@ -29,6 +30,7 @@ import {
   Landmark,
   Building2,
   Trash2,
+  ExternalLink,
 } from 'lucide-react';
 import { useUser } from '@/components/auth/AuthProvider';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
@@ -65,6 +67,7 @@ export default function PayoutsPage() {
   const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
+  const [selectedTab, setSelectedTab] = React.useState<'all' | 'accruals' | 'deductions' | 'payouts'>('all');
 
   // Список сотрудников
   const [employees, setEmployees] = React.useState<
@@ -137,11 +140,12 @@ export default function PayoutsPage() {
   const [isLoadingPreview, setIsLoadingPreview] = React.useState(false);
 
   // Загрузка данных журнала
-  const fetchData = React.useCallback(async (month?: string, cat?: string) => {
+  const fetchData = React.useCallback(async (month?: string, cat?: string, tab?: 'all' | 'accruals' | 'deductions' | 'payouts') => {
     setIsLoading(true);
     try {
       const monthFilter = month !== undefined ? month : selectedMonth;
       const catFilter = cat !== undefined ? cat : selectedCategory;
+      const tabFilter = tab !== undefined ? tab : selectedTab;
 
       const [res, statsRes, monthsRes, employeesRes] = await Promise.all([
         api.payouts.getAll({
@@ -149,6 +153,7 @@ export default function PayoutsPage() {
           pageSize: 50,
           accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
           category: catFilter !== 'all' ? catFilter : undefined,
+          tab: tabFilter !== 'all' ? tabFilter : undefined,
         }),
         getPayoutsStats(monthFilter !== 'all' ? monthFilter : undefined),
         getPayoutMonthsList(),
@@ -166,7 +171,7 @@ export default function PayoutsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedMonth, selectedCategory, showToast]);
+  }, [selectedMonth, selectedCategory, selectedTab, showToast]);
 
   React.useEffect(() => {
     if (user.profile) {
@@ -183,13 +188,18 @@ export default function PayoutsPage() {
   const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setSelectedMonth(val);
-    fetchData(val, selectedCategory);
+    fetchData(val, selectedCategory, selectedTab);
   };
 
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setSelectedCategory(val);
-    fetchData(selectedMonth, val);
+    fetchData(selectedMonth, val, selectedTab);
+  };
+
+  const handleTabChange = (tab: 'all' | 'accruals' | 'deductions' | 'payouts') => {
+    setSelectedTab(tab);
+    fetchData(selectedMonth, selectedCategory, tab);
   };
 
   // Автоматическая загрузка расчетного листка при выборе сотрудника в форме создания
@@ -458,21 +468,39 @@ export default function PayoutsPage() {
       },
       {
         key: 'note',
-        label: 'Основание / Клиент',
-        width: 240,
-        minWidth: 180,
+        label: 'Основание / Источник',
+        width: 260,
+        minWidth: 190,
         sortable: false,
         filterable: true,
         renderCell: (row) => (
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-1">
             <span className="text-xs font-medium text-zinc-700 dark:text-zinc-200 truncate block" title={row.note || ''}>
               {row.note || '—'}
             </span>
-            {row.seller_phone && (
-              <span className="text-[10px] font-mono text-zinc-400">
-                тел: +{row.seller_phone}
-              </span>
-            )}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {row.connection_id && (
+                <Link
+                  href={`/connections?search=${encodeURIComponent(row.connection_id)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-semibold text-[10px] transition-colors cursor-pointer"
+                  title="Перейти к сделке (Подключение)"
+                >
+                  <ExternalLink className="w-2.5 h-2.5" />
+                  <span>{row.source_name || row.store || row.seller_name || 'Подключение'}</span>
+                </Link>
+              )}
+              {row.seller_phone && (
+                <Link
+                  href={`/sellers?search=${encodeURIComponent(row.seller_phone)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-mono text-[10px] text-zinc-400 hover:text-blue-500 transition-colors"
+                  title="Перейти к продавцу"
+                >
+                  +{row.seller_phone}
+                </Link>
+              )}
+            </div>
           </div>
         ),
       },
@@ -629,6 +657,69 @@ export default function PayoutsPage() {
           </div>
         </div>
 
+        {/* Табы реестра операций по ЗП */}
+        <div className="flex items-center gap-1.5 p-1 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => handleTabChange('all')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              selectedTab === 'all'
+                ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-sm'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60'
+            }`}
+          >
+            <span>Все операции</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium ${
+                selectedTab === 'all'
+                  ? 'bg-white/20 dark:bg-zinc-900/20 text-white dark:text-zinc-900'
+                  : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500'
+              }`}
+            >
+              {stats.transactionsCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange('accruals')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              selectedTab === 'accruals'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10'
+            }`}
+          >
+            <TrendingUp className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span>Начисления (+)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange('deductions')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              selectedTab === 'deductions'
+                ? 'bg-rose-600 text-white shadow-sm'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/10'
+            }`}
+          >
+            <TrendingDown className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span>Удержания и авансы (-)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange('payouts')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              selectedTab === 'payouts'
+                ? 'bg-sky-600 text-white shadow-sm'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-500/10'
+            }`}
+          >
+            <Wallet className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <span>Выплаты (-)</span>
+          </button>
+        </div>
+
         {/* Универсальный реестр DataJournal */}
         <DataJournal<PayoutItem>
           data={payouts}
@@ -713,12 +804,30 @@ export default function PayoutsPage() {
                     <FormattedDate date={selectedPayout.actual_date} type="date" />
                   </span>
                 </div>
+                {selectedPayout.connection_id && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-400">Сделка (Подключение):</span>
+                    <Link
+                      href={`/connections?search=${encodeURIComponent(selectedPayout.connection_id)}`}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-semibold text-xs transition-colors cursor-pointer"
+                      title="Перейти к сделке"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>{selectedPayout.source_name || selectedPayout.store || selectedPayout.seller_name || 'Открыть сделку'}</span>
+                    </Link>
+                  </div>
+                )}
                 {selectedPayout.seller_phone && (
                   <div className="flex justify-between items-center">
                     <span className="text-zinc-400">Продавец:</span>
-                    <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                      +{selectedPayout.seller_phone}
-                    </span>
+                    <Link
+                      href={`/sellers?search=${encodeURIComponent(selectedPayout.seller_phone)}`}
+                      className="font-mono text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      title="Открыть карточку продавца"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>+{selectedPayout.seller_phone}</span>
+                    </Link>
                   </div>
                 )}
                 {selectedPayout.note && (

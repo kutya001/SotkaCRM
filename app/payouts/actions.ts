@@ -29,9 +29,18 @@ export interface PayoutItem {
   description?: string | null;
   connection_id?: string | null;
   seller_phone?: string | null;
+  source_name?: string | null;
+  store?: string | null;
+  seller_name?: string | null;
   status?: string | null;
   created_by: string;
   created_at: string;
+  connection?: {
+    connection_id: string;
+    seller_name?: string | null;
+    store?: string | null;
+    seller_phone?: string | null;
+  } | null;
   recipient?: {
     user_id: string;
     full_name: string;
@@ -53,6 +62,7 @@ export interface GetPayoutsParams {
   accrualMonth?: string;
   category?: string;
   userId?: string;
+  tab?: 'all' | 'accruals' | 'deductions' | 'payouts';
   operationType?: string;
   operationSign?: string;
   sortBy?: string;
@@ -204,6 +214,7 @@ export async function getPayouts(
     accrualMonth,
     category,
     userId,
+    tab,
     operationType,
     operationSign,
     sortBy = 'actual_date',
@@ -215,6 +226,7 @@ export async function getPayouts(
     .select(
       `
       *,
+      connection:connections!employee_payouts_connection_id_fkey(connection_id, seller_name, store, seller_phone),
       recipient:users!employee_payouts_user_id_fkey(user_id, full_name, role, login, color),
       creator:users!employee_payouts_created_by_fkey(user_id, full_name, role)
     `,
@@ -232,6 +244,15 @@ export async function getPayouts(
   // Фильтр по месяцу начисления
   if (accrualMonth && accrualMonth !== 'all') {
     query = query.or(`settlement_month.eq.${accrualMonth},accrual_month.eq.${accrualMonth}`);
+  }
+
+  // Фильтр по табу реестра (Все / Начисления / Удержания и авансы / Выплаты)
+  if (tab === 'accruals') {
+    query = query.or('operation_sign.eq.+,operation_type.in.(salary_base,bonus_other,accrual_connection,accrual_maintenance)');
+  } else if (tab === 'deductions') {
+    query = query.or('operation_type.in.(advance,deduction,fine),payout_category.eq.удержание');
+  } else if (tab === 'payouts') {
+    query = query.eq('operation_type', 'payout');
   }
 
   // Фильтр по категории
@@ -287,6 +308,10 @@ export async function getPayouts(
         ? '+'
         : '-');
 
+    const sourceName = p.connection?.store || p.connection?.seller_name || p.note;
+    const store = p.connection?.store;
+    const sellerName = p.connection?.seller_name;
+
     return {
       ...p,
       status: p.status || 'paid',
@@ -296,10 +321,13 @@ export async function getPayouts(
       operation_sign: rawSign,
       operation_type: (p.operation_type as SalaryOperationType) || 'payout',
       note: p.note || p.comment || p.description,
+      source_name: sourceName,
+      store: store,
+      seller_name: sellerName,
     };
   });
 
-  // Клиентский поиск по сотруднику, примечанию или кошельку
+  // Клиентский поиск по сотруднику, примечанию, источнику или кошельку
   if (search.trim()) {
     const q = search.toLowerCase().trim();
     filteredPayouts = filteredPayouts.filter(
@@ -308,7 +336,12 @@ export async function getPayouts(
         p.recipient?.login?.toLowerCase().includes(q) ||
         p.payment_method?.toLowerCase().includes(q) ||
         p.note?.toLowerCase().includes(q) ||
-        p.comment?.toLowerCase().includes(q)
+        p.comment?.toLowerCase().includes(q) ||
+        p.source_name?.toLowerCase().includes(q) ||
+        p.store?.toLowerCase().includes(q) ||
+        p.seller_name?.toLowerCase().includes(q) ||
+        p.seller_phone?.includes(q) ||
+        p.connection_id?.includes(q)
     );
   }
 
@@ -492,14 +525,17 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
       return {
         success: true,
         sheet: {
+          employee: sheetData.employee,
           employee_id: employeeId,
           settlement_month: month,
+          month: month,
           opening_balance: roundMoney(Number(sheetData.opening_balance) || 0),
           total_accrued: roundMoney(Number(sheetData.total_accrued) || 0),
           total_deductions: roundMoney(Number(sheetData.total_deductions) || 0),
           total_paid: roundMoney(Number(sheetData.total_paid) || 0),
           closing_balance: roundMoney(Number(sheetData.closing_balance) || 0),
           accruals: sheetData.accruals || [],
+          deductions: sheetData.deductions || sheetData.deductions_and_advances || [],
           deductions_and_advances: sheetData.deductions_and_advances || sheetData.deductions || [],
           payouts: sheetData.payouts || [],
           operations: sheetData.operations || [],

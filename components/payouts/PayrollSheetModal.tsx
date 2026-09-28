@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import {
   FileSpreadsheet,
   X,
@@ -11,6 +12,7 @@ import {
   Calendar,
   Layers,
   Sparkles,
+  ExternalLink,
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { SALARY_OPERATION_TYPE_LABELS, type SalaryOperationType } from '@/lib/validations';
@@ -46,6 +48,11 @@ export interface PayrollOperationRow {
   comment?: string;
   description?: string;
   payment_method?: string | null;
+  connection_id?: string | null;
+  seller_phone?: string | null;
+  source_name?: string | null;
+  store?: string | null;
+  seller_name?: string | null;
 }
 
 export function PayrollSheetModal({
@@ -206,12 +213,30 @@ export function PayrollSheetModal({
                     {monthVal}
                   </td>
                   <td className="py-2 px-3">
-                    <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                      {label}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                        {label}
+                      </span>
+                      {row.connection_id && (
+                        <Link
+                          href={`/connections?search=${encodeURIComponent(row.connection_id)}`}
+                          onClick={onClose}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-semibold text-[10px] transition-colors cursor-pointer"
+                          title="Открыть сделку (Подключение)"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          <span>{row.source_name || row.store || row.seller_name || 'Подключение'}</span>
+                        </Link>
+                      )}
+                    </div>
                     {(row.note || row.comment || row.description) && (
-                      <span className="block text-[10px] text-zinc-400 truncate max-w-[220px]">
+                      <span className="block text-[10px] text-zinc-400 truncate max-w-[240px]">
                         {row.note || row.comment || row.description}
+                      </span>
+                    )}
+                    {row.seller_phone && !row.connection_id && (
+                      <span className="font-mono text-[10px] text-zinc-400 block">
+                        +{row.seller_phone}
                       </span>
                     )}
                   </td>

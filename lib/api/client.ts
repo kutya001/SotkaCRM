@@ -580,6 +580,9 @@ export const api = {
       accrualMonth?: string;
       category?: string;
       userId?: string;
+      tab?: 'all' | 'accruals' | 'deductions' | 'payouts';
+      operationType?: string;
+      operationSign?: string;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
       bypassCache?: boolean;

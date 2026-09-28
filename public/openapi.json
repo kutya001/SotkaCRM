@@ -1609,6 +1609,40 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "tab",
+            "in": "query",
+            "description": "Таб реестра операций по ЗП",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "accruals",
+                "deductions",
+                "payouts"
+              ]
+            }
+          },
+          {
+            "name": "operationSign",
+            "in": "query",
+            "description": "Знак операции (+ / -)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "+",
+                "-"
+              ]
+            }
+          },
+          {
+            "name": "operationType",
+            "in": "query",
+            "description": "Вид операции по ЗП",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

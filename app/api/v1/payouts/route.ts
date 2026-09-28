@@ -14,6 +14,9 @@ export async function GET(req: NextRequest) {
     const accrualMonth = searchParams.get('accrualMonth') || undefined;
     const category = searchParams.get('category') || undefined;
     const requestedUserId = searchParams.get('userId') || searchParams.get('employeeId') || undefined;
+    const tab = (searchParams.get('tab') as any) || undefined;
+    const operationType = searchParams.get('operationType') || undefined;
+    const operationSign = searchParams.get('operationSign') || undefined;
 
     // Строгая ролевая изоляция выплат:
     // admin и supervisor видят абсолютно все операции системы без фильтров по сотруднику по умолчанию
@@ -45,6 +48,9 @@ export async function GET(req: NextRequest) {
       accrualMonth,
       category,
       userId: targetUserId,
+      tab,
+      operationType,
+      operationSign,
       sortBy,
       sortOrder,
     });

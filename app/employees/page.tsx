@@ -35,6 +35,7 @@ import {
   Trash2,
   X,
   MapPin,
+  Send,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 import { ColorPicker } from '@/components/ui/ColorPicker';
@@ -50,6 +51,8 @@ import {
   mapLinkForCoordinates,
   type EmployeeProfileFormValue,
 } from '@/components/employees/EmployeeProfileFields';
+import { EmployeesMapModal } from '@/components/employees/EmployeesMapModal';
+import { TelegramBroadcastModal } from '@/components/employees/TelegramBroadcastModal';
 
 export default function EmployeesPage() {
   const router = useRouter();
@@ -67,6 +70,10 @@ export default function EmployeesPage() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [roleFilter, setRoleFilter] = React.useState<string>('all');
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
+
+  // Общая карта сотрудников и рассылка в Telegram (администратор)
+  const [isMapOpen, setIsMapOpen] = React.useState(false);
+  const [isBroadcastOpen, setIsBroadcastOpen] = React.useState(false);
 
   // Модальное окно создания сотрудника
   const [isCreateModalOpen, setIsCreateModalOpen] = React.useState(false);
@@ -481,6 +488,20 @@ export default function EmployeesPage() {
       ),
     },
     {
+      key: 'telegram_username',
+      label: 'Telegram',
+      width: 140,
+      renderCell: (item: EmployeeItem) =>
+        item.telegram_linked ? (
+          <span className="inline-flex items-center gap-1 text-xs text-sky-600 dark:text-sky-400 font-medium">
+            <Send className="w-3 h-3" strokeWidth={2} />
+            {item.telegram_username ? `@${item.telegram_username}` : 'подключен'}
+          </span>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        ),
+    },
+    {
       key: 'birth_date',
       label: 'Дата рождения',
       sortable: true,
@@ -614,15 +635,38 @@ export default function EmployeesPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsCreateModalOpen(true)}
-            className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95 self-start sm:self-auto"
-          >
-            <Plus className="w-4 h-4" strokeWidth={2} />
-            <span>Добавить сотрудника</span>
-          </button>
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+            <button
+              type="button"
+              onClick={() => setIsBroadcastOpen(true)}
+              className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
+              title="Сообщение всем сотрудникам с подключенным Telegram"
+            >
+              <Send className="w-4 h-4 text-sky-500" strokeWidth={2} />
+              <span>Рассылка в Telegram</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsMapOpen(true)}
+              className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
+              title="Места проживания сотрудников на одной карте"
+            >
+              <MapPin className="w-4 h-4 text-rose-500" strokeWidth={2} />
+              <span>Карта сотрудников</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
+            >
+              <Plus className="w-4 h-4" strokeWidth={2} />
+              <span>Добавить сотрудника</span>
+            </button>
+          </div>
         </div>
+
+        <EmployeesMapModal isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} />
+        <TelegramBroadcastModal isOpen={isBroadcastOpen} onClose={() => setIsBroadcastOpen(false)} />
 
         {/* Карточки оперативной статистики по сотрудникам */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">

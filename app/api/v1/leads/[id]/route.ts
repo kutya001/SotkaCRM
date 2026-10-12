@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth/check-role';
 import { LeadUpdateSchema, normalizeNullableUuid } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function GET(
   req: NextRequest,
@@ -132,6 +133,7 @@ export async function PATCH(
 
     if (error) throw error;
 
+    scheduleTelegramDispatch();
     return apiSuccess(updated);
   } catch (err) {
     return handleApiError(err);

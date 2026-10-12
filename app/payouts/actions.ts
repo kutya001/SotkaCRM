@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
 import {
   PayoutSchema,
@@ -635,6 +636,7 @@ export async function createPayout(
     revalidatePath('/payouts');
     revalidatePath('/connections');
     revalidatePath('/profile');
+    scheduleTelegramDispatch();
 
     return { success: true, payout_id: payoutId };
   } catch (err: any) {

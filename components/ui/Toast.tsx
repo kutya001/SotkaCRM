@@ -2,6 +2,11 @@
 
 import * as React from 'react';
 import { Check, AlertCircle, Info, X } from 'lucide-react';
+import {
+  STALE_DEPLOYMENT_MESSAGE,
+  isStaleDeploymentError,
+  recoverFromStaleDeployment,
+} from '@/lib/utils/deployment';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -21,6 +26,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastItem[]>([]);
 
   const showToast = React.useCallback((message: string, type: ToastType = 'success') => {
+    // Сообщение об устаревшем клиенте после деплоя: вместо технической ошибки
+    // показываем понятный текст и перезагружаем страницу
+    if (type === 'error' && isStaleDeploymentError(message) && recoverFromStaleDeployment()) {
+      message = STALE_DEPLOYMENT_MESSAGE;
+      type = 'info';
+    }
+
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, message, type }]);
 
@@ -28,6 +40,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 3000);
   }, []);
+
+  // Ошибки загрузки чанков старой версии (next/dynamic) не проходят через showToast
+  React.useEffect(() => {
+    const onRejection = (event: PromiseRejectionEvent) => {
+      if (isStaleDeploymentError(event.reason) && recoverFromStaleDeployment()) {
+        event.preventDefault();
+        showToast(STALE_DEPLOYMENT_MESSAGE, 'info');
+      }
+    };
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => window.removeEventListener('unhandledrejection', onRejection);
+  }, [showToast]);
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

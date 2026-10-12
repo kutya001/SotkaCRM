@@ -226,9 +226,15 @@ export default function ConnectionsPage() {
         },
       });
       showToast(
-        `Начисления выполнены: ${res.connection_accruals_created || 0} за подкл., ${res.maintenance_accruals_created || 0} за сопр.`,
+        `Начисления выполнены: ${res.connection_bonuses_created ?? res.connection_accruals_created ?? 0} за подкл., ${res.maintenance_bonuses_created ?? res.maintenance_accruals_created ?? 0} за сопр.`,
         'success'
       );
+      if (Number(res.maintenance_skipped_same_month) > 0) {
+        showToast(
+          `Сопровождение не начислено по ${res.maintenance_skipped_same_month} подкл.: оно начисляется только со следующего месяца после подключения`,
+          'info'
+        );
+      }
       setBulkAccrueModal({ isOpen: false, mode: 'all', month: new Date().toISOString().slice(0, 7) });
       clearSelection();
       fetchData();

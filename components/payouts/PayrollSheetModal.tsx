@@ -386,7 +386,7 @@ export function PayrollSheetModal({
                   -{sheet.total_deductions.toLocaleString('ru-RU')} сом
                 </p>
                 <span className="text-[10px] text-zinc-400 block">
-                  Авансы, удержания, штрафы
+                  Удержания и штрафы
                 </span>
               </div>
 
@@ -400,7 +400,7 @@ export function PayrollSheetModal({
                   -{sheet.total_paid.toLocaleString('ru-RU')} сом
                 </p>
                 <span className="text-[10px] text-zinc-400 block">
-                  Фактически перечислено
+                  Выплата ЗП и авансы
                 </span>
               </div>
             </div>

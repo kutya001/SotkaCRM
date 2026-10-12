@@ -854,34 +854,55 @@ export type Database = {
       }
       users: {
         Row: {
+          address: string | null
           auth_id: string | null
+          bio: string | null
+          birth_date: string | null
           color: string
           created_at: string
           full_name: string
+          gender: string | null
+          inn: string | null
           is_active: boolean
+          latitude: number | null
           login: string
+          longitude: number | null
           phone: string | null
           role: Database["public"]["Enums"]["user_role"]
           user_id: string
         }
         Insert: {
+          address?: string | null
           auth_id?: string | null
+          bio?: string | null
+          birth_date?: string | null
           color?: string
           created_at?: string
           full_name: string
+          gender?: string | null
+          inn?: string | null
           is_active?: boolean
+          latitude?: number | null
           login: string
+          longitude?: number | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           user_id?: string
         }
         Update: {
+          address?: string | null
           auth_id?: string | null
+          bio?: string | null
+          birth_date?: string | null
           color?: string
           created_at?: string
           full_name?: string
+          gender?: string | null
+          inn?: string | null
           is_active?: boolean
+          latitude?: number | null
           login?: string
+          longitude?: number | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           user_id?: string

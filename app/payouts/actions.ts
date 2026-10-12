@@ -6,10 +6,21 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
 import {
   PayoutSchema,
+  PayoutsBatchSchema,
+  PG_UUID_REGEX,
   type SalaryOperationType,
   type SalaryOperationSign,
 } from '@/lib/validations';
 import { roundMoney } from '@/lib/utils/money';
+import {
+  classifySalaryOperation,
+  signOfKind,
+  summarizeSalaryPeriod,
+  OPERATION_TYPES_BY_KIND,
+  SETTLEMENT_MONTH_REGEX,
+  type SalaryOperationKind,
+} from '@/lib/payroll/classify';
+import { computePayrollSheet, fetchSalaryOperationsForSummary } from '@/lib/payroll/server';
 import type { Database, UserRole, PayoutCategoryType } from '@/types/database.types';
 
 export interface PayoutItem {
@@ -22,6 +33,8 @@ export interface PayoutItem {
   payout_date: string;
   amount: number;
   operation_sign: SalaryOperationSign;
+  /** Вид операции: начисление / удержание / выплата */
+  kind: SalaryOperationKind;
   operation_type: SalaryOperationType;
   payout_category?: PayoutCategoryType;
   payment_method: string | null;
@@ -79,12 +92,34 @@ export interface PayoutsResponse {
 }
 
 export interface PayoutsStats {
+  /** Остаток на начало расчетного месяца (0 при «все периоды») */
+  openingBalance: number;
   totalAccrued: number;
-  totalPaid: number;
-  totalAdvances: number;
   totalDeductions: number;
+  /** Выплачено, включая авансы */
+  totalPaid: number;
+  /** Авансы — детализация, уже входят в totalPaid */
+  totalAdvances: number;
+  /** Остаток на конец: openingBalance + totalAccrued − totalDeductions − totalPaid */
+  closingBalance: number;
   transactionsCount: number;
+  accrualsCount: number;
+  deductionsCount: number;
+  payoutsCount: number;
 }
+
+const EMPTY_PAYOUTS_STATS: PayoutsStats = {
+  openingBalance: 0,
+  totalAccrued: 0,
+  totalDeductions: 0,
+  totalPaid: 0,
+  totalAdvances: 0,
+  closingBalance: 0,
+  transactionsCount: 0,
+  accrualsCount: 0,
+  deductionsCount: 0,
+  payoutsCount: 0,
+};
 
 export interface CreatePayoutInput {
   user_id: string;
@@ -248,13 +283,13 @@ export async function getPayouts(
     query = query.or(`settlement_month.eq.${accrualMonth},accrual_month.eq.${accrualMonth}`);
   }
 
-  // Фильтр по табу реестра (Все / Начисления / Удержания и авансы / Выплаты)
+  // Фильтр по табу реестра: Начисления / Удержания / Выплаты (выплата ЗП и аванс)
   if (tab === 'accruals') {
-    query = query.or('operation_sign.eq.+,operation_type.in.(salary_base,bonus_other,accrual_connection,accrual_maintenance)');
+    query = query.in('operation_type', OPERATION_TYPES_BY_KIND.accrual);
   } else if (tab === 'deductions') {
-    query = query.or('operation_type.in.(advance,deduction,fine),payout_category.eq.удержание');
+    query = query.in('operation_type', OPERATION_TYPES_BY_KIND.deduction);
   } else if (tab === 'payouts') {
-    query = query.eq('operation_type', 'payout');
+    query = query.in('operation_type', OPERATION_TYPES_BY_KIND.payout);
   }
 
   // Фильтр по категории
@@ -304,11 +339,9 @@ export async function getPayouts(
   }
 
   let filteredPayouts: PayoutItem[] = ((data as any[]) || []).map((p) => {
-    const rawSign: SalaryOperationSign =
-      p.operation_sign ||
-      (['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(p.operation_type)
-        ? '+'
-        : '-');
+    // Знак — по виду операции, а не по полю operation_sign (DEFAULT '+' в БД)
+    const kind = classifySalaryOperation(p);
+    const rawSign: SalaryOperationSign = signOfKind(kind);
 
     const sourceName = p.connection?.store || p.connection?.seller_name || p.note;
     const store = p.connection?.store;
@@ -321,6 +354,7 @@ export async function getPayouts(
       settlement_month: p.settlement_month || p.accrual_month,
       actual_date: p.actual_date || p.payout_date || p.created_at?.slice(0, 10),
       operation_sign: rawSign,
+      kind,
       operation_type: (p.operation_type as SalaryOperationType) || 'payout',
       note: p.note || p.comment || p.description,
       source_name: sourceName,
@@ -356,86 +390,80 @@ export async function getPayouts(
 }
 
 /**
- * Расчет сводных финансовых показателей по операциям ЗП
+ * Сводные показатели по операциям ЗП за расчетный месяц (или за все время):
+ * остаток на начало, начислено, удержано, выплачено (включая авансы), остаток на конец.
+ * employeeId — фильтр по сотруднику (consultant/smm всегда видят только себя).
  */
-export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsStats> {
-  const supabase = await createClient();
+export async function getPayoutsStats(
+  accrualMonth?: string,
+  employeeId?: string
+): Promise<PayoutsStats> {
+  let ctx;
+  try {
+    ctx = await requireAuth();
+  } catch {
+    return EMPTY_PAYOUTS_STATS;
+  }
+  const { supabase, profile } = ctx;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { totalAccrued: 0, totalPaid: 0, totalAdvances: 0, totalDeductions: 0, transactionsCount: 0 };
+  const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
+  let scopeEmployeeId: string | undefined;
+  if (!isPrivileged) {
+    scopeEmployeeId = profile.user_id;
+  } else if (employeeId && employeeId !== 'all' && PG_UUID_REGEX.test(employeeId)) {
+    scopeEmployeeId = employeeId;
   }
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
+  const month = accrualMonth && SETTLEMENT_MONTH_REGEX.test(accrualMonth) ? accrualMonth : undefined;
 
-  let query = supabase
-    .from('employee_payouts')
-    .select('amount, operation_sign, operation_type, payout_category');
-
-  if (profile && profile.role !== 'admin' && profile.role !== 'supervisor') {
-    query = query.or(`user_id.eq.${profile.user_id},employee_id.eq.${profile.user_id}`);
+  let rows;
+  try {
+    rows = await fetchSalaryOperationsForSummary(supabase, scopeEmployeeId);
+  } catch (err) {
+    console.error('Error loading salary operations summary:', err);
+    return EMPTY_PAYOUTS_STATS;
   }
 
-  if (accrualMonth && accrualMonth !== 'all') {
-    query = query.or(`settlement_month.eq.${accrualMonth},accrual_month.eq.${accrualMonth}`);
+  const summary = summarizeSalaryPeriod(rows, month);
+  const periodRows = month
+    ? rows.filter((r) => (r.settlement_month || r.accrual_month) === month)
+    : rows;
+
+  let accrualsCount = 0;
+  let deductionsCount = 0;
+  let payoutsCount = 0;
+  for (const row of periodRows) {
+    const kind = classifySalaryOperation(row);
+    if (kind === 'accrual') accrualsCount++;
+    else if (kind === 'deduction') deductionsCount++;
+    else payoutsCount++;
   }
-
-  let { data, error } = await query;
-
-  if ((!data || data.length === 0) && (profile?.role === 'admin' || profile?.role === 'supervisor')) {
-    const healed = await autoHealMissingAccruals(supabase);
-    if (healed > 0) {
-      const retry = await query;
-      data = retry.data;
-    }
-  }
-
-  if (error || !data) {
-    return { totalAccrued: 0, totalPaid: 0, totalAdvances: 0, totalDeductions: 0, transactionsCount: 0 };
-  }
-
-  let totalAccrued = 0;
-  let totalPaid = 0;
-  let totalAdvances = 0;
-  let totalDeductions = 0;
-
-  data.forEach((r: any) => {
-    const amt = Number(r.amount) || 0;
-    const sign =
-      r.operation_sign ||
-      (['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(r.operation_type)
-        ? '+'
-        : '-');
-
-    if (sign === '+') {
-      totalAccrued += amt;
-    } else {
-      if (r.operation_type === 'payout' || r.payout_category === 'выплата зп') {
-        totalPaid += amt;
-      }
-      if (r.payout_category === 'аванс' || r.operation_type === 'advance') {
-        totalAdvances += amt;
-      }
-      if (r.operation_type === 'deduction' || r.operation_type === 'fine' || r.payout_category === 'удержание') {
-        totalDeductions += amt;
-      }
-    }
-  });
 
   return {
-    totalAccrued: roundMoney(totalAccrued),
-    totalPaid: roundMoney(totalPaid),
-    totalAdvances: roundMoney(totalAdvances),
-    totalDeductions: roundMoney(totalDeductions),
-    transactionsCount: data.length,
+    openingBalance: summary.openingBalance,
+    totalAccrued: summary.accrued,
+    totalDeductions: summary.deducted,
+    totalPaid: summary.paid,
+    totalAdvances: summary.advances,
+    closingBalance: summary.closingBalance,
+    transactionsCount: periodRows.length,
+    accrualsCount,
+    deductionsCount,
+    payoutsCount,
   };
+}
+
+/** Категория операции по ее виду (правила миграции 019) */
+function categoryForOperationType(
+  operationType: string,
+  fallback?: PayoutCategoryType | null
+): PayoutCategoryType {
+  if (operationType === 'advance') return 'аванс';
+  if (operationType === 'payout') return 'выплата зп';
+  if (operationType === 'deduction' || operationType === 'fine') return 'удержание';
+  if (operationType === 'salary_base' || operationType === 'accrual_maintenance') return 'прочие начисления';
+  if (operationType === 'bonus_other' || operationType === 'accrual_connection') return 'бонус';
+  return fallback || 'выплата зп';
 }
 
 /**
@@ -473,11 +501,7 @@ async function insertSalaryOperationDirect(
     return { success: false, error: 'Невозможно провести операцию для заблокированного сотрудника' };
   }
 
-  let category: PayoutCategoryType = op.category;
-  if (op.operationType === 'advance') category = 'аванс';
-  else if (op.operationType === 'deduction' || op.operationType === 'fine') category = 'удержание';
-  else if (['salary_base', 'accrual_maintenance'].includes(op.operationType)) category = 'прочие начисления';
-  else if (['bonus_other', 'accrual_connection'].includes(op.operationType)) category = 'бонус';
+  const category = categoryForOperationType(op.operationType, op.category);
 
   const { data: inserted, error: insertErr } = await adminSupabase
     .from('employee_payouts')
@@ -547,18 +571,11 @@ export async function createPayout(
     const effMonth = valid.settlement_month || valid.accrual_month || currentMonth;
     const effDate = valid.actual_date || valid.payout_date || today;
 
-    const effSign: SalaryOperationSign =
-      valid.operation_sign ||
-      (['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(
-        valid.operation_type || ''
-      )
-        ? '+'
-        : '-');
-
-    const effCategory =
-      valid.operation_type === 'advance'
-        ? 'аванс'
-        : (valid.payout_category || 'выплата зп');
+    // Знак и категория определяются видом операции, а не присланным знаком
+    const effSign: SalaryOperationSign = signOfKind(
+      classifySalaryOperation({ operation_type: valid.operation_type })
+    );
+    const effCategory = categoryForOperationType(valid.operation_type || 'payout', valid.payout_category);
 
     const adminSupabase = createAdminClient();
     const operationType = valid.operation_type || 'payout';
@@ -637,7 +654,7 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
   }
   const { supabase, profile } = ctx;
 
-  if (!/^[0-9a-f-]{36}$/i.test(employeeId) || !/^\d{4}-\d{2}$/.test(month)) {
+  if (!PG_UUID_REGEX.test(employeeId) || !SETTLEMENT_MONTH_REGEX.test(month)) {
     return { success: false, error: 'Некорректные параметры расчетного листа' };
   }
 
@@ -647,133 +664,14 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
     return { success: false, error: 'Просмотр расчетного листка других сотрудников запрещен' };
   }
 
-  // 1. Попытка вызвать RPC процедуру get_employee_payroll_sheet (только service_role, миграция 029)
+  // Расчет в одном месте с итогами реестра (lib/payroll): аванс — выплата, знак — по виду операции
   try {
-    const { data: rpcData, error: rpcErr } = await createAdminClient().rpc('get_employee_payroll_sheet', {
-      p_employee_id: employeeId,
-      p_month: month,
-    });
-
-    if (!rpcErr && rpcData) {
-      const sheetData = rpcData as any;
-      return {
-        success: true,
-        sheet: {
-          employee: sheetData.employee,
-          employee_id: employeeId,
-          settlement_month: month,
-          month: month,
-          opening_balance: roundMoney(Number(sheetData.opening_balance) || 0),
-          total_accrued: roundMoney(Number(sheetData.total_accrued) || 0),
-          total_deductions: roundMoney(Number(sheetData.total_deductions) || 0),
-          total_paid: roundMoney(Number(sheetData.total_paid) || 0),
-          closing_balance: roundMoney(Number(sheetData.closing_balance) || 0),
-          accruals: sheetData.accruals || [],
-          deductions: sheetData.deductions || sheetData.deductions_and_advances || [],
-          deductions_and_advances: sheetData.deductions_and_advances || sheetData.deductions || [],
-          payouts: sheetData.payouts || [],
-          operations: sheetData.operations || [],
-        },
-      };
-    }
-  } catch (err) {
-    console.warn('RPC get_employee_payroll_sheet not available, using direct query fallback');
+    const sheet = await computePayrollSheet(supabase, employeeId, month);
+    return { success: true, sheet };
+  } catch (err: any) {
+    console.error('Error computing payroll sheet:', err);
+    return { success: false, error: err.message || 'Ошибка расчета расчетного листа' };
   }
-
-  // 2. Fallback: расчет через прямые запросы к employee_payouts с защитой от отсутствия employee_id
-  let prevQuery = supabase
-    .from('employee_payouts')
-    .select('amount, operation_sign, operation_type')
-    .lt('settlement_month', month);
-
-  let { data: prevData, error: prevErr } = await prevQuery.or(`user_id.eq.${employeeId},employee_id.eq.${employeeId}`);
-  if (prevErr) {
-    const res = await supabase
-      .from('employee_payouts')
-      .select('amount, operation_sign, operation_type')
-      .eq('user_id', employeeId)
-      .lt('settlement_month', month);
-    prevData = res.data;
-  }
-
-  let openingBalance = 0;
-  (prevData || []).forEach((row: any) => {
-    const amt = Number(row.amount) || 0;
-    const sign =
-      row.operation_sign ||
-      (['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(row.operation_type)
-        ? '+'
-        : '-');
-    if (sign === '+') openingBalance += amt;
-    else openingBalance -= amt;
-  });
-
-  // Все операции за выбранный месяц
-  let currentQuery = supabase
-    .from('employee_payouts')
-    .select('*')
-    .eq('settlement_month', month)
-    .order('actual_date', { ascending: true });
-
-  let { data: currentData, error: currErr } = await currentQuery.or(`user_id.eq.${employeeId},employee_id.eq.${employeeId}`);
-  if (currErr) {
-    const res = await supabase
-      .from('employee_payouts')
-      .select('*')
-      .eq('user_id', employeeId)
-      .eq('settlement_month', month)
-      .order('actual_date', { ascending: true });
-    currentData = res.data;
-  }
-
-  let totalAccrued = 0;
-  let totalDeductions = 0;
-  let totalPaid = 0;
-
-  const accrualsList: any[] = [];
-  const deductionsAndAdvancesList: any[] = [];
-  const payoutsList: any[] = [];
-
-  (currentData || []).forEach((row: any) => {
-    const amt = Number(row.amount) || 0;
-    const sign =
-      row.operation_sign ||
-      (['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(row.operation_type)
-        ? '+'
-        : '-');
-
-    if (sign === '+') {
-      totalAccrued += amt;
-      accrualsList.push(row);
-    } else {
-      if (row.operation_type === 'payout' || row.payout_category === 'выплата зп') {
-        totalPaid += amt;
-        payoutsList.push(row);
-      } else {
-        totalDeductions += amt;
-        deductionsAndAdvancesList.push(row);
-      }
-    }
-  });
-
-  const closingBalance = openingBalance + totalAccrued - totalDeductions - totalPaid;
-
-  return {
-    success: true,
-    sheet: {
-      employee_id: employeeId,
-      settlement_month: month,
-      opening_balance: roundMoney(openingBalance),
-      total_accrued: roundMoney(totalAccrued),
-      total_deductions: roundMoney(totalDeductions),
-      total_paid: roundMoney(totalPaid),
-      closing_balance: roundMoney(closingBalance),
-      accruals: accrualsList,
-      deductions_and_advances: deductionsAndAdvancesList,
-      payouts: payoutsList,
-      operations: currentData || [],
-    },
-  };
 }
 
 /**
@@ -856,4 +754,142 @@ export async function getPayoutMonthsList(): Promise<string[]> {
   }
 
   return Array.from(months).sort().reverse();
+}
+
+/**
+ * Массовое изменение или удаление операций по ЗП — строго роль admin.
+ * update: расчетный месяц, дата, кошелек (только для выплат), вид операции (ручные виды), примечание.
+ */
+export async function batchPayoutsAction(
+  input: unknown
+): Promise<{ success: boolean; error?: string; updated?: number; deleted?: number; skipped?: number }> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    const parsed = PayoutsBatchSchema.safeParse(input);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message || 'Некорректные данные' };
+    }
+    const batch = parsed.data;
+    const ids = Array.from(new Set(batch.ids));
+
+    if (batch.action === 'delete') {
+      // Начисления подключений, закрытые этими выплатами, снова становятся неоплаченными
+      const { error: unfreezeErr } = await supabase
+        .from('connection_accruals')
+        .update({ is_paid: false, payout_id: null, paid_at: null, updated_at: new Date().toISOString() } as any)
+        .in('payout_id', ids);
+      if (unfreezeErr) {
+        return { success: false, error: `Не удалось разблокировать начисления: ${unfreezeErr.message}` };
+      }
+
+      const { data: deletedRows, error: delErr } = await supabase
+        .from('employee_payouts')
+        .delete()
+        .in('payout_id', ids)
+        .select('payout_id');
+      if (delErr) {
+        return { success: false, error: delErr.message };
+      }
+
+      revalidatePath('/payouts');
+      revalidatePath('/profile');
+      return { success: true, deleted: deletedRows?.length || 0 };
+    }
+
+    const changes = batch.changes;
+    const { data: rows, error: rowsErr } = await supabase
+      .from('employee_payouts')
+      .select('payout_id, operation_type, payout_category, operation_sign, payment_method')
+      .in('payout_id', ids);
+    if (rowsErr) {
+      return { success: false, error: rowsErr.message };
+    }
+    if (!rows || rows.length === 0) {
+      return { success: false, error: 'Операции не найдены' };
+    }
+
+    if (changes.operation_type) {
+      const systemRows = rows.filter((r: any) =>
+        ['accrual_connection', 'accrual_maintenance'].includes(r.operation_type)
+      );
+      if (systemRows.length > 0) {
+        return {
+          success: false,
+          error: `Вид операции нельзя менять у бонусов по подключениям/сопровождению (выбрано: ${systemRows.length})`,
+        };
+      }
+    }
+
+    const updates = rows.map((row: any) => {
+      const operationType: string = changes.operation_type || row.operation_type || 'payout';
+      const kind = classifySalaryOperation({ ...row, operation_type: operationType });
+      const patch: Record<string, any> = {};
+
+      if (changes.settlement_month) {
+        patch.settlement_month = changes.settlement_month;
+        patch.accrual_month = changes.settlement_month;
+      }
+      if (changes.actual_date) {
+        patch.actual_date = changes.actual_date;
+        patch.payout_date = changes.actual_date;
+      }
+      if (changes.note !== undefined) {
+        const note = changes.note?.trim() || null;
+        patch.note = note;
+        patch.comment = note;
+        patch.description = note;
+      }
+      if (changes.operation_type) {
+        patch.operation_type = operationType;
+        patch.payout_category = categoryForOperationType(operationType, row.payout_category);
+      }
+      // Знак всегда приводим к виду операции (исправляет старые записи с DEFAULT '+')
+      patch.operation_sign = signOfKind(kind);
+
+      if (kind === 'payout') {
+        const method = changes.payment_method || row.payment_method;
+        if (!method || !['mbank', 'odengi', 'bakai', 'abank', 'cash'].includes(method)) {
+          return { id: row.payout_id, patch, error: 'missing_payment_method' as const };
+        }
+        if (changes.payment_method) patch.payment_method = changes.payment_method;
+      } else if (changes.operation_type) {
+        // Кошелек относится только к выплатам
+        patch.payment_method = null;
+      }
+
+      return { id: row.payout_id as string, patch, error: null };
+    });
+
+    const missingMethod = updates.filter((u) => u.error === 'missing_payment_method');
+    if (missingMethod.length > 0) {
+      return {
+        success: false,
+        error: `Для выплат и авансов нужен кошелек: выберите кошелек в массовом изменении (операций без кошелька: ${missingMethod.length})`,
+      };
+    }
+
+    let updated = 0;
+    const CHUNK = 20;
+    for (let i = 0; i < updates.length; i += CHUNK) {
+      const results = await Promise.all(
+        updates.slice(i, i + CHUNK).map((u) =>
+          supabase.from('employee_payouts').update(u.patch as any).eq('payout_id', u.id).select('payout_id')
+        )
+      );
+      for (const res of results) {
+        if (res.error) {
+          revalidatePath('/payouts');
+          return { success: false, error: `Изменено ${updated} из ${updates.length}: ${res.error.message}`, updated };
+        }
+        updated += res.data?.length || 0;
+      }
+    }
+
+    revalidatePath('/payouts');
+    revalidatePath('/profile');
+    return { success: true, updated, skipped: ids.length - rows.length };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Ошибка массового изменения операций' };
+  }
 }

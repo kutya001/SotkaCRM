@@ -37,6 +37,7 @@ export default function AnalyticsPage() {
   });
 
   const [payoutsStats, setPayoutsStats] = React.useState({
+    totalAccrued: 0,
     totalPaid: 0,
     totalAdvances: 0,
     totalDeductions: 0,
@@ -151,23 +152,23 @@ export default function AnalyticsPage() {
               {formatMoney(payoutsStats.totalPaid)}
             </p>
             <p className="text-[11px] text-zinc-400">
-              Транзакций начислений: {payoutsStats.transactionsCount}
+              ЗП и авансы • в т.ч. аванс: {formatMoney(payoutsStats.totalAdvances)}
             </p>
           </div>
 
           {/* Удержания */}
           <div className="p-5 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Авансы / Удержания</span>
+              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Удержания</span>
               <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                 <TrendingUp className="w-4 h-4" strokeWidth={2} />
               </div>
             </div>
             <p className="text-2xl font-black text-zinc-900 dark:text-zinc-100">
-              {formatMoney(payoutsStats.totalAdvances)}
+              {formatMoney(payoutsStats.totalDeductions)}
             </p>
             <p className="text-[11px] text-zinc-400">
-              Удержания: {formatMoney(payoutsStats.totalDeductions)}
+              Начислено: {formatMoney(payoutsStats.totalAccrued)} • операций: {payoutsStats.transactionsCount}
             </p>
           </div>
         </div>

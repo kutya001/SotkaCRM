@@ -77,17 +77,16 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
     fetchPayrollSheet();
   }, [fetchPayrollSheet]);
 
-  const handlePrevMonth = () => {
+  // Сдвиг месяца арифметикой: new Date(...).toISOString() в часовом поясе UTC+6 уводил на день назад,
+  // и «Назад» перескакивал через месяц, а «Вперед» оставался на месте
+  const shiftSelectedMonth = (delta: number) => {
     const [year, month] = selectedMonth.split('-').map(Number);
-    const date = new Date(year, month - 2, 1);
-    setSelectedMonth(date.toISOString().substring(0, 7));
+    const total = year * 12 + (month - 1) + delta;
+    setSelectedMonth(`${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}`);
   };
 
-  const handleNextMonth = () => {
-    const [year, month] = selectedMonth.split('-').map(Number);
-    const date = new Date(year, month, 1);
-    setSelectedMonth(date.toISOString().substring(0, 7));
-  };
+  const handlePrevMonth = () => shiftSelectedMonth(-1);
+  const handleNextMonth = () => shiftSelectedMonth(1);
 
   return (
     <div className="space-y-6">
@@ -413,7 +412,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      3. Фактические выплаты
+                      3. Выплаты (ЗП и авансы)
                     </h4>
                     <p className="text-[11px] text-zinc-400">
                       Перечисления средств на счета куратора за {data.month}
@@ -474,7 +473,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                               </span>
                             </td>
                             <td className="py-2.5 px-3 font-medium text-zinc-800 dark:text-zinc-200">
-                              {p.description || 'Выплата зарплаты'}
+                              {p.description || (p.operation_type === 'advance' ? 'Аванс' : 'Выплата зарплаты')}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-purple-600 dark:text-purple-400">
                               -{Number(p.amount).toLocaleString('ru-RU')} сом

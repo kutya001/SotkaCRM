@@ -1218,17 +1218,21 @@ export function DataJournal<T extends Record<string, any>>({
 }: DataJournalProps<T>) {
   const { showToast } = useToast();
 
-  const handleToggleSelectRow = React.useCallback(
-    (rowKey: string, checked: boolean) => {
-      if (!onSelectionChange) return;
-      if (checked) {
-        onSelectionChange([...(selectedIds || []), rowKey]);
-      } else {
-        onSelectionChange((selectedIds || []).filter((id) => id !== rowKey));
-      }
-    },
-    [selectedIds, onSelectionChange]
-  );
+  // Мемоизированные строки (areRowPropsEqual) не получают новый onToggleSelect при смене выбора,
+  // поэтому колбэк читает актуальные selectedIds/onSelectionChange через ref — иначе каждая
+  // следующая отметка затирала предыдущие и массовые действия применялись к одной строке
+  const selectionRef = React.useRef({ selectedIds, onSelectionChange });
+  selectionRef.current = { selectedIds, onSelectionChange };
+
+  const handleToggleSelectRow = React.useCallback((rowKey: string, checked: boolean) => {
+    const { selectedIds: current = [], onSelectionChange: onChange } = selectionRef.current;
+    if (!onChange) return;
+    if (checked) {
+      if (!current.includes(rowKey)) onChange([...current, rowKey]);
+    } else {
+      onChange(current.filter((id) => id !== rowKey));
+    }
+  }, []);
 
   // Стабилизация коллбэков через useCallback для исключения ре-рендеров строк и карточек
   const onRowClickStable = React.useCallback(

@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { computePayrollSheet } from '@/lib/payroll/server';
+import { SETTLEMENT_MONTH_REGEX } from '@/lib/payroll/classify';
+import { PG_UUID_REGEX } from '@/lib/validations';
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,38 +17,26 @@ export async function GET(req: NextRequest) {
     const requestedEmpId = searchParams.get('employeeId') || searchParams.get('userId');
     const month = searchParams.get('month') || new Date().toISOString().substring(0, 7);
 
+    if (!SETTLEMENT_MONTH_REGEX.test(month)) {
+      return apiError('Расчетный месяц должен быть в формате ГГГГ-ММ', 'VALIDATION_ERROR', 400);
+    }
+
     let targetEmployeeId = profile.user_id;
 
     if (requestedEmpId && requestedEmpId !== profile.user_id) {
       if (profile.role !== 'admin' && profile.role !== 'supervisor') {
         return apiError('Просмотр расчетного листка других сотрудников запрещен', 'FORBIDDEN', 403);
       }
+      if (!PG_UUID_REGEX.test(requestedEmpId)) {
+        return apiError('Некорректный идентификатор сотрудника', 'VALIDATION_ERROR', 400);
+      }
       targetEmployeeId = requestedEmpId;
     }
 
-    // RPC get_employee_payroll_sheet доступна только service_role (миграция 029), доступ проверен выше
-    const { data, error } = await createAdminClient().rpc('get_employee_payroll_sheet', {
-      p_employee_id: targetEmployeeId,
-      p_month: month,
-    });
+    // Тот же расчет, что в реестре операций по ЗП (lib/payroll), права проверены выше
+    const sheet = await computePayrollSheet(supabase, targetEmployeeId, month);
 
-    if (error) {
-      throw error;
-    }
-
-    // Дополнительно получаем информацию о сотруднике
-    const { data: employee } = await supabase
-      .from('users')
-      .select('user_id, full_name, role, login, color')
-      .eq('user_id', targetEmployeeId)
-      .single();
-
-    const sheet = (data as any) || {};
-
-    return apiSuccess({
-      employee: employee || null,
-      ...sheet,
-    });
+    return apiSuccess(sheet);
   } catch (err) {
     return handleApiError(err);
   }

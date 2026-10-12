@@ -637,6 +637,31 @@ export const api = {
       invalidateNamespaces('payouts', 'dashboard', 'analytics');
       return res;
     },
+    batch: async (
+      data:
+        | {
+            action: 'update';
+            ids: string[];
+            changes: {
+              settlement_month?: string;
+              actual_date?: string;
+              payment_method?: string;
+              operation_type?: string;
+              note?: string | null;
+            };
+          }
+        | { action: 'delete'; ids: string[] }
+    ) => {
+      const res = await request<{ success: boolean; updated?: number; deleted?: number; skipped?: number }>(
+        '/api/v1/payouts/batch',
+        {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }
+      );
+      invalidateNamespaces('payouts', 'connections', 'profile', 'dashboard', 'analytics');
+      return res;
+    },
     updateStatus: async (id: string, status: string, transactionRef?: string) => {
       const res = await request<any>(`/api/v1/payouts/${encodeURIComponent(id)}/status`, {
         method: 'PATCH',

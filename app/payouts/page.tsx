@@ -31,16 +31,59 @@ import {
   Building2,
   Trash2,
   ExternalLink,
+  Pencil,
 } from 'lucide-react';
 import { useUser } from '@/components/auth/AuthProvider';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { PayrollSheetModal } from '@/components/payouts/PayrollSheetModal';
+import { MonthInput, isValidSettlementMonth } from '@/components/ui/MonthInput';
+import {
+  classifySalaryOperation,
+  signOfKind,
+  OPERATION_TYPES_BY_KIND,
+} from '@/lib/payroll/classify';
 import {
   SALARY_OPERATION_TYPE_LABELS,
   type SalaryOperationType,
   type SalaryOperationSign,
 } from '@/lib/validations';
 import type { UserRole } from '@/types/database.types';
+
+/** Поле массового изменения: применяется только если отмечено */
+function BulkField({
+  label,
+  hint,
+  checked,
+  onToggle,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onToggle: (checked: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-2 font-semibold text-zinc-700 dark:text-zinc-300 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onToggle(e.target.checked)}
+          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500"
+        />
+        <span>{label}</span>
+      </label>
+      {children}
+      {hint && <p className="text-[10px] text-zinc-400">{hint}</p>}
+    </div>
+  );
+}
+
+/** Сумма в сомах: разделители тысяч, до 2 знаков после запятой */
+function formatSom(value: number): string {
+  return `${Number(value || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} сом`;
+}
 
 export default function PayoutsPage() {
   const { showToast } = useToast();
@@ -49,17 +92,24 @@ export default function PayoutsPage() {
   const [payouts, setPayouts] = React.useState<PayoutItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(true);
-  const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
-  const [userName, setUserName] = React.useState(user.userName);
-  const [userLogin, setUserLogin] = React.useState(user.userLogin);
+  const currentUserRole: UserRole = user.role;
+  const userName = user.userName;
+  const userLogin = user.userLogin;
+  const isAdmin = currentUserRole === 'admin';
+  const isPrivileged = currentUserRole === 'admin' || currentUserRole === 'supervisor';
 
   // Статистика
   const [stats, setStats] = React.useState<PayoutsStats>({
+    openingBalance: 0,
     totalAccrued: 0,
+    totalDeductions: 0,
     totalPaid: 0,
     totalAdvances: 0,
-    totalDeductions: 0,
+    closingBalance: 0,
     transactionsCount: 0,
+    accrualsCount: 0,
+    deductionsCount: 0,
+    payoutsCount: 0,
   });
 
   // Поиск и Фильтры
@@ -67,7 +117,26 @@ export default function PayoutsPage() {
   const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
+  const [selectedEmployee, setSelectedEmployee] = React.useState<string>('all');
   const [selectedTab, setSelectedTab] = React.useState<'all' | 'accruals' | 'deductions' | 'payouts'>('all');
+
+  // Массовое редактирование (admin)
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [bulkEditIds, setBulkEditIds] = React.useState<string[] | null>(null);
+  const [bulkDeleteIds, setBulkDeleteIds] = React.useState<string[] | null>(null);
+  const [isBulkSubmitting, setIsBulkSubmitting] = React.useState(false);
+  const [bulkForm, setBulkForm] = React.useState({
+    changeMonth: false,
+    settlement_month: '',
+    changeDate: false,
+    actual_date: '',
+    changeType: false,
+    operation_type: 'payout' as SalaryOperationType,
+    changeMethod: false,
+    payment_method: 'mbank',
+    changeNote: false,
+    note: '',
+  });
 
   // Список сотрудников
   const [employees, setEmployees] = React.useState<
@@ -100,7 +169,7 @@ export default function PayoutsPage() {
       if (selectedPayout?.payout_id === payout.payout_id) {
         setSelectedPayout(null);
       }
-      fetchData(selectedMonth, selectedCategory);
+      fetchData();
     } catch (err: any) {
       showToast(err.message || 'Не удалось удалить операцию', 'error');
     } finally {
@@ -135,71 +204,70 @@ export default function PayoutsPage() {
     total_accrued: number;
     total_deductions: number;
     total_paid: number;
+    total_advances: number;
     closing_balance: number;
   } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = React.useState(false);
 
-  // Загрузка данных журнала
-  const fetchData = React.useCallback(async (month?: string, cat?: string, tab?: 'all' | 'accruals' | 'deductions' | 'payouts') => {
+  // Загрузка данных журнала. Фильтры читаются из состояния; ответы устаревших запросов
+  // (пользователь успел сменить фильтр) отбрасываются по номеру запроса
+  const requestSeqRef = React.useRef(0);
+  const fetchData = React.useCallback(async () => {
+    const seq = ++requestSeqRef.current;
     setIsLoading(true);
     try {
-      const monthFilter = month !== undefined ? month : selectedMonth;
-      const catFilter = cat !== undefined ? cat : selectedCategory;
-      const tabFilter = tab !== undefined ? tab : selectedTab;
+      const monthFilter = selectedMonth !== 'all' ? selectedMonth : undefined;
+      const employeeFilter = selectedEmployee !== 'all' ? selectedEmployee : undefined;
 
       const [res, statsRes, monthsRes, employeesRes] = await Promise.all([
         api.payouts.getAll({
           page: 1,
-          pageSize: 50,
-          accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
-          category: catFilter !== 'all' ? catFilter : undefined,
-          tab: tabFilter !== 'all' ? tabFilter : undefined,
+          pageSize: 500,
+          accrualMonth: monthFilter,
+          category: selectedCategory !== 'all' ? selectedCategory : undefined,
+          tab: selectedTab !== 'all' ? selectedTab : undefined,
+          userId: employeeFilter,
+          bypassCache: true,
         }),
-        getPayoutsStats(monthFilter !== 'all' ? monthFilter : undefined),
+        getPayoutsStats(monthFilter, employeeFilter),
         getPayoutMonthsList(),
         getEmployeesList(),
       ]);
 
+      if (seq !== requestSeqRef.current) return;
       setPayouts(res.items || []);
       setTotalCount(res.total || 0);
       setStats(statsRes);
       setAccrualMonths(monthsRes);
       setEmployees(employeesRes);
     } catch (err: any) {
+      if (seq !== requestSeqRef.current) return;
       console.error('Failed to load salary operations:', err);
       showToast(err.message || 'Ошибка при загрузке реестра операций по ЗП', 'error');
     } finally {
-      setIsLoading(false);
+      if (seq === requestSeqRef.current) setIsLoading(false);
     }
-  }, [selectedMonth, selectedCategory, selectedTab, showToast]);
-
-  React.useEffect(() => {
-    if (user.profile) {
-      setUserName(user.userName);
-      setUserLogin(user.userLogin);
-      setCurrentUserRole(user.role);
-    }
-  }, [user]);
+  }, [selectedMonth, selectedCategory, selectedTab, selectedEmployee, showToast]);
 
   React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // При смене фильтров выбор строк сбрасывается: выбранные операции могли исчезнуть из списка
+  React.useEffect(() => {
+    setSelectedIds([]);
+  }, [selectedMonth, selectedCategory, selectedTab, selectedEmployee]);
+
   const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    setSelectedMonth(val);
-    fetchData(val, selectedCategory, selectedTab);
+    setSelectedMonth(e.target.value);
   };
 
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    setSelectedCategory(val);
-    fetchData(selectedMonth, val, selectedTab);
+    setSelectedCategory(e.target.value);
   };
 
   const handleTabChange = (tab: 'all' | 'accruals' | 'deductions' | 'payouts') => {
     setSelectedTab(tab);
-    fetchData(selectedMonth, selectedCategory, tab);
   };
 
   // Автоматическая загрузка расчетного листка при выборе сотрудника в форме создания
@@ -209,25 +277,36 @@ export default function PayoutsPage() {
       return;
     }
 
-    // Месяц вводится вручную: не запрашиваем лист, пока значение неполное (например, '2026-0')
-    if (!/^\d{4}-\d{2}$/.test(formData.settlement_month || '')) {
+    // Месяц вводится по маске: не запрашиваем лист, пока значение неполное (например, '2026-0')
+    if (!isValidSettlementMonth(formData.settlement_month || '')) {
       return;
     }
 
+    let cancelled = false;
     setIsLoadingPreview(true);
     api.payouts
-      .getPayrollSheet({ employeeId: formData.user_id, month: formData.settlement_month })
+      .getPayrollSheet({ employeeId: formData.user_id, month: formData.settlement_month, bypassCache: true })
       .then((sheet) => {
+        if (cancelled) return;
         setPayrollPreview({
           opening_balance: Number(sheet.opening_balance) || 0,
           total_accrued: Number(sheet.total_accrued) || 0,
           total_deductions: Number(sheet.total_deductions) || 0,
           total_paid: Number(sheet.total_paid) || 0,
+          total_advances: Number(sheet.total_advances) || 0,
           closing_balance: Number(sheet.closing_balance) || 0,
         });
       })
-      .catch((err) => console.error('Failed to load payroll preview:', err))
-      .finally(() => setIsLoadingPreview(false));
+      .catch((err) => {
+        if (!cancelled) console.error('Failed to load payroll preview:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingPreview(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [isCreateOpen, formData.user_id, formData.settlement_month]);
 
   // Обработка отправки формы создания
@@ -241,11 +320,13 @@ export default function PayoutsPage() {
       showToast('Сумма операции должна быть больше нуля', 'error');
       return;
     }
+    if (!isValidSettlementMonth(formData.settlement_month)) {
+      showToast('Укажите расчетный месяц в формате ГГГГ-ММ', 'error');
+      return;
+    }
 
-    const isAccrual = ['salary_base', 'bonus_other', 'accrual_connection', 'accrual_maintenance'].includes(
-      formData.operation_type
-    );
-    const sign: SalaryOperationSign = isAccrual ? '+' : '-';
+    const kind = classifySalaryOperation({ operation_type: formData.operation_type });
+    const sign: SalaryOperationSign = signOfKind(kind);
 
     setIsSubmitting(true);
     try {
@@ -257,10 +338,7 @@ export default function PayoutsPage() {
         amount: Number(formData.amount),
         actual_date: formData.actual_date,
         settlement_month: formData.settlement_month,
-        payment_method:
-          formData.operation_type === 'payout' || formData.operation_type === 'advance'
-            ? formData.payment_method
-            : null,
+        payment_method: kind === 'payout' ? formData.payment_method : null,
         note: formData.note.trim() || undefined,
       });
 
@@ -281,6 +359,83 @@ export default function PayoutsPage() {
       showToast(err.message || 'Ошибка при проведении операции по ЗП', 'error');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Массовое изменение: форма открывается для выбранных строк (или одной операции из карточки)
+  const openBulkEdit = (ids: string[]) => {
+    const first = payouts.find((p) => ids.includes(p.payout_id));
+    setBulkForm({
+      changeMonth: false,
+      settlement_month: first?.settlement_month || currentMonthStr,
+      changeDate: false,
+      actual_date: first?.actual_date?.slice(0, 10) || todayStr,
+      changeType: false,
+      operation_type: (first?.operation_type as SalaryOperationType) || 'payout',
+      changeMethod: false,
+      payment_method: first?.payment_method || 'mbank',
+      changeNote: false,
+      note: ids.length === 1 ? first?.note || '' : '',
+    });
+    setBulkEditIds(ids);
+  };
+
+  const handleBulkEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkEditIds || bulkEditIds.length === 0) return;
+
+    const changes: {
+      settlement_month?: string;
+      actual_date?: string;
+      payment_method?: string;
+      operation_type?: string;
+      note?: string | null;
+    } = {};
+    if (bulkForm.changeMonth) {
+      if (!isValidSettlementMonth(bulkForm.settlement_month)) {
+        showToast('Укажите расчетный месяц в формате ГГГГ-ММ', 'error');
+        return;
+      }
+      changes.settlement_month = bulkForm.settlement_month;
+    }
+    if (bulkForm.changeDate) changes.actual_date = bulkForm.actual_date;
+    if (bulkForm.changeType) changes.operation_type = bulkForm.operation_type;
+    if (bulkForm.changeMethod) changes.payment_method = bulkForm.payment_method;
+    if (bulkForm.changeNote) changes.note = bulkForm.note.trim() || null;
+
+    if (Object.keys(changes).length === 0) {
+      showToast('Отметьте поля, которые нужно изменить', 'error');
+      return;
+    }
+
+    setIsBulkSubmitting(true);
+    try {
+      const res = await api.payouts.batch({ action: 'update', ids: bulkEditIds, changes });
+      showToast(`Изменено операций: ${res.updated ?? bulkEditIds.length}`, 'success');
+      setBulkEditIds(null);
+      setSelectedIds([]);
+      if (selectedPayout && bulkEditIds.includes(selectedPayout.payout_id)) setSelectedPayout(null);
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось изменить операции', 'error');
+    } finally {
+      setIsBulkSubmitting(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!bulkDeleteIds || bulkDeleteIds.length === 0) return;
+    setIsBulkSubmitting(true);
+    try {
+      const res = await api.payouts.batch({ action: 'delete', ids: bulkDeleteIds });
+      showToast(`Удалено операций: ${res.deleted ?? bulkDeleteIds.length}`, 'success');
+      setBulkDeleteIds(null);
+      setSelectedIds([]);
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось удалить операции', 'error');
+    } finally {
+      setIsBulkSubmitting(false);
     }
   };
 
@@ -514,7 +669,12 @@ export default function PayoutsPage() {
   );
 
   const activeFilterCount =
-    (selectedMonth !== 'all' ? 1 : 0) + (selectedCategory !== 'all' ? 1 : 0);
+    (selectedMonth !== 'all' ? 1 : 0) +
+    (selectedCategory !== 'all' ? 1 : 0) +
+    (selectedEmployee !== 'all' ? 1 : 0);
+
+  const filterSelectClass =
+    'w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none';
 
   // Фильтры TopHeader
   const filterContent = (
@@ -523,11 +683,7 @@ export default function PayoutsPage() {
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
           Расчетный месяц
         </label>
-        <select
-          value={selectedMonth}
-          onChange={handleMonthChange}
-          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
-        >
+        <select value={selectedMonth} onChange={handleMonthChange} className={filterSelectClass}>
           <option value="all">Все периоды</option>
           {accrualMonths.map((m) => (
             <option key={m} value={m}>
@@ -537,24 +693,47 @@ export default function PayoutsPage() {
         </select>
       </div>
 
+      {isPrivileged && (
+        <div>
+          <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+            Сотрудник
+          </label>
+          <select
+            value={selectedEmployee}
+            onChange={(e) => setSelectedEmployee(e.target.value)}
+            className={filterSelectClass}
+          >
+            <option value="all">Все сотрудники</option>
+            {employees.map((emp) => (
+              <option key={emp.user_id} value={emp.user_id}>
+                {emp.full_name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div>
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
-          Вид операции
+          Детализация вида операции
         </label>
-        <select
-          value={selectedCategory}
-          onChange={handleCategoryChange}
-          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
-        >
+        <select value={selectedCategory} onChange={handleCategoryChange} className={filterSelectClass}>
           <option value="all">Все виды операций</option>
-          <option value="accrual_connection">Бонус за подключение</option>
-          <option value="accrual_maintenance">Бонус за сопровождение</option>
-          <option value="salary_base">Оклад</option>
-          <option value="bonus_other">Прочая надбавка</option>
-          <option value="payout">Выплата ЗП</option>
-          <option value="advance">Аванс</option>
-          <option value="deduction">Удержание</option>
-          <option value="fine">Штраф</option>
+          <optgroup label="Начисления (+)">
+            {OPERATION_TYPES_BY_KIND.accrual.map((t) => (
+              <option key={t} value={t}>{SALARY_OPERATION_TYPE_LABELS[t]}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Удержания (−)">
+            {OPERATION_TYPES_BY_KIND.deduction.map((t) => (
+              <option key={t} value={t}>{SALARY_OPERATION_TYPE_LABELS[t]}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Выплаты (−)">
+            {OPERATION_TYPES_BY_KIND.payout.map((t) => (
+              <option key={t} value={t}>{SALARY_OPERATION_TYPE_LABELS[t]}</option>
+            ))}
+          </optgroup>
         </select>
       </div>
     </div>
@@ -619,110 +798,116 @@ export default function PayoutsPage() {
       createTooltip="Оформить операцию по ЗП"
     >
       <div className="space-y-4">
-        {/* KPI сводка операций по ЗП */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+        {/* Сводка: остаток на начало → начислено / удержано / выплачено → остаток на конец */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
           <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
             <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" strokeWidth={1.75} />
+              <Layers className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Остаток на начало</span>
+            </span>
+            <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.openingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+              {formatSom(stats.openingBalance)}
+            </p>
+            <p className="text-[10px] text-zinc-400 truncate">
+              {selectedMonth !== 'all' ? `на 01.${selectedMonth.slice(5, 7)}.${selectedMonth.slice(0, 4)}` : 'период не выбран'}
+            </p>
+          </div>
+
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 truncate">
+              <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
               <span className="truncate">Начислено (+)</span>
             </span>
-            <p className="text-sm sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
-              +{stats.totalAccrued.toLocaleString('ru-RU')} сом
+            <p className="text-sm sm:text-xl font-bold text-emerald-700 dark:text-emerald-300 font-mono truncate">
+              +{formatSom(stats.totalAccrued)}
+            </p>
+            <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 truncate">
+              операций: {stats.accrualsCount}
+            </p>
+          </div>
+
+          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+            <span className="text-[10px] sm:text-[11px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
+              <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Удержано (−)</span>
+            </span>
+            <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
+              −{formatSom(stats.totalDeductions)}
+            </p>
+            <p className="text-[10px] text-amber-700/70 dark:text-amber-400/70 truncate">
+              операций: {stats.deductionsCount}
             </p>
           </div>
 
           <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
             <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
               <Wallet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Выплачено (-)</span>
+              <span className="truncate">Выплачено (−)</span>
             </span>
             <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
-              -{stats.totalPaid.toLocaleString('ru-RU')} сом
+              −{formatSom(stats.totalPaid)}
+            </p>
+            <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70 truncate">
+              в т.ч. аванс: {formatSom(stats.totalAdvances)}
             </p>
           </div>
 
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1 truncate">
-              <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Удержания (-)</span>
+          <div className={`col-span-2 lg:col-span-1 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl shadow-sm space-y-1 border ${stats.closingBalance < 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-white/75 dark:bg-zinc-900/75 border-emerald-500/30'}`}>
+            <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-semibold flex items-center gap-1 truncate">
+              <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+              <span className="truncate">Остаток на конец</span>
             </span>
-            <p className="text-sm sm:text-xl font-bold text-rose-700 dark:text-rose-300 font-mono truncate">
-              -{stats.totalDeductions.toLocaleString('ru-RU')} сом
+            <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.closingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+              {formatSom(stats.closingBalance)}
             </p>
-          </div>
-
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
-              <Receipt className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Операций в реестре</span>
-            </span>
-            <p className="text-sm sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 font-mono truncate">
-              {stats.transactionsCount}
+            <p className={`text-[10px] truncate ${stats.closingBalance < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
+              {stats.closingBalance < 0 ? 'переплата сотрудникам' : 'к выплате сотрудникам'}
             </p>
           </div>
         </div>
 
-        {/* Табы реестра операций по ЗП */}
+        <p className="text-[11px] text-zinc-400 px-1 -mt-1">
+          Остаток на конец = остаток на начало + начислено − удержано − выплачено
+          {selectedEmployee !== 'all'
+            ? ` • ${employees.find((e) => e.user_id === selectedEmployee)?.full_name || 'сотрудник'}`
+            : isPrivileged
+              ? ' • все сотрудники'
+              : ''}
+        </p>
+
+        {/* Табы реестра: три вида операций */}
         <div className="flex items-center gap-1.5 p-1 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => handleTabChange('all')}
-            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-              selectedTab === 'all'
-                ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-sm'
-                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60'
-            }`}
-          >
-            <span>Все операции</span>
-            <span
-              className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium ${
-                selectedTab === 'all'
-                  ? 'bg-white/20 dark:bg-zinc-900/20 text-white dark:text-zinc-900'
-                  : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500'
-              }`}
-            >
-              {stats.transactionsCount}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleTabChange('accruals')}
-            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-              selectedTab === 'accruals'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-zinc-600 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10'
-            }`}
-          >
-            <TrendingUp className="w-3.5 h-3.5" strokeWidth={1.75} />
-            <span>Начисления (+)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleTabChange('deductions')}
-            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-              selectedTab === 'deductions'
-                ? 'bg-rose-600 text-white shadow-sm'
-                : 'text-zinc-600 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/10'
-            }`}
-          >
-            <TrendingDown className="w-3.5 h-3.5" strokeWidth={1.75} />
-            <span>Удержания и авансы (-)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleTabChange('payouts')}
-            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-              selectedTab === 'payouts'
-                ? 'bg-sky-600 text-white shadow-sm'
-                : 'text-zinc-600 dark:text-zinc-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-500/10'
-            }`}
-          >
-            <Wallet className="w-3.5 h-3.5" strokeWidth={1.75} />
-            <span>Выплаты (-)</span>
-          </button>
+          {(
+            [
+              { id: 'all', label: 'Все операции', count: stats.transactionsCount, active: 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900', hover: 'hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60', Icon: null },
+              { id: 'accruals', label: 'Начисления (+)', count: stats.accrualsCount, active: 'bg-emerald-600 text-white', hover: 'hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10', Icon: TrendingUp },
+              { id: 'deductions', label: 'Удержания (−)', count: stats.deductionsCount, active: 'bg-amber-600 text-white', hover: 'hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10', Icon: TrendingDown },
+              { id: 'payouts', label: 'Выплаты (−) • ЗП и аванс', count: stats.payoutsCount, active: 'bg-sky-600 text-white', hover: 'hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-500/10', Icon: Wallet },
+            ] as const
+          ).map((tab) => {
+            const isActive = selectedTab === tab.id;
+            const Icon = tab.Icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => handleTabChange(tab.id)}
+                className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+                  isActive ? `${tab.active} shadow-sm` : `text-zinc-600 dark:text-zinc-400 ${tab.hover}`
+                }`}
+              >
+                {Icon && <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                <span>{tab.label}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium ${
+                    isActive ? 'bg-white/20 dark:bg-zinc-900/20' : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Универсальный реестр DataJournal */}
@@ -737,6 +922,29 @@ export default function PayoutsPage() {
           externalSearchQuery={searchQuery}
           customActions={payoutActions}
           customRowActions={renderCustomRowActions}
+          enableSelection={isAdmin}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          renderBulkActions={(ids) => (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => openBulkEdit(ids)}
+                className="h-8 px-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Изменить</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteIds(ids)}
+                className="h-8 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-200 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Удалить</span>
+              </button>
+            </div>
+          )}
         />
 
         {/* Модальное окно просмотра деталей операции */}
@@ -846,15 +1054,25 @@ export default function PayoutsPage() {
               </div>
 
               <div className="flex items-center justify-between pt-1">
-                {currentUserRole === 'admin' ? (
-                  <button
-                    type="button"
-                    onClick={() => setPayoutToDelete(selectedPayout)}
-                    className="h-9 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    <span>Удалить</span>
-                  </button>
+                {isAdmin ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openBulkEdit([selectedPayout.payout_id])}
+                      className="h-9 px-3.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Изменить</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPayoutToDelete(selectedPayout)}
+                      className="h-9 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      <span>Удалить</span>
+                    </button>
+                  </div>
                 ) : <div />}
                 <button
                   type="button"
@@ -933,9 +1151,9 @@ export default function PayoutsPage() {
                       )}
                     </div>
                     {payrollPreview ? (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
                         <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
-                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Вх. сальдо</span>
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">На начало</span>
                           <span className="font-mono font-bold text-zinc-800 dark:text-zinc-200">
                             {payrollPreview.opening_balance.toLocaleString('ru-RU')} с
                           </span>
@@ -947,14 +1165,22 @@ export default function PayoutsPage() {
                           </span>
                         </div>
                         <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50">
-                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Удерж./Выпл.</span>
-                          <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
-                            -{(payrollPreview.total_deductions + payrollPreview.total_paid).toLocaleString('ru-RU')} с
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Удержано</span>
+                          <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                            −{payrollPreview.total_deductions.toLocaleString('ru-RU')} с
                           </span>
                         </div>
-                        <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-                          <span className="text-emerald-700 dark:text-emerald-300 block text-[10px] font-semibold">К выплате</span>
-                          <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                        <div className="p-2 rounded-xl bg-white/70 dark:bg-zinc-900/60 border border-zinc-200/50 dark:border-zinc-700/50" title={`В т.ч. аванс: ${payrollPreview.total_advances.toLocaleString('ru-RU')} с`}>
+                          <span className="text-zinc-500 dark:text-zinc-400 block text-[10px]">Выплачено</span>
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                            −{payrollPreview.total_paid.toLocaleString('ru-RU')} с
+                          </span>
+                        </div>
+                        <div className={`col-span-2 sm:col-span-1 p-2 rounded-xl border ${payrollPreview.closing_balance < 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
+                          <span className={`block text-[10px] font-semibold ${payrollPreview.closing_balance < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
+                            {payrollPreview.closing_balance < 0 ? 'Переплата' : 'К выплате'}
+                          </span>
+                          <span className={`font-mono font-bold ${payrollPreview.closing_balance < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
                             {payrollPreview.closing_balance.toLocaleString('ru-RU')} с
                           </span>
                         </div>
@@ -978,12 +1204,18 @@ export default function PayoutsPage() {
                     }
                     className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    <option value="salary_base">Оклад (+ Начисление)</option>
-                    <option value="bonus_other">Прочая надбавка / Премия (+ Начисление)</option>
-                    <option value="payout">Выплата ЗП (- Выплата)</option>
-                    <option value="advance">Аванс (- Выплата)</option>
-                    <option value="deduction">Удержание (- Удержание)</option>
-                    <option value="fine">Штраф (- Удержание)</option>
+                    <optgroup label="Начисление (+)">
+                      <option value="salary_base">Оклад</option>
+                      <option value="bonus_other">Прочая надбавка / Премия</option>
+                    </optgroup>
+                    <optgroup label="Удержание (−)">
+                      <option value="deduction">Удержание</option>
+                      <option value="fine">Штраф</option>
+                    </optgroup>
+                    <optgroup label="Выплата (−)">
+                      <option value="payout">Выплата ЗП</option>
+                      <option value="advance">Аванс</option>
+                    </optgroup>
                   </select>
                 </div>
 
@@ -1012,16 +1244,10 @@ export default function PayoutsPage() {
                     <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                       Расчетный месяц *
                     </label>
-                    <input
-                      type="text"
-                      pattern="^\d{4}-\d{2}$"
+                    <MonthInput
                       required
                       value={formData.settlement_month}
-                      onChange={(e) =>
-                        setFormData((p) => ({ ...p, settlement_month: e.target.value }))
-                      }
-                      placeholder="2026-09"
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                      onChange={(value) => setFormData((p) => ({ ...p, settlement_month: value }))}
                     />
                   </div>
                 </div>
@@ -1044,12 +1270,12 @@ export default function PayoutsPage() {
                   {/* Кошелек (только если выплата или аванс) */}
                   <div className="space-y-1">
                     <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Кошелек {formData.operation_type === 'payout' || formData.operation_type === 'advance' ? '*' : '(не требуется)'}
+                      Кошелек {OPERATION_TYPES_BY_KIND.payout.includes(formData.operation_type) ? '*' : '(не требуется)'}
                     </label>
                     <select
                       value={formData.payment_method}
                       onChange={(e) => setFormData((p) => ({ ...p, payment_method: e.target.value }))}
-                      disabled={formData.operation_type !== 'payout' && formData.operation_type !== 'advance'}
+                      disabled={!OPERATION_TYPES_BY_KIND.payout.includes(formData.operation_type)}
                       className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                     >
                       <option value="mbank">МБанк</option>
@@ -1093,6 +1319,191 @@ export default function PayoutsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        )}
+
+        {/* Массовое изменение операций (Admin Only) */}
+        {bulkEditIds && (
+          <div className="fixed inset-0 z-[9995] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+            <form
+              onSubmit={handleBulkEditSubmit}
+              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <Pencil className="w-5 h-5" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      {bulkEditIds.length === 1 ? 'Изменение операции' : `Массовое изменение: ${bulkEditIds.length} операций`}
+                    </h3>
+                    <p className="text-xs text-zinc-400">Отметьте поля, которые нужно изменить</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBulkEditIds(null)}
+                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
+                >
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <BulkField
+                  label="Расчетный месяц"
+                  checked={bulkForm.changeMonth}
+                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeMonth: v }))}
+                >
+                  <MonthInput
+                    disabled={!bulkForm.changeMonth}
+                    value={bulkForm.settlement_month}
+                    onChange={(value) => setBulkForm((f) => ({ ...f, settlement_month: value }))}
+                  />
+                </BulkField>
+
+                <BulkField
+                  label="Дата операции"
+                  checked={bulkForm.changeDate}
+                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeDate: v }))}
+                >
+                  <input
+                    type="date"
+                    disabled={!bulkForm.changeDate}
+                    value={bulkForm.actual_date}
+                    onChange={(e) => setBulkForm((f) => ({ ...f, actual_date: e.target.value }))}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono disabled:opacity-50"
+                  />
+                </BulkField>
+
+                <BulkField
+                  label="Вид операции"
+                  hint="Бонусы по подключениям и сопровождению меняются только в модуле «Подключения»"
+                  checked={bulkForm.changeType}
+                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeType: v }))}
+                >
+                  <select
+                    disabled={!bulkForm.changeType}
+                    value={bulkForm.operation_type}
+                    onChange={(e) => setBulkForm((f) => ({ ...f, operation_type: e.target.value as SalaryOperationType }))}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 disabled:opacity-50"
+                  >
+                    <optgroup label="Начисление (+)">
+                      <option value="salary_base">Оклад</option>
+                      <option value="bonus_other">Прочая надбавка / Премия</option>
+                    </optgroup>
+                    <optgroup label="Удержание (−)">
+                      <option value="deduction">Удержание</option>
+                      <option value="fine">Штраф</option>
+                    </optgroup>
+                    <optgroup label="Выплата (−)">
+                      <option value="payout">Выплата ЗП</option>
+                      <option value="advance">Аванс</option>
+                    </optgroup>
+                  </select>
+                </BulkField>
+
+                <BulkField
+                  label="Кошелек"
+                  hint="Применяется только к выплатам и авансам"
+                  checked={bulkForm.changeMethod}
+                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeMethod: v }))}
+                >
+                  <select
+                    disabled={!bulkForm.changeMethod}
+                    value={bulkForm.payment_method}
+                    onChange={(e) => setBulkForm((f) => ({ ...f, payment_method: e.target.value }))}
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 disabled:opacity-50"
+                  >
+                    <option value="mbank">МБанк</option>
+                    <option value="odengi">О!Деньги</option>
+                    <option value="bakai">Бакай Банк</option>
+                    <option value="abank">АБанк (Айыл Банк)</option>
+                    <option value="cash">Наличка</option>
+                  </select>
+                </BulkField>
+
+                <BulkField
+                  label="Примечание"
+                  checked={bulkForm.changeNote}
+                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeNote: v }))}
+                >
+                  <textarea
+                    rows={2}
+                    disabled={!bulkForm.changeNote}
+                    value={bulkForm.note}
+                    onChange={(e) => setBulkForm((f) => ({ ...f, note: e.target.value }))}
+                    placeholder="Пусто — очистить примечание"
+                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 disabled:opacity-50"
+                  />
+                </BulkField>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setBulkEditIds(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBulkSubmitting}
+                  className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isBulkSubmitting ? 'Сохранение...' : 'Применить'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Подтверждение массового удаления (Admin Only) */}
+        {bulkDeleteIds && (
+          <div className="fixed inset-0 z-[9995] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                    Удалить {bulkDeleteIds.length} операций по ЗП?
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Итоги и остатки сотрудников будут пересчитаны
+                  </p>
+                </div>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                Записи будут безвозвратно удалены. Начисления подключений, закрытые этими выплатами, снова станут неоплаченными.
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isBulkSubmitting}
+                  onClick={() => setBulkDeleteIds(null)}
+                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  disabled={isBulkSubmitting}
+                  onClick={handleBulkDelete}
+                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>{isBulkSubmitting ? 'Удаление...' : 'Удалить'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

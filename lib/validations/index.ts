@@ -77,8 +77,8 @@ export const PayoutSchema = z.preprocess((raw: any) => {
 }, z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника'),
   employee_id: z.string().regex(PG_UUID_REGEX).optional().nullable(),
-  accrual_month: z.string().regex(/^\d{4}-\d{2}$/, 'Период начисления должен быть в формате ГГГГ-ММ').optional(),
-  settlement_month: z.string().regex(/^\d{4}-\d{2}$/, 'Расчетный месяц должен быть в формате ГГГГ-ММ').optional().nullable(),
+  accrual_month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Период начисления должен быть в формате ГГГГ-ММ').optional(),
+  settlement_month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Расчетный месяц должен быть в формате ГГГГ-ММ').optional().nullable(),
   payout_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата выплаты должна быть в формате ГГГГ-ММ-ДД').optional(),
   actual_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата операции должна быть в формате ГГГГ-ММ-ДД').optional(),
   amount: z.coerce.number().positive('Сумма операции должна быть больше нуля'),
@@ -101,6 +101,46 @@ export const PayoutSchema = z.preprocess((raw: any) => {
   message: 'Для выплат и авансов необходимо выбрать кошелек (метод оплаты)',
   path: ['payment_method'],
 }));
+
+const SETTLEMENT_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Виды операций, которые можно назначать вручную (бонусы по подключениям создает система) */
+export const manualSalaryOperationTypeSchema = z.enum([
+  'salary_base',
+  'bonus_other',
+  'deduction',
+  'fine',
+  'payout',
+  'advance',
+]);
+
+export const PayoutsBatchSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('update'),
+    ids: z.array(z.string().regex(PG_UUID_REGEX)).min(1, 'Выберите хотя бы одну операцию').max(500),
+    changes: z
+      .object({
+        settlement_month: z
+          .string()
+          .regex(SETTLEMENT_MONTH_PATTERN, 'Расчетный месяц должен быть в формате ГГГГ-ММ')
+          .optional(),
+        actual_date: z.string().regex(ISO_DATE_PATTERN, 'Дата операции должна быть в формате ГГГГ-ММ-ДД').optional(),
+        payment_method: paymentMethodSchema.optional(),
+        operation_type: manualSalaryOperationTypeSchema.optional(),
+        note: z.string().max(1000).nullable().optional(),
+      })
+      .refine((c) => Object.values(c).some((v) => v !== undefined), {
+        message: 'Не выбрано ни одного изменения',
+      }),
+  }),
+  z.object({
+    action: z.literal('delete'),
+    ids: z.array(z.string().regex(PG_UUID_REGEX)).min(1, 'Выберите хотя бы одну операцию').max(500),
+  }),
+]);
+
+export type PayoutsBatchInput = z.infer<typeof PayoutsBatchSchema>;
 
 export const LeadStatusSchema = z.enum(['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'], {
   message: 'Недопустимый статус лида',
@@ -193,22 +233,69 @@ export const employeeSchema = z.object({
   color: HexColorSchema,
 });
 
-export const createEmployeeSchema = z.object({
-  login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
-  password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
-  full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
-  phone: z.string().optional().nullable(),
-  role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
-  color: HexColorSchema,
+/** Пустая строка из формы → null */
+const emptyToNull = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? null : v);
+
+/** Анкета сотрудника: адрес и координаты проживания, ИНН, дата рождения, пол, биография */
+export const employeeProfileFieldsSchema = z.object({
+  address: z.preprocess(emptyToNull, z.string().trim().max(300, 'Адрес не длиннее 300 символов').nullable().optional()),
+  latitude: z.preprocess(
+    emptyToNull,
+    z.coerce.number().min(-90, 'Широта от −90 до 90').max(90, 'Широта от −90 до 90').nullable().optional()
+  ),
+  longitude: z.preprocess(
+    emptyToNull,
+    z.coerce.number().min(-180, 'Долгота от −180 до 180').max(180, 'Долгота от −180 до 180').nullable().optional()
+  ),
+  inn: z.preprocess(
+    emptyToNull,
+    z.string().trim().regex(/^\d{14}$/, 'ИНН должен состоять из 14 цифр').nullable().optional()
+  ),
+  birth_date: z.preprocess(
+    emptyToNull,
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата рождения в формате ГГГГ-ММ-ДД')
+      .refine((d) => d >= '1900-01-01' && d <= new Date().toISOString().slice(0, 10), {
+        message: 'Дата рождения не может быть в будущем',
+      })
+      .nullable()
+      .optional()
+  ),
+  gender: z.preprocess(emptyToNull, z.enum(['male', 'female'], { message: 'Недопустимое значение пола' }).nullable().optional()),
+  bio: z.preprocess(emptyToNull, z.string().trim().max(2000, 'Биография не длиннее 2000 символов').nullable().optional()),
 });
 
-export const updateEmployeeSchema = z.object({
-  full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа').optional(),
-  phone: z.string().nullable().optional(),
-  role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }).optional(),
-  is_active: z.boolean().optional(),
-  color: HexColorSchema,
-});
+const coordinatesPairRefine = {
+  check: (d: { latitude?: number | null; longitude?: number | null }) =>
+    d.latitude === undefined && d.longitude === undefined
+      ? true
+      : (d.latitude ?? null) === null === ((d.longitude ?? null) === null),
+  message: { message: 'Укажите и широту, и долготу (или очистите оба поля)', path: ['latitude'] },
+};
+
+export const createEmployeeSchema = z
+  .object({
+    login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
+    password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
+    full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
+    phone: z.string().optional().nullable(),
+    role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
+    color: HexColorSchema,
+  })
+  .extend(employeeProfileFieldsSchema.shape)
+  .refine(coordinatesPairRefine.check, coordinatesPairRefine.message);
+
+export const updateEmployeeSchema = z
+  .object({
+    full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа').optional(),
+    phone: z.string().nullable().optional(),
+    role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }).optional(),
+    is_active: z.boolean().optional(),
+    color: HexColorSchema,
+  })
+  .extend(employeeProfileFieldsSchema.shape)
+  .refine(coordinatesPairRefine.check, coordinatesPairRefine.message);
 
 export const LeadUpdateSchema = z.object({
   client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов').optional(),

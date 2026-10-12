@@ -26,20 +26,21 @@ export interface AuthContext {
  */
 export const requireAuth = cache(async (): Promise<AuthContext> => {
   const supabase = await createClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
 
-  if (authError || !user) {
+  // getClaims проверяет подпись JWT локально (JWKS кэшируется) — без сетевого запроса
+  // к Supabase Auth на каждый вызов API, в отличие от getUser
+  const { data: claimsData, error: authError } = await supabase.auth.getClaims();
+  const claims = claimsData?.claims;
+
+  if (authError || !claims?.sub) {
     throw new Error('Пользователь не авторизован');
   }
 
-  // Роль и is_active всегда читаются из users: app_metadata не отражает блокировку сотрудника
+  // Роль и is_active всегда читаются из users: JWT не отражает блокировку сотрудника
   const { data: profile, error: profileError } = await supabase
     .from('users')
     .select('user_id, auth_id, login, full_name, role, is_active')
-    .eq('auth_id', user.id)
+    .eq('auth_id', claims.sub)
     .single();
 
   if (profileError || !profile) {
@@ -51,7 +52,7 @@ export const requireAuth = cache(async (): Promise<AuthContext> => {
   }
 
   return {
-    user: { id: user.id, email: user.email },
+    user: { id: claims.sub, email: claims.email },
     profile: profile as AuthContext['profile'],
     supabase,
   };

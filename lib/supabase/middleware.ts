@@ -48,6 +48,12 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // API-маршруты проверяют сессию сами (requireAuth/requireAdmin в обработчике):
+  // повторная проверка здесь добавляла лишний сетевой запрос к Supabase Auth на каждый вызов API
+  if (isApiRoute || isOpenApiJson) {
+    return supabaseResponse;
+  }
+
   const supabase = createServerClient(supabaseUrl, supabaseKey, {
     cookies: {
       getAll() {
@@ -67,13 +73,14 @@ export async function updateSession(request: NextRequest) {
     },
   }) as unknown as SupabaseClient<Database>;
 
-  // 1. Извлечение пользователя из сессии
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // 1. Проверка подписи JWT (локально по JWKS, без запроса к Auth при асимметричных ключах;
+  // при необходимости токен обновляется и новые куки пишутся в ответ)
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const claims = claimsData?.claims;
+  const user = claims?.sub ? { id: claims.sub, app_metadata: claims.app_metadata } : null;
 
   // 2. Редирект неавторизованных пользователей (если токен был невалиден/просрочен)
-  if (!user && !isAuthPage && !isApiRoute && !isOpenApiJson) {
+  if (!user && !isAuthPage) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return createRedirectWithCookies(url, supabaseResponse);
@@ -87,10 +94,11 @@ export async function updateSession(request: NextRequest) {
   }
 
   // 4. Защита маршрутов по ролевой модели (RBAC)
-  if (user && !isApiRoute && !isAuthPage && !isOpenApiJson) {
-    // Куки crm_* доступны клиенту на запись и используются только для UI — права берутся
-    // из app_metadata пользователя (getUser читает его с сервера Auth). У заблокированного
-    // сотрудника роль в app_metadata сброшена (миграция 029), поэтому идем в таблицу users.
+  if (user && !isAuthPage) {
+    // Куки crm_* доступны клиенту на запись и используются только для UI — роль берется
+    // из app_metadata проверенного JWT. У заблокированного сотрудника роль в app_metadata
+    // сброшена (миграция 029), поэтому идем в таблицу users. Данные дополнительно защищены
+    // requireAuth (is_active из БД) и RLS.
     let role = (user.app_metadata?.role as string | undefined) || undefined;
     let isActive = role ? 'true' : undefined;
 

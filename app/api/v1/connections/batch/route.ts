@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,7 +52,8 @@ export async function POST(req: NextRequest) {
 
       // 2.1. Попытка вызова RPC-процедуры в СУБД
       try {
-        const { data: rpcRes, error: rpcErr } = await (supabase.rpc as any)('accrue_selected_connections', {
+        // RPC доступна только service_role (миграция 029), права admin проверены выше
+        const { data: rpcRes, error: rpcErr } = await (createAdminClient().rpc as any)('accrue_selected_connections', {
           p_connection_ids: connection_ids,
           p_mode: mode,
           p_settlement_month: settlementMonth,

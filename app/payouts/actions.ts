@@ -2,7 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
 import {
   PayoutSchema,
   type SalaryOperationType,
@@ -113,7 +114,8 @@ export interface CreatePayoutInput {
 async function autoHealMissingAccruals(supabase: any): Promise<number> {
   // 1. Попытка вызова быстрой RPC функции из миграции 024
   try {
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('sync_missing_connection_accruals');
+    // RPC доступна только service_role (миграция 029); вызывается только для admin/supervisor
+    const { data: rpcRes, error: rpcErr } = await (createAdminClient().rpc as any)('sync_missing_connection_accruals');
     if (!rpcErr && rpcRes && (rpcRes as any).synced_count > 0) {
       return (rpcRes as any).synced_count;
     }
@@ -443,7 +445,7 @@ export async function createPayout(
   input: CreatePayoutInput
 ): Promise<{ success: boolean; error?: string; payout_id?: string }> {
   try {
-    const { profile, supabase } = await requireAdmin();
+    const { profile } = await requireAdmin();
 
     const parsed = PayoutSchema.safeParse(input);
     if (!parsed.success) {
@@ -470,7 +472,8 @@ export async function createPayout(
         ? 'аванс'
         : (valid.payout_category || 'выплата зп');
 
-    const { data, error } = await supabase.rpc('process_employee_payout_atomic', {
+    // RPC доступна только service_role (миграция 029), права admin проверены выше
+    const { data, error } = await createAdminClient().rpc('process_employee_payout_atomic', {
       p_user_id: valid.user_id,
       p_accrual_month: effMonth,
       p_payout_date: effDate,
@@ -507,15 +510,27 @@ export async function createPayout(
  * Получение расчетного листа сотрудника за месяц
  */
 export async function getPayrollSheetAction(employeeId: string, month: string) {
-  const supabase = await createClient();
-  const { data: userAuth } = await supabase.auth.getUser();
-  if (!userAuth.user) {
-    return { success: false, error: 'Пользователь не аутентифицирован' };
+  let ctx;
+  try {
+    ctx = await requireAuth();
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Пользователь не аутентифицирован' };
+  }
+  const { supabase, profile } = ctx;
+
+  if (!/^[0-9a-f-]{36}$/i.test(employeeId) || !/^\d{4}-\d{2}$/.test(month)) {
+    return { success: false, error: 'Некорректные параметры расчетного листа' };
   }
 
-  // 1. Попытка вызвать RPC процедуру get_employee_payroll_sheet
+  // Чужой расчетный лист доступен только admin/supervisor
+  const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
+  if (!isPrivileged && employeeId !== profile.user_id) {
+    return { success: false, error: 'Просмотр расчетного листка других сотрудников запрещен' };
+  }
+
+  // 1. Попытка вызвать RPC процедуру get_employee_payroll_sheet (только service_role, миграция 029)
   try {
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('get_employee_payroll_sheet', {
+    const { data: rpcData, error: rpcErr } = await createAdminClient().rpc('get_employee_payroll_sheet', {
       p_employee_id: employeeId,
       p_month: month,
     });

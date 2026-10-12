@@ -55,21 +55,12 @@ export async function login(prevState: AuthState, formData: FormData): Promise<A
         };
       }
 
-      // Проверяем, существует ли логин в системе для информативного сообщения
-      try {
-        const adminSupabase = createAdminClient();
-        const { data: existingUser, error: existError } = await adminSupabase
-          .from('users')
-          .select('user_id')
-          .ilike('login', cleanLogin)
-          .maybeSingle();
-
-        if (!existError && !existingUser) {
-          return { error: 'Пользователь с таким логином не найден в системе.' };
-        }
-      } catch {
-        // Если сервисный ключ недоступен, возвращаем безопасное стандартное сообщение
+      // Заблокированные сотрудники забанены в GoTrue (миграция 029)
+      if (authError?.message?.toLowerCase().includes('banned')) {
+        return { error: 'Учетная запись отключена или заблокирована администратором.' };
       }
+
+      // Единое сообщение: не раскрываем, существует ли логин
       return { error: 'Неверный логин или пароль.' };
     }
 
@@ -151,11 +142,11 @@ export async function createCrmUser(
   // Проверка роли текущего пользователя
   const { data: currentProfile } = await supabase
     .from('users')
-    .select('role')
+    .select('role, is_active')
     .eq('auth_id', user.id)
     .single();
 
-  if (!currentProfile || currentProfile.role !== 'admin') {
+  if (!currentProfile || currentProfile.role !== 'admin' || !currentProfile.is_active) {
     return { success: false, error: 'Создание пользователей доступно только администратору' };
   }
 
@@ -171,8 +162,8 @@ export async function createCrmUser(
     return { success: false, error: 'Укажите полное ФИО сотрудника' };
   }
 
-  // Вызов функции базы данных create_crm_user со статусом SECURITY DEFINER
-  const { data: createdUserId, error: rpcError } = await supabase.rpc('create_crm_user', {
+  // create_crm_user (SECURITY DEFINER) доступна только service_role — права admin проверены выше
+  const { data: createdUserId, error: rpcError } = await createAdminClient().rpc('create_crm_user', {
     p_login: input.login.trim(),
     p_password: input.password,
     p_full_name: input.full_name.trim(),

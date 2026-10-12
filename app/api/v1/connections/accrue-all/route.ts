@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 
 export async function POST(req: NextRequest) {
@@ -37,10 +38,12 @@ export async function POST(req: NextRequest) {
     }
 
     let resultData: any = null;
+    // RPC начислений доступны только service_role (миграция 029), права admin проверены выше
+    const adminSupabase = createAdminClient();
 
     // 1. Попытка вызвать хранимую процедуру accrue_connection_bonuses_v2
     try {
-      const rpcRes = await (supabase.rpc as any)('accrue_connection_bonuses_v2', {
+      const rpcRes = await (adminSupabase.rpc as any)('accrue_connection_bonuses_v2', {
         p_mode: accrualType,
         p_settlement_month: targetMonth,
       });
@@ -53,7 +56,7 @@ export async function POST(req: NextRequest) {
 
     if (!resultData) {
       try {
-        const rpcRes2 = await supabase.rpc('process_unified_connection_accruals', {
+        const rpcRes2 = await adminSupabase.rpc('process_unified_connection_accruals', {
           p_settlement_month: targetMonth,
           p_accrual_type: accrualType,
         });

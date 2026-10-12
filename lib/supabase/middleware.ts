@@ -88,18 +88,17 @@ export async function updateSession(request: NextRequest) {
 
   // 4. Защита маршрутов по ролевой модели (RBAC)
   if (user && !isApiRoute && !isAuthPage && !isOpenApiJson) {
-    let role = request.cookies.get('crm_role')?.value;
-    let isActive = request.cookies.get('crm_active')?.value;
+    // Куки crm_* доступны клиенту на запись и используются только для UI — права берутся
+    // из app_metadata пользователя (getUser читает его с сервера Auth). У заблокированного
+    // сотрудника роль в app_metadata сброшена (миграция 029), поэтому идем в таблицу users.
+    let role = (user.app_metadata?.role as string | undefined) || undefined;
+    let isActive = role ? 'true' : undefined;
 
-    // Быстрый fallback: проверяем app_metadata из JWT (без дискового I/O к СУБД)
-    if (!role && user.app_metadata?.role) {
-      role = user.app_metadata.role as string;
-      isActive = 'true';
+    if (role && request.cookies.get('crm_role')?.value !== role) {
       supabaseResponse.cookies.set('crm_role', role, { path: '/', httpOnly: false, sameSite: 'lax' });
-      supabaseResponse.cookies.set('crm_active', isActive, { path: '/', httpOnly: false, sameSite: 'lax' });
+      supabaseResponse.cookies.set('crm_active', 'true', { path: '/', httpOnly: false, sameSite: 'lax' });
     }
 
-    // Резервный запрос в таблицу users только если роль отсутствует в куках и в app_metadata
     if (!role) {
       const { data: profile } = await supabase
         .from('users')
@@ -115,8 +114,11 @@ export async function updateSession(request: NextRequest) {
       }
     }
 
-    // Если учетная запись заблокирована
+    // Если учетная запись заблокирована: завершаем сессию, иначе /login → / → /login зацикливается
     if (isActive === 'false') {
+      await supabase.auth.signOut({ scope: 'local' });
+      supabaseResponse.cookies.delete('crm_role');
+      supabaseResponse.cookies.delete('crm_active');
       const url = request.nextUrl.clone();
       url.pathname = '/login';
       url.searchParams.set('error', 'blocked');

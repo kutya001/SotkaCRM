@@ -1,11 +1,14 @@
 import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
+    // run_maintenance_billing доступна только service_role (миграция 029)
+    const supabase = createAdminClient();
     let body: any = {};
     try {
       body = await req.json();

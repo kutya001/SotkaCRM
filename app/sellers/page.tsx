@@ -538,6 +538,19 @@ export default function SellersPage() {
         ),
       },
       {
+        key: 'registered_at',
+        label: 'Регистрация',
+        width: 120,
+        minWidth: 100,
+        sortable: true,
+        filterable: false,
+        renderCell: (row: SellerItem) => (
+          <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono whitespace-nowrap">
+            <FormattedDate date={row.registered_at} type="date" fallback="—" />
+          </span>
+        ),
+      },
+      {
         key: 'manager_id',
         label: 'Куратор',
         width: 190,

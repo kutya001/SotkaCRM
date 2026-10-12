@@ -427,12 +427,13 @@ export const api = {
         method: 'GET',
         bypassCache: options?.bypassCache,
       }),
-    syncSotka: async (offset = 0, limit = 50) => {
+    /** Без параметров синхронизирует весь реестр Sotka HQ, с limit — одну порцию */
+    syncSotka: async (params?: { offset?: number; limit?: number }) => {
       const res = await request<{ synced_count: number; total_available: number; duration_ms: number }>(
         '/api/v1/sellers/sync',
         {
           method: 'POST',
-          body: JSON.stringify({ offset, limit }),
+          body: JSON.stringify(params || {}),
         }
       );
       invalidateNamespaces('sellers', 'dashboard', 'analytics');
@@ -542,8 +543,10 @@ export const api = {
         accrual_type: string;
         connection_bonuses_created: number;
         maintenance_bonuses_created: number;
+        maintenance_skipped_same_month?: number;
         total_created: number;
         message: string;
+        notice?: string;
       }>('/api/v1/connections/accrue-all', {
         method: 'POST',
         body: JSON.stringify({ month, settlement_month: month, accrual_type: accrualType }),

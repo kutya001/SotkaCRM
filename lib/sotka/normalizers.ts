@@ -162,9 +162,10 @@ export function parseDateToISO(dateInput: unknown): string | null {
   const trimmed = dateInput.trim();
   if (!trimmed) return null;
 
-  // 1. Формат DD.MM.YYYY [HH:mm[:ss]] (типичный ответ API api.sotka.kg)
+  // 1. Формат DD.MM.YYYY [HH:mm[:ss]] (типичный ответ API api.sotka.kg),
+  // также «DD.MM.YYYY, HH:mm», «DD/MM/YYYY HH:mm:ss.SSS»
   const dmyMatch = trimmed.match(
-    /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+    /^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/
   );
   if (dmyMatch) {
     const [, rawDay, rawMonth, year, rawHours = '00', rawMinutes = '00', rawSeconds = '00'] = dmyMatch;
@@ -182,9 +183,9 @@ export function parseDateToISO(dateInput: unknown): string | null {
     }
   }
 
-  // 2. Формат YYYY-MM-DD [HH:mm[:ss]] без часового пояса
+  // 2. Формат YYYY-MM-DD [HH:mm[:ss[.SSS]]] без часового пояса (разделитель пробел или T)
   const ymdMatch = trimmed.match(
-    /^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/
   );
   if (ymdMatch) {
     const [, year, month, day, rawHours = '00', rawMinutes = '00', rawSeconds = '00'] = ymdMatch;
@@ -318,6 +319,40 @@ export function formatSellerPhone(phone: unknown, isoCode?: string): string {
 }
 
 /**
+ * Возможные имена поля даты регистрации в ответах Sotka HQ: контракт описывает registered_at,
+ * но фактический ответ может отдавать дату под другим именем или во вложенном platform.
+ */
+const REGISTERED_AT_KEYS = [
+  'registered_at',
+  'registration_date',
+  'date_registered',
+  'date_joined',
+  'created_at',
+  'created',
+  'date_created',
+  'platform.registered_at',
+  'platform.created_at',
+] as const;
+
+const LAST_ACTIVITY_KEYS = ['last_activity', 'last_activity_at', 'last_seen', 'platform.last_activity'] as const;
+
+/** Первое непустое значение по списку ключей (поддерживается один уровень вложенности через точку) */
+function pickFirstDefined(item: Record<string, any>, keys: readonly string[]): unknown {
+  for (const key of keys) {
+    const [head, tail] = key.split('.');
+    const value = tail ? item?.[head]?.[tail] : item?.[head];
+    if (value !== null && value !== undefined && value !== '') return value;
+  }
+  return null;
+}
+
+/** Дата регистрации из детальной карточки продавца (GET sellers-overview/{organization_id}/) */
+export function extractSellerDetailRegisteredAt(detail: Record<string, any> | null | undefined): string | null {
+  if (!detail) return null;
+  return parseDateToISO(pickFirstDefined(detail, REGISTERED_AT_KEYS));
+}
+
+/**
  * 8. Нормализация объекта продавца из Sotka HQ API (SotkaSellerOverviewItem)
  * Преобразует элемент внешнего API в модель NormalizedSotkaSeller, готовую для
  * сохранения в Supabase (таблица sellers) и возврата в UI без undefined.
@@ -375,8 +410,8 @@ export function normalizeSotkaSeller(
     options?.validPlanIds
   );
 
-  const registeredAt = parseDateToISO(item.registered_at);
-  const lastActivity = parseDateToISO(item.last_activity);
+  const registeredAt = parseDateToISO(pickFirstDefined(item, REGISTERED_AT_KEYS));
+  const lastActivity = parseDateToISO(pickFirstDefined(item, LAST_ACTIVITY_KEYS));
 
   return {
     sotka_id: orgId,
@@ -405,3 +440,76 @@ export function normalizeSotkaSeller(
   };
 }
 
+
+export interface NormalizedSellerTransaction {
+  id: string | number;
+  date: string | null;
+  type: string;
+  description: string;
+  amount: number;
+  status: string;
+}
+
+export interface NormalizedSellerTransactions {
+  items: NormalizedSellerTransaction[];
+  total: number;
+  total_topups: number;
+  total_charges: number;
+  total_amount: number;
+}
+
+const CHARGE_TYPES = new Set(['charge', 'withdraw', 'withdrawal', 'debit', 'payment', 'subscription', 'списание']);
+
+function toNumber(value: unknown): number {
+  const num = typeof value === 'string' ? parseFloat(value.replace(',', '.')) : Number(value);
+  return Number.isFinite(num) ? Math.round(num * 100) / 100 : 0;
+}
+
+/**
+ * 9. Нормализация блока transactions детальной карточки продавца Sotka HQ.
+ * Приводит элементы к полям, которые отображает вкладка «Транзакции Sotka HQ»
+ * (в API встречаются как id/date/type, так и payment_id/date_time/tran_type).
+ * Итоги берутся из ответа API, а при их отсутствии считаются по элементам.
+ */
+export function normalizeSellerTransactions(raw: unknown): NormalizedSellerTransactions {
+  const block = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
+  const rawItems: any[] = Array.isArray(raw)
+    ? raw
+    : Array.isArray(block.items)
+    ? block.items
+    : Array.isArray(block.results)
+    ? block.results
+    : [];
+
+  const items: NormalizedSellerTransaction[] = rawItems.map((item, idx) => {
+    const type = String(item?.type ?? item?.tran_type ?? item?.operation ?? 'Операция');
+    let amount = toNumber(item?.amount ?? item?.sum);
+    // Списание с положительной суммой показываем со знаком минус
+    if (amount > 0 && CHARGE_TYPES.has(type.toLowerCase())) amount = -amount;
+
+    return {
+      id: item?.id ?? item?.payment_id ?? item?.transaction_id ?? idx,
+      date: parseDateToISO(item?.date ?? item?.date_time ?? item?.created_at ?? item?.datetime),
+      type,
+      description: String(item?.description ?? item?.comment ?? ''),
+      amount,
+      status: String(item?.status ?? 'succeeded'),
+    };
+  });
+
+  const computedTopups = items.reduce((sum, t) => (t.amount > 0 ? sum + t.amount : sum), 0);
+  const computedCharges = items.reduce((sum, t) => (t.amount < 0 ? sum - t.amount : sum), 0);
+  const hasTotal = (key: string) => block[key] !== undefined && block[key] !== null;
+
+  return {
+    items,
+    total: hasTotal('total') ? Number(block.total) || 0 : items.length,
+    total_topups: hasTotal('total_topups') ? toNumber(block.total_topups) : Math.round(computedTopups * 100) / 100,
+    total_charges: hasTotal('total_charges')
+      ? Math.abs(toNumber(block.total_charges))
+      : Math.round(computedCharges * 100) / 100,
+    total_amount: hasTotal('total_amount')
+      ? toNumber(block.total_amount)
+      : Math.round((computedTopups - computedCharges) * 100) / 100,
+  };
+}

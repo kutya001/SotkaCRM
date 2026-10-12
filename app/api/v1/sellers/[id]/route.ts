@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { requireAuth, requireRoles, requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { assignSellerManager } from '@/app/sellers/actions';
+import { findSellerByKey } from '@/lib/services/sellers';
 
 export async function GET(
   req: NextRequest,
@@ -109,18 +110,16 @@ export async function DELETE(
     const { supabase } = await requireAdmin();
 
     // 1. Поиск продавца для определения seller_phone
-    const { data: seller } = await supabase
-      .from('sellers')
-      .select('seller_phone, seller_id, organization_id')
-      .or(`seller_phone.eq.${decodedId},organization_id.eq.${decodedId},seller_id.eq.${decodedId}`)
-      .maybeSingle();
-
-    const targetPhone = seller?.seller_phone || decodedId;
+    const seller = await findSellerByKey(supabase, id, ['seller_phone'] as const);
+    if (!seller) {
+      return apiError('Продавец не найден', 'NOT_FOUND', 404);
+    }
+    const targetPhone = seller.seller_phone;
 
     // 2. Отвязываем лид, если был привязан
     await supabase
       .from('leads')
-      .update({ seller_phone: null, seller_id: null, linked_at: null, status: 'Назначен' } as any)
+      .update({ seller_phone: null, linked_at: null, status: 'Назначен' } as any)
       .eq('seller_phone', targetPhone);
 
     // 3. Удаляем связанные подключения
@@ -133,7 +132,7 @@ export async function DELETE(
     const { error } = await supabase
       .from('sellers')
       .delete()
-      .or(`seller_phone.eq.${targetPhone},seller_id.eq.${decodedId},organization_id.eq.${decodedId}`);
+      .eq('seller_phone', targetPhone);
 
     if (error) throw error;
 

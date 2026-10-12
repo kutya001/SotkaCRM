@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { requireAuth, requireRoles } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import type { SellerModerationStatus } from '@/types/database.types';
+import { applySellersOrder } from '@/lib/services/sellers';
 
 export async function GET(req: NextRequest) {
   try {
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
     const moderation = searchParams.get('moderation');
     const isActive = searchParams.get('isActive');
     const managerId = searchParams.get('managerId');
-    const sortBy = searchParams.get('sortBy') || 'synced_at';
+    const sortBy = searchParams.get('sortBy') || 'registered_at';
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc';
 
     let query = supabase.from('sellers').select('*', { count: 'exact' });
@@ -59,15 +60,7 @@ export async function GET(req: NextRequest) {
       query = query.eq('is_active', isActive === 'true');
     }
 
-    const validSortColumns = ['balance', 'registered_at', 'synced_at', 'store', 'seller_name', 'outlets_count'];
-    if (sortBy && validSortColumns.includes(sortBy) && sortBy !== 'registered_at') {
-      query = query.order(sortBy, { ascending: sortOrder === 'asc', nullsFirst: false });
-    } else {
-      // Детерминированный порядок: продавцы по дате регистрации всегда на своем месте
-      query = query
-        .order('registered_at', { ascending: sortOrder === 'asc', nullsFirst: false })
-        .order('created_at', { ascending: false });
-    }
+    query = applySellersOrder(query, sortBy, sortOrder);
 
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;

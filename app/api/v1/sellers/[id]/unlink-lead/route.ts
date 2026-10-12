@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { requireRoles } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { findSellerByKey } from '@/lib/services/sellers';
 
 export async function DELETE(
   req: NextRequest,
@@ -22,22 +23,8 @@ async function handleUnlinkFromSeller(paramsPromise: Promise<{ id: string }>) {
     const { id } = await paramsPromise;
     const { supabase } = await requireRoles(['admin', 'supervisor']);
 
-    // 1. Поиск продавца по seller_id или seller_phone
-    let { data: seller } = await supabase
-      .from('sellers')
-      .select('seller_id, seller_phone, seller_name, manager_id')
-      .or(`seller_id.eq.${id},seller_phone.eq.${id}`)
-      .maybeSingle();
-
-    if (!seller) {
-      // Попробуем поиск чисто по seller_phone
-      const fallback = await supabase
-        .from('sellers')
-        .select('seller_id, seller_phone, seller_name, manager_id')
-        .eq('seller_phone', id)
-        .maybeSingle();
-      seller = fallback.data;
-    }
+    // 1. Поиск продавца по organization_id или seller_phone
+    const seller = await findSellerByKey(supabase, id, ['seller_phone', 'seller_name', 'manager_id'] as const);
 
     if (!seller) {
       return apiError('Продавец не найден', 'NOT_FOUND', 404);

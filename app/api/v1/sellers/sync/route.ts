@@ -27,6 +27,10 @@ export async function POST(req: NextRequest) {
     const durationMs = Date.now() - startTime;
 
     if (!result.success) {
+      // Отказ Sotka HQ в авторизации — ошибка внешнего сервиса (502), а не сбой CRM
+      if (result.errorCode === 'SOTKA_AUTH_FAILED') {
+        return apiError(result.error || 'Sotka HQ отклонил учетные данные CRM', result.errorCode, 502);
+      }
       return apiError(result.error || 'Ошибка синхронизации с Sotka API', 'SYNC_ERROR', 500);
     }
 

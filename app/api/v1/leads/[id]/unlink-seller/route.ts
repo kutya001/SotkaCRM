@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireRoles } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function DELETE(
   req: NextRequest,
@@ -21,8 +22,8 @@ async function handleUnlink(paramsPromise: Promise<{ id: string }>) {
     const { id } = await paramsPromise;
     const { supabase } = await requireRoles(['admin', 'supervisor']);
 
-    // 1. Попытка вызова атомарной процедуры в СУБД
-    const { data: rpcData, error: rpcErr } = await (supabase.rpc as any)('unlink_lead_and_seller', {
+    // 1. Попытка вызова атомарной процедуры в СУБД (RPC доступна только service_role)
+    const { data: rpcData, error: rpcErr } = await (createAdminClient().rpc as any)('unlink_lead_and_seller', {
       p_lead_id: id,
     });
 

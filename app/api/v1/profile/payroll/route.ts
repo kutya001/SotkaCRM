@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,8 +24,8 @@ export async function GET(req: NextRequest) {
       targetEmployeeId = requestedEmpId;
     }
 
-    // Вызываем RPC get_employee_payroll_sheet
-    const { data, error } = await supabase.rpc('get_employee_payroll_sheet', {
+    // RPC get_employee_payroll_sheet доступна только service_role (миграция 029), доступ проверен выше
+    const { data, error } = await createAdminClient().rpc('get_employee_payroll_sheet', {
       p_employee_id: targetEmployeeId,
       p_month: month,
     });

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireRoles } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
-import { linkSellerToLeadAction } from '@/app/sellers/actions';
+import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 
 export async function POST(
   req: NextRequest,
@@ -10,7 +10,8 @@ export async function POST(
   try {
     const { id } = await params;
     const sellerPhone = decodeURIComponent(id);
-    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
+    const ctx = await requireRoles(['admin', 'supervisor', 'consultant']);
+    const { supabase } = ctx;
     const body = await req.json();
 
     const leadId = body.lead_id;
@@ -37,38 +38,8 @@ export async function POST(
       );
     }
 
-    // Вызов атомарной процедуры в СУБД с блокировкой FOR UPDATE
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
-      p_lead_id: leadId,
-      p_seller_phone: sellerPhone,
-      p_user_id: profile.user_id,
-      p_manager_id: undefined,
-      p_assigned_by: profile.user_id,
-    });
-
-    if (!rpcErr && rpcRes) {
-      const res = rpcRes as {
-        success: boolean;
-        error?: string;
-        connection_id?: string;
-        connection_fee_amount?: number;
-      };
-
-      if (!res.success) {
-        return apiError(res.error || 'Ошибка при связывании продавца с лидом', 'LINK_FAILED', 400);
-      }
-
-      return apiSuccess({
-        success: true,
-        seller_phone: sellerPhone,
-        lead_id: leadId,
-        connection_id: res.connection_id,
-        connection_fee_amount: res.connection_fee_amount,
-      });
-    }
-
-    // Fallback на серверный экшен при недоступности RPC
-    const res = await linkSellerToLeadAction(sellerPhone, leadId);
+    // Атомарная процедура в СУБД с блокировкой FOR UPDATE (права проверяются в хелпере)
+    const res = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone });
 
     if (!res.success) {
       return apiError(res.error || 'Ошибка при связывании продавца с лидом', 'LINK_FAILED', 400);
@@ -78,6 +49,7 @@ export async function POST(
       success: true,
       seller_phone: sellerPhone,
       lead_id: leadId,
+      connection_id: res.connectionId,
       connection_fee_amount: res.connectionFeeAmount,
     });
   } catch (err) {

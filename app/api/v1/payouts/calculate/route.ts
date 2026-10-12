@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,7 +17,8 @@ export async function POST(req: NextRequest) {
     const employeeId = body.employee_id;
 
     // 1. Попытка вызова высокопроизводительного SQL-агрегата в СУБД (1 раундтрип)
-    const { data: rpcData, error: rpcError } = await supabase.rpc('calculate_payout_accruals', {
+    // RPC доступна только service_role (миграция 029), права admin проверены выше
+    const { data: rpcData, error: rpcError } = await createAdminClient().rpc('calculate_payout_accruals', {
       p_accrual_month: currentMonth,
       p_employee_id: employeeId || undefined,
     });

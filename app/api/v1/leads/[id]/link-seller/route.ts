@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireRoles } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
-import { linkLeadToSeller } from '@/app/leads/mapping-actions';
+import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 
 export async function POST(
   req: NextRequest,
@@ -9,7 +9,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
+    const ctx = await requireRoles(['admin', 'supervisor', 'consultant']);
     const body = await req.json();
 
     const sellerPhone = body.seller_phone;
@@ -17,38 +17,8 @@ export async function POST(
       return apiError('Номер телефона продавца обязателен', 'MISSING_SELLER_PHONE', 400);
     }
 
-    // Вызов атомарной процедуры в СУБД с блокировкой FOR UPDATE
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
-      p_lead_id: id,
-      p_seller_phone: sellerPhone,
-      p_user_id: profile.user_id,
-      p_manager_id: body.manager_id || undefined,
-      p_assigned_by: profile.user_id,
-    });
-
-    if (!rpcErr && rpcRes) {
-      const res = rpcRes as {
-        success: boolean;
-        error?: string;
-        connection_id?: string;
-        connection_fee_amount?: number;
-      };
-
-      if (!res.success) {
-        return apiError(res.error || 'Ошибка связывания лида с продавцом', 'LINK_FAILED', 400);
-      }
-
-      return apiSuccess({
-        success: true,
-        lead_id: id,
-        seller_phone: sellerPhone,
-        connection_id: res.connection_id,
-        connection_fee_amount: res.connection_fee_amount,
-      });
-    }
-
-    // Fallback на серверный экшен при недоступности RPC
-    const result = await linkLeadToSeller({
+    // Атомарная процедура в СУБД с блокировкой FOR UPDATE (права проверяются в хелпере)
+    const result = await linkLeadToSellerAtomic(ctx, {
       leadId: id,
       sellerPhone,
       managerId: body.manager_id,
@@ -63,6 +33,7 @@ export async function POST(
       lead_id: id,
       seller_phone: sellerPhone,
       connection_id: result.connectionId,
+      connection_fee_amount: result.connectionFeeAmount,
     });
   } catch (err) {
     return handleApiError(err);

@@ -12,7 +12,6 @@ import {
   parseDateToISO,
   resolveSotkaPlan,
   normalizeSotkaSeller,
-  formatSellerPhone,
 } from '@/lib/sotka';
 import type { Database } from '@/types/database.types';
 
@@ -97,19 +96,8 @@ async function handleSync(request: Request) {
     token = await authenticateSotkaAdmin();
 
     // 3. Выгрузка продавцов
-    // ИНВАРИАНТ: считываем существующие привязки manager_id, чтобы не затереть локальные назначения
-    const { data: existingSellers } = await adminSupabase
-      .from('sellers')
-      .select('seller_phone, manager_id');
-
-    const existingManagersMap = new Map<string, string | null>();
-    if (existingSellers) {
-      existingSellers.forEach((s) => {
-        if (s.manager_id) {
-          existingManagersMap.set(s.seller_phone, s.manager_id);
-        }
-      });
-    }
+    // ИНВАРИАНТ: manager_id — локальное назначение CRM, в upsert не передается,
+    // поэтому ON CONFLICT DO UPDATE не затирает куратора существующих продавцов
 
     // Справочник тарифов для предотвращения нарушения foreign key sellers_plan_id_fkey
     const { data: dbPlans } = await adminSupabase
@@ -189,25 +177,13 @@ async function handleSync(request: Request) {
         }
       }
 
-      const normalizedSellers = items.map((item) => {
-        const orgKey =
-          item.organization_id !== undefined && item.organization_id !== null
-            ? `org_${item.organization_id}`
-            : '';
-        const phoneKey = item.seller_phone
-          ? `phone_${formatSellerPhone(item.seller_phone, item.iso_code)}`
-          : '';
-        const preservedManagerId =
-          (orgKey && existingManagersMap.get(orgKey)) ||
-          (phoneKey && existingManagersMap.get(phoneKey)) ||
-          null;
-
-        return normalizeSotkaSeller(item, {
+      const normalizedSellers = items.map((item) =>
+        normalizeSotkaSeller(item, {
           dbPlansMap,
           validPlanIds,
-          preservedManagerId,
-        });
-      });
+          preservedManagerId: null,
+        })
+      );
 
       const sellersToUpsert: Database['public']['Tables']['sellers']['Insert'][] =
         normalizedSellers.map((s) => ({
@@ -225,7 +201,6 @@ async function handleSync(request: Request) {
           outlets_count: s.outlets_count,
           brands: s.brands,
           organization_id: s.organization_id || null,
-          manager_id: s.manager_id || null,
           synced_at: s.synced_at,
         }));
 
@@ -240,7 +215,6 @@ async function handleSync(request: Request) {
             ...existing,
             ...s,
             is_active: Boolean(existing.is_active || s.is_active),
-            manager_id: existing.manager_id || s.manager_id || null,
             store: s.store || existing.store,
             organization_id: s.organization_id || existing.organization_id || null,
             brands: s.brands || existing.brands || null,

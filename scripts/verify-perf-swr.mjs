@@ -50,23 +50,29 @@ async function runPerfSwrVerification() {
 
   // --- ТЕСТ 3: Проверка вызовов RPC в роутах API ---
   console.log('--- ТЕСТ 3: Валидация серверных роутов API v1 ---');
+  // RPC вызываются через service_role клиент после серверной проверки прав (миграция 029)
+  const linkHelper = fs.readFileSync('lib/services/lead-linking.ts', 'utf8');
+  if (!linkHelper.includes(".rpc('link_lead_to_seller'")) {
+    throw new Error('Хелпер lead-linking не вызывает link_lead_to_seller RPC!');
+  }
+
   const linkSellerRoute = fs.readFileSync('app/api/v1/leads/[id]/link-seller/route.ts', 'utf8');
-  if (!linkSellerRoute.includes("supabase.rpc('link_lead_to_seller'")) {
+  if (!linkSellerRoute.includes('linkLeadToSellerAtomic(')) {
     throw new Error('Роут leads/[id]/link-seller не вызывает link_lead_to_seller RPC!');
   }
 
   const linkLeadRoute = fs.readFileSync('app/api/v1/sellers/[id]/link-lead/route.ts', 'utf8');
-  if (!linkLeadRoute.includes("supabase.rpc('link_lead_to_seller'")) {
+  if (!linkLeadRoute.includes('linkLeadToSellerAtomic(')) {
     throw new Error('Роут sellers/[id]/link-lead не вызывает link_lead_to_seller RPC!');
   }
 
   const kpiRoute = fs.readFileSync('app/api/v1/dashboard/kpi/route.ts', 'utf8');
-  if (!kpiRoute.includes("supabase.rpc('get_dashboard_kpi'")) {
+  if (!kpiRoute.includes(".rpc('get_dashboard_kpi'")) {
     throw new Error('Роут dashboard/kpi не вызывает get_dashboard_kpi RPC!');
   }
 
   const payoutsCalcRoute = fs.readFileSync('app/api/v1/payouts/calculate/route.ts', 'utf8');
-  if (!payoutsCalcRoute.includes("supabase.rpc('calculate_payout_accruals'")) {
+  if (!payoutsCalcRoute.includes(".rpc('calculate_payout_accruals'")) {
     throw new Error('Роут payouts/calculate не вызывает calculate_payout_accruals RPC!');
   }
   console.log('✓ Все 4 целевых эндпоинта вызывают специализированные серверные RPC\n');

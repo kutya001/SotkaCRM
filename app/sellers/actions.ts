@@ -9,9 +9,9 @@ import {
   fetchSellersOverview,
   fetchSellerDetail,
 } from '@/lib/services/sotka-api';
+import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 import {
   normalizeSotkaSeller,
-  formatSellerPhone,
   resolveSotkaPlan,
   type NormalizedSotkaSeller,
   type SotkaSellerDetail,
@@ -607,7 +607,8 @@ export async function linkSellerToLeadAction(
   leadId: string
 ): Promise<{ success: boolean; error?: string; connectionFeeAmount?: number }> {
   try {
-    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
+    const ctx = await requireRoles(['admin', 'supervisor', 'consultant']);
+    const { supabase } = ctx;
 
     if (!sellerPhone || !leadId) {
       return { success: false, error: 'Не указан продавец или лид' };
@@ -626,22 +627,7 @@ export async function linkSellerToLeadAction(
       };
     }
 
-    const { data: rpcRes, error: rpcErr } = await supabase.rpc('link_lead_to_seller', {
-      p_lead_id: leadId,
-      p_seller_phone: sellerPhone,
-      p_manager_id: undefined,
-      p_assigned_by: profile.user_id,
-    });
-
-    if (rpcErr) {
-      return { success: false, error: rpcErr.message };
-    }
-
-    const result = rpcRes as {
-      success: boolean;
-      error?: string;
-      connection_fee_amount?: number;
-    };
+    const result = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone });
 
     if (!result.success) {
       return { success: false, error: result.error || 'Ошибка при связывании продавца с лидом' };
@@ -656,7 +642,7 @@ export async function linkSellerToLeadAction(
 
     return {
       success: true,
-      connectionFeeAmount: result.connection_fee_amount,
+      connectionFeeAmount: result.connectionFeeAmount,
     };
   } catch (err: any) {
     return { success: false, error: err.message || 'Сбой при связывании продавца с лидом' };
@@ -697,24 +683,8 @@ export async function syncSellersFromSotka(
       };
     }
 
-    // 3. Сохранение локальных назначений менеджеров (manager_id)
-    const { data: existingSellers } = await supabase
-      .from('sellers')
-      .select('organization_id, seller_phone, manager_id');
-
-    const existingManagersMap = new Map<string, string | null>();
-    if (existingSellers) {
-      for (const s of existingSellers) {
-        if (s.manager_id) {
-          if (s.organization_id) {
-            existingManagersMap.set(`org_${s.organization_id}`, s.manager_id);
-          }
-          if (s.seller_phone) {
-            existingManagersMap.set(`phone_${s.seller_phone}`, s.manager_id);
-          }
-        }
-      }
-    }
+    // 3. manager_id — локальное назначение CRM: в upsert не передается,
+    // поэтому ON CONFLICT DO UPDATE не затирает куратора существующих продавцов
 
     // 4. Справочник тарифов (защита foreign key constraint sellers_plan_id_fkey)
     const { data: dbPlans } = await supabase
@@ -776,25 +746,13 @@ export async function syncSellersFromSotka(
     }
 
     // 5. Нормализация полученных продавцов
-    const normalizedSellers: NormalizedSotkaSeller[] = items.map((item) => {
-      const orgKey =
-        item.organization_id !== undefined && item.organization_id !== null
-          ? `org_${item.organization_id}`
-          : '';
-      const phoneKey = item.seller_phone
-        ? `phone_${formatSellerPhone(item.seller_phone, item.iso_code)}`
-        : '';
-      const preservedManagerId =
-        (orgKey && existingManagersMap.get(orgKey)) ||
-        (phoneKey && existingManagersMap.get(phoneKey)) ||
-        null;
-
-      return normalizeSotkaSeller(item, {
+    const normalizedSellers: NormalizedSotkaSeller[] = items.map((item) =>
+      normalizeSotkaSeller(item, {
         dbPlansMap,
         validPlanIds,
-        preservedManagerId,
-      });
-    });
+        preservedManagerId: null,
+      })
+    );
 
     // 6. Гарантированная дедупликация по первичному ключу seller_phone
     // во избежание ошибки Postgres: ON CONFLICT DO UPDATE command cannot affect row a second time
@@ -816,19 +774,17 @@ export async function syncSellersFromSotka(
         outlets_count: s.outlets_count,
         brands: s.brands,
         organization_id: s.organization_id || null,
-        manager_id: s.manager_id || null,
         synced_at: s.synced_at || new Date().toISOString(),
         is_deleted_from_source: false,
       };
 
       const existing = dedupedByPhoneMap.get(s.seller_phone);
       if (existing) {
-        // При наличии дубликатов по номеру объединяем свойства с приоритетом активности и сохраненного менеджера
+        // При наличии дубликатов по номеру объединяем свойства с приоритетом активности
         dedupedByPhoneMap.set(s.seller_phone, {
           ...existing,
           ...row,
           is_active: Boolean(existing.is_active || row.is_active),
-          manager_id: existing.manager_id || row.manager_id || null,
           store: row.store || existing.store,
           organization_id: row.organization_id || existing.organization_id || null,
           brands: row.brands || existing.brands || null,
@@ -878,45 +834,45 @@ export async function syncSellersFromSotka(
       savedCount += chunk.length;
     }
 
-    // 8. Выявление продавцов, удаленных во внешнем Sotka HQ API (Soft-delete)
+    // 8. Выявление продавцов, удаленных во внешнем Sotka HQ API (Soft-delete).
+    // Только если эта порция покрывает весь список Sotka: при частичной синхронизации (offset/limit)
+    // все продавцы вне порции ошибочно помечались бы удаленными.
+    // Синхронизированные продавцы уже получили is_deleted_from_source = false в upsert.
     const syncedOrgIds = items
       .map((item) => (item.organization_id !== undefined && item.organization_id !== null ? String(item.organization_id) : ''))
       .filter(Boolean);
+    const isFullPass = offset === 0 && items.length >= (total || 0);
 
-    if (syncedOrgIds.length > 0 && hasDeletedFromSourceCol) {
+    if (isFullPass && syncedOrgIds.length > 0 && hasDeletedFromSourceCol) {
       try {
-        // Получаем всех локальных продавцов с organization_id
-        const { data: allLocalSellers } = await supabase
-          .from('sellers')
-          .select('seller_phone, organization_id')
-          .not('organization_id', 'is', null);
+        const syncedSet = new Set(syncedOrgIds);
+        const phonesToMarkDeleted: string[] = [];
 
-        if (allLocalSellers && allLocalSellers.length > 0) {
-          const syncedSet = new Set(syncedOrgIds);
-          const phonesToMarkDeleted: string[] = [];
-          const phonesToMarkActive: string[] = [];
+        // Постраничное чтение: PostgREST по умолчанию отдает не более 1000 строк
+        const PAGE_SIZE = 1000;
+        for (let from = 0; ; from += PAGE_SIZE) {
+          const { data: page, error: pageErr } = await supabase
+            .from('sellers')
+            .select('seller_phone, organization_id')
+            .not('organization_id', 'is', null)
+            .order('seller_phone')
+            .range(from, from + PAGE_SIZE - 1);
 
-          for (const ls of allLocalSellers) {
+          if (pageErr) throw pageErr;
+          for (const ls of page || []) {
             if (ls.organization_id && !syncedSet.has(String(ls.organization_id))) {
               phonesToMarkDeleted.push(ls.seller_phone);
-            } else {
-              phonesToMarkActive.push(ls.seller_phone);
             }
           }
+          if (!page || page.length < PAGE_SIZE) break;
+        }
 
-          if (phonesToMarkDeleted.length > 0) {
-            await supabase
-              .from('sellers')
-              .update({ is_deleted_from_source: true, updated_at: new Date().toISOString() } as any)
-              .in('seller_phone', phonesToMarkDeleted);
-          }
-
-          if (phonesToMarkActive.length > 0) {
-            await supabase
-              .from('sellers')
-              .update({ is_deleted_from_source: false } as any)
-              .in('seller_phone', phonesToMarkActive);
-          }
+        const UPDATE_CHUNK = 200;
+        for (let i = 0; i < phonesToMarkDeleted.length; i += UPDATE_CHUNK) {
+          await supabase
+            .from('sellers')
+            .update({ is_deleted_from_source: true, updated_at: new Date().toISOString() } as any)
+            .in('seller_phone', phonesToMarkDeleted.slice(i, i + UPDATE_CHUNK));
         }
       } catch (softDelErr) {
         console.warn('[syncSellersFromSotka] Ошибка при актуализации is_deleted_from_source:', softDelErr);

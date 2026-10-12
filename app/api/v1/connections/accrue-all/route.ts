@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
+import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
 
 export async function POST(req: NextRequest) {
   try {
@@ -124,8 +125,11 @@ export async function POST(req: NextRequest) {
       // Дополнительная дедупликация по employee_payouts
       const { data: existingPayouts } = await supabase
         .from('employee_payouts')
-        .select('connection_id, operation_type, settlement_month')
+        .select('connection_id, operation_type, settlement_month, accrual_month, seller_phone')
         .in('operation_type', ['accrual_connection', 'accrual_maintenance']);
+
+      // История начислений для правила «сначала подключение, сопровождение — со следующего месяца»
+      const accrualHistory: ConnectionAccrualHistoryRow[] = [...((existingPayouts || []) as ConnectionAccrualHistoryRow[])];
 
       const existingPayoutsMap = new Set(
         (existingPayouts || []).map(
@@ -137,6 +141,7 @@ export async function POST(req: NextRequest) {
 
       let connectionBonusesCreated = 0;
       let maintenanceBonusesCreated = 0;
+      let maintenanceSkipped = 0;
 
       for (const conn of conns || []) {
         if (!activeSellersSet.has(conn.seller_phone)) continue;
@@ -157,8 +162,15 @@ export async function POST(req: NextRequest) {
           const alreadyInPayouts = existingPayoutsMap.has(payoutKey) ||
             Array.from(existingPayoutsMap).some((k) => k.startsWith(`${conn.connection_id}_accrual_connection`));
 
-          if (!alreadyHasConnBonus && !alreadyInPayouts && fee > 0) {
-            const monthForConn = conn.accrual_month || targetMonth;
+          const monthForConn = conn.accrual_month || targetMonth;
+          const connOrderError = connectionOrderError(
+            'accrual_connection',
+            monthForConn,
+            { sellerPhone: conn.seller_phone, connectionId: conn.connection_id },
+            accrualHistory
+          );
+
+          if (!alreadyHasConnBonus && !alreadyInPayouts && fee > 0 && !connOrderError) {
 
             // Запись в connection_accruals (реестр подключений)
             const { error: insErr } = await supabase.from('connection_accruals').insert({
@@ -195,6 +207,12 @@ export async function POST(req: NextRequest) {
 
               connectionBonusesCreated++;
               existingConnBonusSet.add(conn.connection_id);
+              accrualHistory.push({
+                operation_type: 'accrual_connection',
+                settlement_month: monthForConn,
+                seller_phone: conn.seller_phone,
+                connection_id: conn.connection_id,
+              });
             }
           }
         }
@@ -217,14 +235,26 @@ export async function POST(req: NextRequest) {
           const startMonth = conn.maintenance_month_start || null;
           const canStartMaint = !startMonth || targetMonth >= startMonth;
 
-          if (
+          const isDue =
             !alreadyHasMaintThisMonth &&
             !alreadyMaintInPayouts &&
             maintFee > 0 &&
             conn.status !== 'готов' &&
             accruedMonths < totalMonths &&
-            canStartMaint
-          ) {
+            canStartMaint;
+
+          // Сопровождение — только со следующего месяца после начисления за подключение
+          const maintOrderError = isDue
+            ? connectionOrderError(
+                'accrual_maintenance',
+                targetMonth,
+                { sellerPhone: conn.seller_phone, connectionId: conn.connection_id },
+                accrualHistory
+              )
+            : null;
+          if (maintOrderError) maintenanceSkipped++;
+
+          if (isDue && !maintOrderError) {
             // Запись в connection_accruals (реестр подключений)
             const { error: insMaintErr } = await supabase.from('connection_accruals').insert({
               connection_id: conn.connection_id,
@@ -260,6 +290,12 @@ export async function POST(req: NextRequest) {
 
               maintenanceBonusesCreated++;
               existingMap.add(maintKey);
+              accrualHistory.push({
+                operation_type: 'accrual_maintenance',
+                settlement_month: targetMonth,
+                seller_phone: conn.seller_phone,
+                connection_id: conn.connection_id,
+              });
 
               const newAccrued = accruedMonths + 1;
               const newStatus = newAccrued >= totalMonths ? 'готов' : 'сопровождение';
@@ -278,6 +314,7 @@ export async function POST(req: NextRequest) {
       resultData = {
         connection_bonuses_created: connectionBonusesCreated,
         maintenance_bonuses_created: maintenanceBonusesCreated,
+        maintenance_skipped_same_month: maintenanceSkipped,
         total_created: connectionBonusesCreated + maintenanceBonusesCreated,
         settlement_month: targetMonth,
         accrual_type: accrualType,
@@ -287,6 +324,14 @@ export async function POST(req: NextRequest) {
             : accrualType === 'maintenance'
             ? `Начислено бонусов за сопровождение: +${maintenanceBonusesCreated}`
             : `Начисление выполнено: подключений +${connectionBonusesCreated}, сопровождений +${maintenanceBonusesCreated}`,
+      };
+    }
+
+    const skippedMaintenance = Number(resultData?.maintenance_skipped_same_month || 0);
+    if (skippedMaintenance > 0) {
+      resultData = {
+        ...resultData,
+        notice: `Сопровождение не начислено по ${skippedMaintenance} подкл.: в месяце начисления за подключение сопровождение не начисляется, оно начнется со следующего месяца`,
       };
     }
 

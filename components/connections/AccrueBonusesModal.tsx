@@ -31,6 +31,7 @@ export function AccrueBonusesModal({
     maintenance_bonuses_created: number;
     total_created: number;
     message: string;
+    notice?: string;
   } | null>(null);
 
   React.useEffect(() => {
@@ -58,6 +59,7 @@ export function AccrueBonusesModal({
           ? `Начислено бонусов за сопровождение: +${res.maintenance_bonuses_created}`
           : `Начисление выполнено: подключений +${res.connection_bonuses_created}, сопровождений +${res.maintenance_bonuses_created}`;
       showToast(toastMsg, 'success');
+      if (res.notice) showToast(res.notice, 'info');
       onSuccess();
     } catch (err: any) {
       showToast(err.message || 'Ошибка начисления бонусов', 'error');
@@ -232,10 +234,10 @@ export function AccrueBonusesModal({
             </div>
             <p className="text-[11px] text-zinc-400 mt-1.5 leading-relaxed">
               {accrualType === 'all'
-                ? 'Система проверит всех активных подключенных продавцов и начислит недостающие бонусы за подключение и за сопровождение за выбранный месяц.'
+                ? 'Система проверит всех активных подключенных продавцов и начислит недостающие бонусы за подключение и за сопровождение за выбранный месяц. Сопровождение начисляется только со следующего месяца после подключения.'
                 : accrualType === 'connection'
                 ? 'Система проверит всех подключенных продавцов и начислит недостающие первичные бонусы за подключение.'
-                : 'Система начислит ежемесячный бонус сопровождения за указанный период (при соблюдении лимита месяцев).'}
+                : 'Система начислит ежемесячный бонус сопровождения за указанный период (при соблюдении лимита месяцев). В месяце начисления за подключение сопровождение не начисляется.'}
             </p>
           </div>
 
@@ -248,6 +250,9 @@ export function AccrueBonusesModal({
               <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
                 За подключение: +{result.connection_bonuses_created} | За сопровождение: +{result.maintenance_bonuses_created}
               </p>
+              {result.notice && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400">{result.notice}</p>
+              )}
             </div>
           )}
 

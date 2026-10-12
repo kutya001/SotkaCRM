@@ -225,6 +225,18 @@ async function handleSync(request: Request) {
       }
       const uniqueSellers = Array.from(sellersMap.values());
 
+      // 3.1.1. Если реестр не передал дату регистрации/активности, сохраняем уже известные значения
+      const { data: knownDates } = await adminSupabase
+        .from('sellers')
+        .select('seller_phone, registered_at, last_activity')
+        .in('seller_phone', uniqueSellers.map((s) => s.seller_phone));
+      const knownByPhone = new Map((knownDates || []).map((k) => [k.seller_phone, k]));
+      for (const s of uniqueSellers) {
+        const known = knownByPhone.get(s.seller_phone);
+        if (!s.registered_at && known?.registered_at) s.registered_at = known.registered_at;
+        if (!s.last_activity && known?.last_activity) s.last_activity = known.last_activity;
+      }
+
       // 3.2. Чанкинг вставки продавцов порциями по 50 записей
       const SYNC_CHUNK_SIZE = 50;
       for (let i = 0; i < uniqueSellers.length; i += SYNC_CHUNK_SIZE) {

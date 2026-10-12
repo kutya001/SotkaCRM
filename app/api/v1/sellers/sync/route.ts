@@ -3,17 +3,21 @@ import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { syncSellersFromSotka } from '@/app/sellers/actions';
 
+// Полная синхронизация реестра может занять больше стандартного лимита функции
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     await requireAdmin();
 
+    // Без limit синхронизируется весь реестр Sotka HQ (постранично)
     let offset = 0;
-    let limit = 50;
+    let limit: number | undefined;
 
     try {
       const body = await req.json();
-      if (body.offset !== undefined) offset = Number(body.offset);
-      if (body.limit !== undefined) limit = Number(body.limit);
+      if (Number.isFinite(Number(body.offset))) offset = Math.max(0, Number(body.offset));
+      if (body.limit !== undefined && Number.isFinite(Number(body.limit))) limit = Number(body.limit);
     } catch {
       // Body may be empty in case of simple POST button click
     }

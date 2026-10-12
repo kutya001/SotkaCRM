@@ -8,14 +8,25 @@ import {
   authenticateSotkaAdmin,
   fetchSellersOverview,
   fetchSellerDetail,
+  logoutSotkaSession,
 } from '@/lib/services/sotka-api';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
+import { applySellersOrder, findSellerByKey } from '@/lib/services/sellers';
 import {
   normalizeSotkaSeller,
   resolveSotkaPlan,
+  parseDateToISO,
+  extractSellerDetailRegisteredAt,
   type NormalizedSotkaSeller,
   type SotkaSellerDetail,
+  type SotkaSellerOverviewItem,
 } from '@/lib/sotka';
+
+/** Бюджет времени синхронизации (serverless-функция Vercel) */
+const SYNC_TIME_BUDGET_MS = 20_000;
+/** Сколько детальных карточек Sotka запрашивать за один запуск для дозаполнения даты регистрации */
+const DETAIL_BACKFILL_LIMIT = 40;
+const DETAIL_BACKFILL_CONCURRENCY = 5;
 
 export interface LinkedLeadInfo {
   lead_id: string;
@@ -111,7 +122,7 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     moderation,
     isActive,
     managerId,
-    sortBy = 'synced_at',
+    sortBy = 'registered_at',
     sortOrder = 'desc',
   } = params;
 
@@ -177,16 +188,8 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     query = query.eq('is_active', isActive === 'true');
   }
 
-  // Сортировка: детерминированный порядок по дате регистрации
-  const ascending = sortOrder === 'asc';
-  const validSortColumns = ['balance', 'registered_at', 'synced_at', 'store', 'seller_name', 'outlets_count'];
-  if (sortBy && validSortColumns.includes(sortBy) && sortBy !== 'registered_at') {
-    query = query.order(sortBy, { ascending, nullsFirst: false });
-  } else {
-    query = query
-      .order('registered_at', { ascending, nullsFirst: false })
-      .order('created_at', { ascending: false });
-  }
+  // Сортировка: по умолчанию по дате регистрации, с уникальным ключом в конце
+  query = applySellersOrder(query, sortBy, sortOrder);
 
   // Пагинация
   const from = (page - 1) * pageSize;
@@ -652,12 +655,15 @@ export async function linkSellerToLeadAction(
 /**
  * Синхронизация реестра продавцов из внешнего Sotka HQ API
  * GET /api/private/v1/admin/sellers-overview/?offset={offset}&limit={limit}
- * Пакетный upsert в Supabase таблицу 'sellers' по уникальному ключу organization_id
+ * Пакетный upsert в Supabase таблицу 'sellers' по seller_phone
  * с сохранением существующих привязок кураторов (manager_id).
+ *
+ * Без limit выгружает весь реестр постранично (по 200 — максимум API);
+ * с limit — только одну порцию начиная с offset.
  */
 export async function syncSellersFromSotka(
   offset = 0,
-  limit = 50
+  limit?: number
 ): Promise<{
   success: boolean;
   syncedCount: number;
@@ -665,21 +671,41 @@ export async function syncSellersFromSotka(
   total: number;
   error?: string;
 }> {
+  let token = '';
   try {
     const { supabase } = await requireAdmin();
+    const startedAt = Date.now();
 
     // 1. Авторизация во внешнем API Sotka
-    const token = await authenticateSotkaAdmin();
+    token = await authenticateSotkaAdmin();
 
-    // 2. Выгрузка порции продавцов через HTTP-клиент
-    const { items, total } = await fetchSellersOverview(token, offset, limit);
+    // 2. Выгрузка продавцов: одна порция (limit задан) или весь реестр постранично
+    const isPartialRequest = limit !== undefined;
+    const PAGE_LIMIT = isPartialRequest ? Math.min(Math.max(limit, 1), 200) : 200;
+    const items: SotkaSellerOverviewItem[] = [];
+    let total = 0;
+    let pageOffset = Math.max(offset, 0);
+    let fetchedAllPages = false;
 
-    if (!items || items.length === 0) {
+    for (;;) {
+      const page = await fetchSellersOverview(token, pageOffset, PAGE_LIMIT);
+      total = page.total || 0;
+      items.push(...page.items);
+      pageOffset += page.items.length;
+
+      if (page.items.length < PAGE_LIMIT || pageOffset >= total) {
+        fetchedAllPages = true;
+        break;
+      }
+      if (isPartialRequest || Date.now() - startedAt > SYNC_TIME_BUDGET_MS) break;
+    }
+
+    if (items.length === 0) {
       return {
         success: true,
         syncedCount: 0,
         sellers: [],
-        total: total || 0,
+        total,
       };
     }
 
@@ -788,6 +814,8 @@ export async function syncSellersFromSotka(
           store: row.store || existing.store,
           organization_id: row.organization_id || existing.organization_id || null,
           brands: row.brands || existing.brands || null,
+          registered_at: row.registered_at || existing.registered_at || null,
+          last_activity: row.last_activity || existing.last_activity || null,
         });
       } else {
         dedupedByPhoneMap.set(s.seller_phone, row);
@@ -795,6 +823,51 @@ export async function syncSellersFromSotka(
     }
 
     const uniqueSellers = Array.from(dedupedByPhoneMap.values());
+
+    // 6.1. Дата регистрации и последняя активность: если реестр Sotka их не передал,
+    // сохраняем уже известные значения (upsert иначе затер бы их пустыми)
+    const knownDates = new Map<string, { registered_at: string | null; last_activity: string | null }>();
+    const phones = uniqueSellers.map((s) => s.seller_phone);
+    for (let i = 0; i < phones.length; i += 200) {
+      const { data: known } = await supabase
+        .from('sellers')
+        .select('seller_phone, registered_at, last_activity')
+        .in('seller_phone', phones.slice(i, i + 200));
+      for (const k of known || []) {
+        knownDates.set(k.seller_phone, { registered_at: k.registered_at, last_activity: k.last_activity });
+      }
+    }
+    for (const s of uniqueSellers) {
+      const known = knownDates.get(s.seller_phone);
+      if (!s.registered_at && known?.registered_at) s.registered_at = known.registered_at;
+      if (!s.last_activity && known?.last_activity) s.last_activity = known.last_activity;
+    }
+
+    // 6.2. Нет даты регистрации ни в реестре, ни в CRM — берем из детальной карточки
+    // GET /api/private/v1/admin/sellers-overview/{organization_id}/ (platform.registered_at).
+    // Ограничено по количеству за один запуск: остальные дозаполнятся при следующих синхронизациях.
+    const missingRegistration = uniqueSellers
+      .filter((s) => !s.registered_at && s.organization_id)
+      .slice(0, DETAIL_BACKFILL_LIMIT);
+    for (let i = 0; i < missingRegistration.length; i += DETAIL_BACKFILL_CONCURRENCY) {
+      if (Date.now() - startedAt > SYNC_TIME_BUDGET_MS) break;
+      await Promise.all(
+        missingRegistration.slice(i, i + DETAIL_BACKFILL_CONCURRENCY).map(async (s) => {
+          try {
+            const detail = await fetchSellerDetail(token, s.organization_id as string);
+            s.registered_at = extractSellerDetailRegisteredAt(detail);
+            if (!s.last_activity) {
+              s.last_activity = parseDateToISO(detail?.platform?.last_activity);
+            }
+          } catch (detailErr: any) {
+            console.warn(
+              `[syncSellersFromSotka] Детальная карточка организации ${s.organization_id} недоступна:`,
+              detailErr?.message
+            );
+          }
+        })
+      );
+    }
 
     // 7. Сохранение пакетами (чанками) по 50 записей для предотвращения лимита параметров Postgres
     const CHUNK_SIZE = 50;
@@ -835,13 +908,13 @@ export async function syncSellersFromSotka(
     }
 
     // 8. Выявление продавцов, удаленных во внешнем Sotka HQ API (Soft-delete).
-    // Только если эта порция покрывает весь список Sotka: при частичной синхронизации (offset/limit)
+    // Только если выгружен весь список Sotka: при частичной синхронизации (offset/limit)
     // все продавцы вне порции ошибочно помечались бы удаленными.
     // Синхронизированные продавцы уже получили is_deleted_from_source = false в upsert.
     const syncedOrgIds = items
       .map((item) => (item.organization_id !== undefined && item.organization_id !== null ? String(item.organization_id) : ''))
       .filter(Boolean);
-    const isFullPass = offset === 0 && items.length >= (total || 0);
+    const isFullPass = offset === 0 && fetchedAllPages && items.length >= (total || 0);
 
     if (isFullPass && syncedOrgIds.length > 0 && hasDeletedFromSourceCol) {
       try {
@@ -869,10 +942,11 @@ export async function syncSellersFromSotka(
 
         const UPDATE_CHUNK = 200;
         for (let i = 0; i < phonesToMarkDeleted.length; i += UPDATE_CHUNK) {
-          await supabase
+          const { error: markErr } = await supabase
             .from('sellers')
-            .update({ is_deleted_from_source: true, updated_at: new Date().toISOString() } as any)
+            .update({ is_deleted_from_source: true })
             .in('seller_phone', phonesToMarkDeleted.slice(i, i + UPDATE_CHUNK));
+          if (markErr) throw markErr;
         }
       } catch (softDelErr) {
         console.warn('[syncSellersFromSotka] Ошибка при актуализации is_deleted_from_source:', softDelErr);
@@ -881,7 +955,7 @@ export async function syncSellersFromSotka(
 
     // Подробное серверное логирование
     console.log(
-      `[Sellers Sync] Получено от API: ${items.length}, уникальных после дедупликации: ${uniqueSellers.length}, успешно сохранено: ${savedCount}`
+      `[Sellers Sync] Получено от API: ${items.length} из ${total}, уникальных после дедупликации: ${uniqueSellers.length}, успешно сохранено: ${savedCount}, без даты регистрации: ${uniqueSellers.filter((s) => !s.registered_at).length}`
     );
 
     revalidatePath('/sellers');
@@ -904,6 +978,8 @@ export async function syncSellersFromSotka(
       total: 0,
       error: err.message || 'Ошибка синхронизации продавцов с Sotka API',
     };
+  } finally {
+    if (token) await logoutSotkaSession(token);
   }
 }
 
@@ -936,19 +1012,17 @@ export async function deleteSellerPermanently(
   try {
     const { supabase } = await requireAdmin();
 
-    // 1. Находим продавца
-    const { data: seller } = await supabase
-      .from('sellers')
-      .select('seller_phone, seller_id')
-      .or(`seller_phone.eq.${sellerPhoneOrId},seller_id.eq.${sellerPhoneOrId}`)
-      .maybeSingle();
-
-    const targetPhone = seller?.seller_phone || sellerPhoneOrId;
+    // 1. Находим продавца (в sellers нет колонки seller_id: ищем по organization_id или телефону)
+    const seller = await findSellerByKey(supabase, sellerPhoneOrId, ['seller_phone'] as const);
+    if (!seller) {
+      return { success: false, error: 'Продавец не найден' };
+    }
+    const targetPhone = seller.seller_phone;
 
     // 2. Отвязываем лиды
     await supabase
       .from('leads')
-      .update({ seller_phone: null, seller_id: null, linked_at: null, status: 'Назначен' } as any)
+      .update({ seller_phone: null, linked_at: null, status: 'Назначен' } as any)
       .eq('seller_phone', targetPhone);
 
     // 3. Удаляем связанные подключения
@@ -961,7 +1035,7 @@ export async function deleteSellerPermanently(
     const { error: delErr } = await supabase
       .from('sellers')
       .delete()
-      .or(`seller_phone.eq.${targetPhone},seller_id.eq.${sellerPhoneOrId}`);
+      .eq('seller_phone', targetPhone);
 
     if (delErr) throw delErr;
 

@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
-import { getSellerDetailFromSotka } from '@/app/sellers/actions';
+import { authenticateSotkaAdmin, fetchSellerDetail, logoutSotkaSession } from '@/lib/services/sotka-api';
+import { normalizeSellerTransactions } from '@/lib/sotka';
+import { findSellerByKey } from '@/lib/services/sellers';
 
 export async function GET(
   req: NextRequest,
@@ -16,22 +18,15 @@ export async function GET(
     }
 
     // 1. Поиск продавца для извлечения organization_id (sotka_id)
-    let { data: seller, error: sellerErr } = await supabase
-      .from('sellers')
-      .select('seller_id, seller_phone, seller_name, store, organization_id, manager_id')
-      .or(`seller_id.eq.${id},seller_phone.eq.${id}`)
-      .maybeSingle();
+    const seller = await findSellerByKey(supabase, id, [
+      'seller_phone',
+      'seller_name',
+      'store',
+      'organization_id',
+      'manager_id',
+    ] as const);
 
     if (!seller) {
-      const fallback = await supabase
-        .from('sellers')
-        .select('seller_id, seller_phone, seller_name, store, organization_id, manager_id')
-        .eq('seller_phone', id)
-        .maybeSingle();
-      seller = fallback.data;
-    }
-
-    if (sellerErr || !seller) {
       return apiError('Продавец не найден', 'NOT_FOUND', 404);
     }
 
@@ -40,52 +35,41 @@ export async function GET(
       return apiError('Доступ к транзакциям открыт только куратору данного продавца', 'FORBIDDEN', 403);
     }
 
+    const emptyTransactions = normalizeSellerTransactions(null);
+
     if (!seller.organization_id) {
       return apiSuccess({
         organization_id: null,
         seller_phone: seller.seller_phone,
-        transactions: {
-          items: [],
-          total: 0,
-          total_topups: 0,
-          total_charges: 0,
-          total_amount: 0,
-        },
+        transactions: emptyTransactions,
         message: 'Организация не синхронизирована с Sotka HQ (отсутствует organization_id)',
       });
     }
 
-    // 2. Получение детальной карточки продавца через Sotka HQ API
-    const res = await getSellerDetailFromSotka(seller.organization_id);
+    // 2. Детальная карточка продавца в Sotka HQ: GET /api/private/v1/admin/sellers-overview/{organization_id}/
+    // Права уже проверены выше (admin, supervisor, куратор-консультант), поэтому запрос идет напрямую,
+    // без серверного действия getSellerDetailFromSotka, доступного только администратору.
+    let token = '';
+    try {
+      token = await authenticateSotkaAdmin();
+      const detail = await fetchSellerDetail(token, seller.organization_id);
 
-    if (!res.success || !res.detail) {
       return apiSuccess({
         organization_id: seller.organization_id,
         seller_phone: seller.seller_phone,
-        transactions: {
-          items: [],
-          total: 0,
-          total_topups: 0,
-          total_charges: 0,
-          total_amount: 0,
-        },
-        warning: res.error || 'Не удалось получить данные из Sotka HQ API',
+        transactions: normalizeSellerTransactions(detail?.transactions),
       });
+    } catch (sotkaErr: any) {
+      console.warn('[Seller Transactions] Sotka HQ API недоступен:', sotkaErr?.message);
+      return apiSuccess({
+        organization_id: seller.organization_id,
+        seller_phone: seller.seller_phone,
+        transactions: emptyTransactions,
+        warning: sotkaErr?.message || 'Не удалось получить данные из Sotka HQ API',
+      });
+    } finally {
+      if (token) await logoutSotkaSession(token);
     }
-
-    const tx = res.detail.transactions || {
-      items: [],
-      total: 0,
-      total_topups: 0,
-      total_charges: 0,
-      total_amount: 0,
-    };
-
-    return apiSuccess({
-      organization_id: seller.organization_id,
-      seller_phone: seller.seller_phone,
-      transactions: tx,
-    });
   } catch (err) {
     return handleApiError(err);
   }

@@ -567,20 +567,20 @@ function LeadsContent() {
 
   const handleBatchDelete = async (clearSelection: () => void) => {
     if (selectedLeadIds.length === 0) return;
-    if (!window.confirm(`Вы уверены, что хотите перевести в статус «Отмена» ${selectedLeadIds.length} выбранных лидов?`)) {
+    if (!window.confirm(`Удалить навсегда ${selectedLeadIds.length} выбранных лидов? Действие нельзя отменить.`)) {
       return;
     }
     setIsBatchLoading(true);
     try {
-      await api.leads.batch({
+      const res = await api.leads.batch({
         lead_ids: selectedLeadIds,
         action: 'delete',
       });
-      showToast(`Исключено ${selectedLeadIds.length} лидов`, 'success');
+      showToast(`Удалено лидов: ${(res as any)?.affected_count ?? selectedLeadIds.length}`, 'success');
       clearSelection();
       await fetchInitialData();
     } catch (err: any) {
-      showToast(err.message || 'Ошибка массового исключения', 'error');
+      showToast(err.message || 'Ошибка массового удаления', 'error');
     } finally {
       setIsBatchLoading(false);
     }
@@ -966,10 +966,10 @@ function LeadsContent() {
                 disabled={isBatchLoading}
                 onClick={() => handleBatchDelete(clearSelection)}
                 className="h-8 px-2.5 rounded-xl bg-rose-500/30 hover:bg-rose-500/40 text-rose-300 text-xs font-semibold border border-rose-500/40 transition-colors flex items-center gap-1"
-                title="Исключить лиды"
+                title="Удалить выбранные лиды навсегда"
               >
                 <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                <span>Исключить</span>
+                <span>Удалить</span>
               </button>
             </div>
           )}

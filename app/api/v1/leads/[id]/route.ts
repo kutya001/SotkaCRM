@@ -160,13 +160,18 @@ export async function DELETE(
       return apiError('Лид не найден', 'NOT_FOUND', 404);
     }
 
-    // Физическое удаление (Hard Delete) для роли admin
-    const { error } = await supabase
+    // Физическое удаление (Hard Delete) для роли admin.
+    // select() возвращает удаленные строки: при запрете RLS удаление не даст ошибки, но вернет 0 строк
+    const { data: deleted, error } = await supabase
       .from('leads')
       .delete()
-      .eq('lead_id', id);
+      .eq('lead_id', id)
+      .select('lead_id');
 
     if (error) throw error;
+    if (!deleted || deleted.length === 0) {
+      return apiError('Лид не удален: нет прав на удаление в базе данных', 'DELETE_FORBIDDEN', 403);
+    }
 
     return apiSuccess({ success: true, deleted_id: id });
   } catch (err) {

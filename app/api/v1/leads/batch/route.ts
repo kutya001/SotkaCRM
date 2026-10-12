@@ -5,7 +5,7 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { supabase } = await requireAdmin();
     const body = await req.json();
 
     const parsed = LeadsBatchActionSchema.safeParse(body);
@@ -72,36 +72,21 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete') {
-      // Физический DELETE запрещен инвариантом базы (триггер prevent_lead_delete).
-      // Переводим лиды в статус 'Отмена' с примечанием администратора.
-      const now = new Date().toLocaleDateString('ru-RU');
-      const note = `[Отмена (${now})]: Массовое исключение администратором ${profile.full_name}`;
-
-      const { data: existingLeads } = await supabase
+      // Физическое удаление (admin): разрешено триггером check_lead_deletion_permission
+      // и политикой leads_delete_policy (миграция 032)
+      const { data: deleted, error } = await supabase
         .from('leads')
-        .select('lead_id, comment')
-        .in('lead_id', targetLeadIds);
+        .delete()
+        .in('lead_id', targetLeadIds)
+        .select('lead_id');
 
-      const updatePromises = (existingLeads || []).map((lead) => {
-        const updatedComment = lead.comment ? `${lead.comment}\n${note}` : note;
-        return supabase
-          .from('leads')
-          .update({
-            status: 'Отмена',
-            comment: updatedComment,
-            updated_at: new Date().toISOString(),
-          } as any)
-          .eq('lead_id', lead.lead_id);
-      });
-
-      await Promise.all(updatePromises);
+      if (error) throw error;
 
       return apiSuccess({
         success: true,
         action,
-        affected_count: existingLeads?.length || 0,
-        ids: targetLeadIds,
-        status: 'Отмена',
+        affected_count: deleted?.length || 0,
+        ids: (deleted || []).map((l) => l.lead_id),
       });
     }
 

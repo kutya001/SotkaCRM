@@ -28,6 +28,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
+-- Политика, открывавшая anon чтение всех сотрудников (логины, телефоны)
+DROP POLICY IF EXISTS users_anon_select_policy ON public.users;
+
 -- ------------------------------------------------------------------------------
 -- 2. Серверные RPC: только service_role (все перегрузки)
 -- ------------------------------------------------------------------------------

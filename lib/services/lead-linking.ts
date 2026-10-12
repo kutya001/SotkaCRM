@@ -48,8 +48,11 @@ export async function linkLeadToSellerAtomic(
     }
   }
 
+  // p_user_id однозначно выбирает 5-аргументную перегрузку (в БД есть и 4-аргументная,
+  // без p_user_id PostgREST не может выбрать между ними)
   const { data, error } = await createAdminClient().rpc('link_lead_to_seller', {
     p_lead_id: params.leadId,
+    p_user_id: profile.user_id,
     p_seller_phone: params.sellerPhone,
     p_manager_id: (isPrivileged && params.managerId) || undefined,
     p_assigned_by: profile.user_id,

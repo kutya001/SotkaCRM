@@ -439,6 +439,94 @@ export async function getPayoutsStats(accrualMonth?: string): Promise<PayoutsSta
 }
 
 /**
+ * Прямое проведение операции по ЗП (повторяет process_employee_payout_atomic из миграции 019).
+ * Используется, когда в БД нет актуальной версии RPC. Вызывать только после requireAdmin().
+ */
+async function insertSalaryOperationDirect(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  op: {
+    userId: string;
+    settlementMonth: string;
+    date: string;
+    amount: number;
+    sign: SalaryOperationSign;
+    operationType: string;
+    category: PayoutCategoryType;
+    paymentMethod: string | null;
+    comment: string;
+    connectionId: string | null;
+    sellerPhone: string | null;
+    createdBy: string;
+    accrualIds?: string[];
+  }
+): Promise<{ success: boolean; error?: string; payoutId?: string }> {
+  const { data: employee } = await adminSupabase
+    .from('users')
+    .select('user_id, is_active')
+    .eq('user_id', op.userId)
+    .maybeSingle();
+
+  if (!employee) {
+    return { success: false, error: 'Сотрудник не найден' };
+  }
+  if (!employee.is_active) {
+    return { success: false, error: 'Невозможно провести операцию для заблокированного сотрудника' };
+  }
+
+  let category: PayoutCategoryType = op.category;
+  if (op.operationType === 'advance') category = 'аванс';
+  else if (op.operationType === 'deduction' || op.operationType === 'fine') category = 'удержание';
+  else if (['salary_base', 'accrual_maintenance'].includes(op.operationType)) category = 'прочие начисления';
+  else if (['bonus_other', 'accrual_connection'].includes(op.operationType)) category = 'бонус';
+
+  const { data: inserted, error: insertErr } = await adminSupabase
+    .from('employee_payouts')
+    .insert({
+      user_id: op.userId,
+      employee_id: op.userId,
+      accrual_month: op.settlementMonth,
+      settlement_month: op.settlementMonth,
+      actual_date: op.date,
+      payout_date: op.date,
+      amount: op.amount,
+      operation_sign: op.sign,
+      operation_type: op.operationType,
+      payout_category: category,
+      payment_method: op.paymentMethod,
+      connection_id: op.connectionId,
+      seller_phone: op.sellerPhone,
+      note: op.comment,
+      comment: op.comment,
+      description: op.comment,
+      status: 'paid',
+      created_by: op.createdBy,
+    } as any)
+    .select('payout_id')
+    .single();
+
+  if (insertErr || !inserted) {
+    console.error('Error creating salary operation directly:', insertErr);
+    return { success: false, error: insertErr?.message || 'Ошибка проведения операции по ЗП' };
+  }
+
+  if (op.accrualIds && op.accrualIds.length > 0) {
+    // Закрываем только неоплаченные начисления этого же сотрудника
+    const { error: accrualsErr } = await adminSupabase
+      .from('connection_accruals')
+      .update({ is_paid: true, payout_id: inserted.payout_id, paid_at: new Date().toISOString() } as any)
+      .in('id', op.accrualIds)
+      .eq('employee_id', op.userId)
+      .eq('is_paid', false);
+
+    if (accrualsErr) {
+      console.error('Error closing accruals for payout:', accrualsErr);
+    }
+  }
+
+  return { success: true, payoutId: inserted.payout_id };
+}
+
+/**
  * Создание операции по ЗП (начисление, удержание, штраф или выплата) — строго роль admin
  */
 export async function createPayout(
@@ -472,35 +560,66 @@ export async function createPayout(
         ? 'аванс'
         : (valid.payout_category || 'выплата зп');
 
+    const adminSupabase = createAdminClient();
+    const operationType = valid.operation_type || 'payout';
+    const paymentMethod = valid.payment_method ? valid.payment_method.trim() : null;
+    const comment = (valid.note || valid.comment || valid.description || '').trim();
+    const accrualIds = valid.accrual_ids && valid.accrual_ids.length > 0 ? valid.accrual_ids : undefined;
+
     // RPC доступна только service_role (миграция 029), права admin проверены выше
-    const { data, error } = await createAdminClient().rpc('process_employee_payout_atomic', {
+    const { data, error } = await adminSupabase.rpc('process_employee_payout_atomic', {
       p_user_id: valid.user_id,
       p_accrual_month: effMonth,
       p_payout_date: effDate,
       p_amount: roundMoney(valid.amount),
       p_payout_category: effCategory,
-      p_payment_method: valid.payment_method ? valid.payment_method.trim() : null,
-      p_comment: (valid.note || valid.comment || valid.description || '').trim(),
+      p_payment_method: paymentMethod,
+      p_comment: comment,
       p_created_by: profile.user_id,
-      p_operation_type: valid.operation_type || 'payout',
+      p_operation_type: operationType,
       p_settlement_month: effMonth,
-      p_accrual_ids: valid.accrual_ids && valid.accrual_ids.length > 0 ? valid.accrual_ids : undefined,
+      p_accrual_ids: accrualIds,
       p_operation_sign: effSign,
       p_connection_id: valid.connection_id || undefined,
       p_seller_phone: valid.seller_phone || undefined,
     });
 
+    let payoutId: string | undefined = (data as any)?.payout_id;
+
     if (error) {
-      console.error('Error creating salary operation atomically:', error);
-      return { success: false, error: error.message };
+      // PGRST202: в БД нет 14-параметровой версии из миграции 019 (есть только 11-параметровая,
+      // которая не знает operation_sign) — проводим операцию напрямую с той же логикой
+      if (error.code !== 'PGRST202') {
+        console.error('Error creating salary operation atomically:', error);
+        return { success: false, error: error.message };
+      }
+
+      const direct = await insertSalaryOperationDirect(adminSupabase, {
+        userId: valid.user_id,
+        settlementMonth: effMonth,
+        date: effDate,
+        amount: roundMoney(valid.amount),
+        sign: effSign,
+        operationType,
+        category: effCategory,
+        paymentMethod,
+        comment,
+        connectionId: valid.connection_id || null,
+        sellerPhone: valid.seller_phone || null,
+        createdBy: profile.user_id,
+        accrualIds,
+      });
+      if (!direct.success) {
+        return { success: false, error: direct.error };
+      }
+      payoutId = direct.payoutId;
     }
 
     revalidatePath('/payouts');
     revalidatePath('/connections');
     revalidatePath('/profile');
 
-    const res = data as any;
-    return { success: true, payout_id: res?.payout_id };
+    return { success: true, payout_id: payoutId };
   } catch (err: any) {
     return { success: false, error: err.message || 'Ошибка проведения операции по ЗП' };
   }

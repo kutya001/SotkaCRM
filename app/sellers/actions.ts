@@ -20,6 +20,7 @@ import {
   type NormalizedSotkaSeller,
   type SotkaSellerDetail,
   type SotkaSellerOverviewItem,
+  SotkaAuthError,
 } from '@/lib/sotka';
 
 /** Бюджет времени синхронизации (serverless-функция Vercel) */
@@ -670,6 +671,7 @@ export async function syncSellersFromSotka(
   sellers: NormalizedSotkaSeller[];
   total: number;
   error?: string;
+  errorCode?: string;
 }> {
   let token = '';
   try {
@@ -977,6 +979,7 @@ export async function syncSellersFromSotka(
       sellers: [],
       total: 0,
       error: err.message || 'Ошибка синхронизации продавцов с Sotka API',
+      errorCode: err instanceof SotkaAuthError ? err.code : undefined,
     };
   } finally {
     if (token) await logoutSotkaSession(token);

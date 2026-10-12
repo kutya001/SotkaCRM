@@ -13,6 +13,29 @@ import type { FetchParams, SotkaAuthResponse } from './types';
 
 const BASE_URL = (process.env.SOTKA_API_BASE_URL || 'https://api.sotka.kg').replace(/\/+$/, '');
 
+/** Sotka HQ отклонил учетные данные CRM (401/403 на /auth/pair) */
+export class SotkaAuthError extends Error {
+  readonly code = 'SOTKA_AUTH_FAILED';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'SotkaAuthError';
+  }
+}
+
+/** Текст ошибки из ответа Sotka: detail из JSON или сырое тело */
+async function readErrorDetail(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => '');
+  try {
+    const json = JSON.parse(raw);
+    if (typeof json.detail === 'string') return json.detail;
+    if (json.detail && typeof json.detail === 'object') return JSON.stringify(json.detail);
+    return JSON.stringify(json);
+  } catch {
+    return raw || response.statusText;
+  }
+}
+
 /**
  * Авторизация в Sotka API с полиморфным извлечением JWT Bearer токена
  */
@@ -50,18 +73,12 @@ export async function authenticateSotka(): Promise<string> {
   });
 
   if (!response.ok) {
-    let errorDetail = '';
-    try {
-      const errorJson = await response.json();
-      if (typeof errorJson.detail === 'string') {
-        errorDetail = errorJson.detail;
-      } else if (typeof errorJson.detail === 'object') {
-        errorDetail = JSON.stringify(errorJson.detail);
-      } else {
-        errorDetail = JSON.stringify(errorJson);
-      }
-    } catch {
-      errorDetail = await response.text();
+    const errorDetail = await readErrorDetail(response);
+    if (response.status === 401 || response.status === 403) {
+      throw new SotkaAuthError(
+        `Sotka HQ отклонил логин или пароль CRM (${response.status}: ${errorDetail}). ` +
+          'Обновите SOTKA_API_PHONE и SOTKA_API_PASSWORD в Vercel → Settings → Environment Variables и выполните Redeploy.'
+      );
     }
     throw new Error(`Ошибка авторизации в Sotka API (${response.status}): ${errorDetail}`);
   }

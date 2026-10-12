@@ -17,6 +17,35 @@ export interface EmployeeItem {
   is_active: boolean;
   color: string;
   created_at: string;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  inn: string | null;
+  birth_date: string | null;
+  gender: 'male' | 'female' | null;
+  bio: string | null;
+}
+
+/** Поля анкеты сотрудника (адрес, координаты, ИНН, дата рождения, пол, биография) */
+export interface EmployeeProfileFields {
+  address?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  inn?: string | null;
+  birth_date?: string | null;
+  gender?: 'male' | 'female' | '' | null;
+  bio?: string | null;
+}
+
+const PROFILE_FIELD_KEYS = ['address', 'latitude', 'longitude', 'inn', 'birth_date', 'gender', 'bio'] as const;
+
+/** Переносит заданные (не undefined) поля анкеты из валидированного ввода в объект обновления */
+function pickProfileFields(valid: Record<string, any>): Database['public']['Tables']['users']['Update'] {
+  const updates: Record<string, any> = {};
+  for (const key of PROFILE_FIELD_KEYS) {
+    if (valid[key] !== undefined) updates[key] = valid[key];
+  }
+  return updates;
 }
 
 export interface GetEmployeesParams {
@@ -61,6 +90,17 @@ async function requireAdminAuth() {
   return { supabase, user, profile };
 }
 
+/** Понятные сообщения для ограничений анкеты (миграция 030) */
+function friendlyProfileError(message: string): string {
+  if (message.includes('users_inn_unique')) return 'Сотрудник с таким ИНН уже есть в системе';
+  if (message.includes('users_inn_format')) return 'ИНН должен состоять из 14 цифр';
+  if (message.includes('users_coordinates_pair')) return 'Укажите и широту, и долготу';
+  if (message.includes('column') && /address|latitude|longitude|inn|birth_date|gender|bio/.test(message)) {
+    return 'В базе нет полей анкеты сотрудника: примените миграцию 030_employee_profile_fields.sql';
+  }
+  return message;
+}
+
 /**
  * Кэшированная выборка сотрудников через unstable_cache
  */
@@ -81,9 +121,12 @@ const fetchCachedEmployees = unstable_cache(
 
     let query = supabase
       .from('users')
-      .select('user_id, login, full_name, phone, role, is_active, color, created_at', {
-        count: 'exact',
-      });
+      .select(
+        'user_id, login, full_name, phone, role, is_active, color, created_at, address, latitude, longitude, inn, birth_date, gender, bio',
+        {
+          count: 'exact',
+        }
+      );
 
     // Поиск по ФИО, логину или телефону
     if (search.trim()) {
@@ -156,7 +199,7 @@ export async function createEmployee(input: {
   phone?: string;
   role: UserRole;
   color?: string;
-}): Promise<{ success: boolean; userId?: string; error?: string }> {
+} & EmployeeProfileFields): Promise<{ success: boolean; userId?: string; error?: string }> {
   try {
     const { supabase } = await requireAdminAuth();
 
@@ -175,11 +218,21 @@ export async function createEmployee(input: {
       role: valid.role,
     });
 
-    if (res.success && res.userId && cleanColor) {
-      await supabase
-        .from('users')
-        .update({ color: cleanColor })
-        .eq('user_id', res.userId);
+    if (res.success && res.userId) {
+      const extra: Database['public']['Tables']['users']['Update'] = pickProfileFields(valid);
+      if (cleanColor) extra.color = cleanColor;
+      if (Object.keys(extra).length > 0) {
+        const { error: extraErr } = await supabase.from('users').update(extra).eq('user_id', res.userId);
+        if (extraErr) {
+          revalidateTag('employees');
+          revalidatePath('/employees');
+          return {
+            success: false,
+            userId: res.userId,
+            error: `Сотрудник создан, но анкета не сохранена: ${friendlyProfileError(extraErr.message)}`,
+          };
+        }
+      }
     }
     if (res.success) {
       revalidateTag('employees');
@@ -205,7 +258,7 @@ export async function updateEmployee(
     role?: UserRole;
     is_active?: boolean;
     color?: string;
-  }
+  } & EmployeeProfileFields
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const { supabase } = await requireAdminAuth();
@@ -216,7 +269,7 @@ export async function updateEmployee(
     }
     const valid = parsed.data;
 
-    const updates: Database['public']['Tables']['users']['Update'] = {};
+    const updates: Database['public']['Tables']['users']['Update'] = pickProfileFields(valid);
     if (valid.full_name !== undefined) {
       updates.full_name = valid.full_name.trim();
     }
@@ -245,7 +298,7 @@ export async function updateEmployee(
       .single();
 
     if (updateError) {
-      return { success: false, error: updateError.message };
+      return { success: false, error: friendlyProfileError(updateError.message) };
     }
 
     // Синхронизация user_metadata в auth.users

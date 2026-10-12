@@ -34,11 +34,22 @@ import {
   Percent,
   Trash2,
   X,
+  MapPin,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 import { ColorPicker } from '@/components/ui/ColorPicker';
 import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
 import { DEFAULT_EMPLOYEE_COLOR } from '@/lib/constants/colors';
+import {
+  EmployeeProfileFields,
+  EMPTY_EMPLOYEE_PROFILE,
+  GENDER_LABELS,
+  ageFromBirthDate,
+  employeeProfileToForm,
+  employeeProfileToPayload,
+  mapLinkForCoordinates,
+  type EmployeeProfileFormValue,
+} from '@/components/employees/EmployeeProfileFields';
 
 export default function EmployeesPage() {
   const router = useRouter();
@@ -65,6 +76,7 @@ export default function EmployeesPage() {
   const [newPhone, setNewPhone] = React.useState('');
   const [newRole, setNewRole] = React.useState<UserRole>('consultant');
   const [newColor, setNewColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
+  const [newProfile, setNewProfile] = React.useState<EmployeeProfileFormValue>(EMPTY_EMPLOYEE_PROFILE);
   const [isCreating, setIsCreating] = React.useState(false);
 
   // Модальное окно редактирования сотрудника
@@ -75,6 +87,7 @@ export default function EmployeesPage() {
   const [editRole, setEditRole] = React.useState<UserRole>('consultant');
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
+  const [editProfile, setEditProfile] = React.useState<EmployeeProfileFormValue>(EMPTY_EMPLOYEE_PROFILE);
   const [isUpdating, setIsUpdating] = React.useState(false);
 
   // Персональные процентные ставки сотрудника (мотивация)
@@ -129,6 +142,21 @@ export default function EmployeesPage() {
     fetchEmployeesData();
   }, [fetchEmployeesData]);
 
+  // Проверка анкеты до отправки (сервер проверяет те же правила)
+  const validateProfile = (profile: EmployeeProfileFormValue): string | null => {
+    if (profile.inn && !/^\d{14}$/.test(profile.inn)) return 'ИНН должен состоять из 14 цифр';
+    const hasLat = profile.latitude.trim() !== '';
+    const hasLon = profile.longitude.trim() !== '';
+    if (hasLat !== hasLon) return 'Укажите и широту, и долготу (или очистите оба поля)';
+    if (hasLat) {
+      const lat = Number(profile.latitude.replace(',', '.'));
+      const lon = Number(profile.longitude.replace(',', '.'));
+      if (!Number.isFinite(lat) || Math.abs(lat) > 90) return 'Широта должна быть числом от −90 до 90';
+      if (!Number.isFinite(lon) || Math.abs(lon) > 180) return 'Долгота должна быть числом от −180 до 180';
+    }
+    return null;
+  };
+
   // Обработка создания
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,6 +172,11 @@ export default function EmployeesPage() {
       showToast('Укажите корректное ФИО сотрудника', 'error');
       return;
     }
+    const newProfileError = validateProfile(newProfile);
+    if (newProfileError) {
+      showToast(newProfileError, 'error');
+      return;
+    }
 
     setIsCreating(true);
     try {
@@ -154,6 +187,7 @@ export default function EmployeesPage() {
         phone: newPhone.trim() || undefined,
         role: newRole,
         color: newColor,
+        ...employeeProfileToPayload(newProfile),
       });
 
       showToast(`Сотрудник ${newFullName} успешно добавлен`, 'success');
@@ -164,6 +198,7 @@ export default function EmployeesPage() {
       setNewPhone('');
       setNewRole('consultant');
       setNewColor(DEFAULT_EMPLOYEE_COLOR);
+      setNewProfile(EMPTY_EMPLOYEE_PROFILE);
       fetchEmployeesData();
     } catch (err: any) {
       showToast(err.message || 'Ошибка при создании сотрудника', 'error');
@@ -180,6 +215,7 @@ export default function EmployeesPage() {
     setEditRole(emp.role);
     setEditColor(emp.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(emp.is_active);
+    setEditProfile(employeeProfileToForm(emp));
     setNewRatePeriod(new Date().toISOString().substring(0, 7));
     setNewConnPercent(50);
     setNewMaintPercent(10);
@@ -249,6 +285,11 @@ export default function EmployeesPage() {
       showToast('ФИО должно содержать минимум 2 символа', 'error');
       return;
     }
+    const editProfileError = validateProfile(editProfile);
+    if (editProfileError) {
+      showToast(editProfileError, 'error');
+      return;
+    }
 
     setIsUpdating(true);
     try {
@@ -258,6 +299,7 @@ export default function EmployeesPage() {
         role: editRole,
         is_active: editIsActive,
         color: editColor,
+        ...employeeProfileToPayload(editProfile),
       });
 
       showToast('Данные сотрудника обновлены', 'success');
@@ -439,6 +481,65 @@ export default function EmployeesPage() {
       ),
     },
     {
+      key: 'birth_date',
+      label: 'Дата рождения',
+      sortable: true,
+      renderCell: (item: EmployeeItem) => {
+        if (!item.birth_date) return <span className="text-xs text-zinc-400">—</span>;
+        const age = ageFromBirthDate(item.birth_date);
+        return (
+          <span className="text-xs text-zinc-600 dark:text-zinc-300">
+            <FormattedDate date={item.birth_date} type="date" />
+            {age !== null && <span className="text-zinc-400"> • {age} лет</span>}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'gender',
+      label: 'Пол',
+      sortable: true,
+      renderCell: (item: EmployeeItem) => (
+        <span className="text-xs text-zinc-600 dark:text-zinc-300">
+          {item.gender ? GENDER_LABELS[item.gender] : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'inn',
+      label: 'ИНН',
+      renderCell: (item: EmployeeItem) => (
+        <span className="font-mono text-xs text-zinc-600 dark:text-zinc-300">{item.inn || '—'}</span>
+      ),
+    },
+    {
+      key: 'address',
+      label: 'Адрес проживания',
+      renderCell: (item: EmployeeItem) => {
+        const hasPoint = item.latitude !== null && item.longitude !== null;
+        if (!item.address && !hasPoint) return <span className="text-xs text-zinc-400">—</span>;
+        return (
+          <div className="flex items-center gap-1.5 min-w-0">
+            {hasPoint && (
+              <a
+                href={mapLinkForCoordinates(Number(item.latitude), Number(item.longitude))}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="p-1 rounded-lg text-rose-500 hover:bg-rose-500/10 flex-shrink-0"
+                title="Показать на карте"
+              >
+                <MapPin className="w-3.5 h-3.5" strokeWidth={1.75} />
+              </a>
+            )}
+            <span className="text-xs text-zinc-600 dark:text-zinc-300 truncate" title={item.address || ''}>
+              {item.address || `${item.latitude}, ${item.longitude}`}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
       key: 'created_at',
       label: 'Дата добавления',
       sortable: true,
@@ -578,7 +679,7 @@ export default function EmployeesPage() {
         {isCreateModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
             <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
+              className="w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between">
@@ -666,6 +767,11 @@ export default function EmployeesPage() {
                   onChange={setNewColor}
                   label="Цвет индикатора сотрудника"
                 />
+
+                <div className="pt-3 border-t border-zinc-200/70 dark:border-zinc-800/70 space-y-3">
+                  <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">Анкета сотрудника</h4>
+                  <EmployeeProfileFields value={newProfile} onChange={setNewProfile} />
+                </div>
 
                 <div className="flex items-center justify-end gap-2.5 pt-3">
                   <button
@@ -762,6 +868,11 @@ export default function EmployeesPage() {
                   onChange={setEditColor}
                   label="Цвет индикатора сотрудника"
                 />
+
+                <div className="pt-3 border-t border-zinc-200/70 dark:border-zinc-800/70 space-y-3">
+                  <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">Анкета сотрудника</h4>
+                  <EmployeeProfileFields value={editProfile} onChange={setEditProfile} />
+                </div>
 
                 <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
                   <div>

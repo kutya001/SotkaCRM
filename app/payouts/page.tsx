@@ -209,6 +209,11 @@ export default function PayoutsPage() {
       return;
     }
 
+    // Месяц вводится вручную: не запрашиваем лист, пока значение неполное (например, '2026-0')
+    if (!/^\d{4}-\d{2}$/.test(formData.settlement_month || '')) {
+      return;
+    }
+
     setIsLoadingPreview(true);
     api.payouts
       .getPayrollSheet({ employeeId: formData.user_id, month: formData.settlement_month })

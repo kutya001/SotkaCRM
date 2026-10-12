@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { usePathname } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { UserRole } from '@/types/database.types';
 
@@ -44,96 +45,45 @@ function getCookie(name: string): string | null {
 
 interface AuthProviderProps {
   children: React.ReactNode;
-  initialRole?: UserRole;
-  initialUserName?: string;
-  initialUserLogin?: string;
 }
 
-export function AuthProvider({
-  children,
-  initialRole,
-  initialUserName,
-  initialUserLogin,
-}: AuthProviderProps) {
-  const [profile, setProfile] = React.useState<UserProfile | null>(() => {
-    if (typeof window === 'undefined') return null;
-    try {
-      const cached = localStorage.getItem(STORAGE_KEY);
-      if (cached) return JSON.parse(cached) as UserProfile;
-    } catch {}
-    return null;
-  });
+const KNOWN_ROLES: UserRole[] = ['admin', 'consultant', 'smm', 'supervisor'];
 
-  const [role, setRole] = React.useState<UserRole>(() => {
-    if (initialRole && ['admin', 'consultant', 'smm'].includes(initialRole)) {
-      return initialRole;
-    }
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = localStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed?.role && ['admin', 'consultant', 'smm'].includes(parsed.role)) {
-            return parsed.role as UserRole;
-          }
-        }
-      } catch {}
-      const fromCookie = getCookie('crm_role');
-      if (fromCookie && ['admin', 'consultant', 'smm'].includes(fromCookie)) {
-        return fromCookie as UserRole;
-      }
-    }
-    return 'consultant';
-  });
+// useLayoutEffect на клиенте (до отрисовки кадра), без предупреждений при SSR
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
 
-  const [userName, setUserName] = React.useState<string>(() => {
-    if (initialUserName) return initialUserName;
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = localStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed?.full_name) return parsed.full_name;
-        }
-      } catch {}
-      const fromCookie = getCookie('crm_user_name');
-      if (fromCookie) return decodeURIComponent(fromCookie);
-    }
-    return 'Сотрудник CRM';
-  });
-
-  const [userLogin, setUserLogin] = React.useState<string>(() => {
-    if (initialUserLogin) return initialUserLogin;
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = localStorage.getItem(STORAGE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed?.login) return parsed.login;
-        }
-      } catch {}
-      const fromCookie = getCookie('crm_user_login');
-      if (fromCookie) return fromCookie;
-    }
-    return 'user';
-  });
-
+export function AuthProvider({ children }: AuthProviderProps) {
+  // Начальное состояние одинаково на сервере и клиенте (страницы статические, без cookies на сервере),
+  // кэшированный профиль подставляется до первой отрисовки в layout-эффекте ниже
+  const [profile, setProfile] = React.useState<UserProfile | null>(null);
+  const [role, setRole] = React.useState<UserRole>('consultant');
+  const [userName, setUserName] = React.useState<string>('Сотрудник CRM');
+  const [userLogin, setUserLogin] = React.useState<string>('user');
   const [isLoading, setIsLoading] = React.useState(false);
 
-  // Синхронная инициализация из localStorage на первом кадре для 0ms задержки
-  React.useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     try {
       const cached = localStorage.getItem(STORAGE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached) as UserProfile;
-        if (parsed && parsed.role) {
+        if (parsed && KNOWN_ROLES.includes(parsed.role)) {
           setProfile(parsed);
           setRole(parsed.role);
           setUserName(parsed.full_name || 'Сотрудник CRM');
           setUserLogin(parsed.login || 'user');
+          return;
         }
       }
     } catch {}
+
+    const cookieRole = getCookie('crm_role');
+    if (cookieRole && KNOWN_ROLES.includes(cookieRole as UserRole)) {
+      setRole(cookieRole as UserRole);
+    }
+    const cookieName = getCookie('crm_user_name');
+    if (cookieName) setUserName(cookieName);
+    const cookieLogin = getCookie('crm_user_login');
+    if (cookieLogin) setUserLogin(cookieLogin);
   }, []);
 
   const refreshUser = React.useCallback(async () => {
@@ -209,6 +159,19 @@ export function AuthProvider({
       subscription.unsubscribe();
     };
   }, [refreshUser]);
+
+  // Вход выполняется серверным экшеном с клиентской навигацией (без перезагрузки страницы):
+  // браузерный клиент не получает SIGNED_IN, поэтому подтягиваем профиль при уходе со /login
+  const pathname = usePathname();
+  const prevPathnameRef = React.useRef(pathname);
+  React.useEffect(() => {
+    // Первый рендер покрыт refreshUser() при монтировании
+    if (prevPathnameRef.current === pathname) return;
+    prevPathnameRef.current = pathname;
+    if (!profile && pathname && !pathname.startsWith('/login')) {
+      refreshUser();
+    }
+  }, [pathname, profile, refreshUser]);
 
   const signOut = React.useCallback(async () => {
     try {

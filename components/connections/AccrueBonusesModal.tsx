@@ -24,7 +24,9 @@ export function AccrueBonusesModal({
   const [selectedMonth, setSelectedMonth] = React.useState<string>(
     months[0] || currentMonthStr
   );
-  const [accrualType, setAccrualType] = React.useState<'all' | 'connection' | 'maintenance'>('all');
+  // Бонус за подключение начисляется автоматически при подключении (миграция 035),
+  // поэтому процедура по умолчанию — сопровождение
+  const [accrualType, setAccrualType] = React.useState<'all' | 'connection' | 'maintenance'>('maintenance');
   const [isLoading, setIsLoading] = React.useState(false);
   const [result, setResult] = React.useState<{
     connection_bonuses_created: number;
@@ -85,10 +87,10 @@ export function AccrueBonusesModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                Начисления
+                Начисление за сопровождение
               </h3>
               <p className="text-xs text-zinc-400">
-                Пакетный расчет бонусов за подключение и сопровождение
+                Запускается администратором за расчетный месяц
               </p>
             </div>
           </div>
@@ -106,38 +108,38 @@ export function AccrueBonusesModal({
           {/* Варианты начислений */}
           <div>
             <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-2">
-              Вид начисления
+              Процедура
             </label>
             <div className="grid grid-cols-1 gap-2">
               <button
                 type="button"
-                onClick={() => setAccrualType('all')}
+                onClick={() => setAccrualType('maintenance')}
                 className={`w-full p-2.5 rounded-2xl border text-left flex items-start gap-3 transition-all cursor-pointer ${
-                  accrualType === 'all'
+                  accrualType === 'maintenance'
                     ? 'border-emerald-500 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100 shadow-sm'
                     : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/70'
                 }`}
               >
                 <div
                   className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                    accrualType === 'all'
+                    accrualType === 'maintenance'
                       ? 'bg-emerald-600 text-white'
                       : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'
                   }`}
                 >
-                  <Coins className="w-4 h-4" strokeWidth={2} />
+                  <Clock className="w-4 h-4" strokeWidth={2} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">Все начисления</span>
-                    {accrualType === 'all' && (
+                    <span className="text-xs font-bold">Сопровождение за месяц</span>
+                    {accrualType === 'maintenance' && (
                       <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center">
                         <Check className="w-2.5 h-2.5" strokeWidth={3} />
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 leading-snug">
-                    Подключение + Ежемесячное сопровождение
+                    Ежемесячный бонус кураторам за выбранный расчетный месяц — со следующего месяца после подключения
                   </p>
                 </div>
               </button>
@@ -162,7 +164,7 @@ export function AccrueBonusesModal({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">Только за подключение</span>
+                    <span className="text-xs font-bold">Проверить бонусы за подключение</span>
                     {accrualType === 'connection' && (
                       <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center">
                         <Check className="w-2.5 h-2.5" strokeWidth={3} />
@@ -170,40 +172,7 @@ export function AccrueBonusesModal({
                     )}
                   </div>
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 leading-snug">
-                    Первичные бонусы кураторам за закрепленных продавцов
-                  </p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAccrualType('maintenance')}
-                className={`w-full p-2.5 rounded-2xl border text-left flex items-start gap-3 transition-all cursor-pointer ${
-                  accrualType === 'maintenance'
-                    ? 'border-emerald-500 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100 shadow-sm'
-                    : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/70'
-                }`}
-              >
-                <div
-                  className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                    accrualType === 'maintenance'
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'
-                  }`}
-                >
-                  <Clock className="w-4 h-4" strokeWidth={2} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">Только за сопровождение</span>
-                    {accrualType === 'maintenance' && (
-                      <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center">
-                        <Check className="w-2.5 h-2.5" strokeWidth={3} />
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 leading-snug">
-                    Ежемесячный бонус сопровождения за выбранный расчетный месяц
+                    Бонус за подключение начисляется автоматически в момент подключения. Эта проверка доначисляет его подключениям, у которых начисления нет (созданы до автоначисления или без куратора)
                   </p>
                 </div>
               </button>
@@ -233,10 +202,8 @@ export function AccrueBonusesModal({
               <Calendar className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
             </div>
             <p className="text-[11px] text-zinc-400 mt-1.5 leading-relaxed">
-              {accrualType === 'all'
-                ? 'Система проверит всех активных подключенных продавцов и начислит недостающие бонусы за подключение и за сопровождение за выбранный месяц. Сопровождение начисляется только со следующего месяца после подключения.'
-                : accrualType === 'connection'
-                ? 'Система проверит всех подключенных продавцов и начислит недостающие первичные бонусы за подключение.'
+              {accrualType === 'connection'
+                ? 'Система проверит все подключения с куратором и доначислит бонус за подключение там, где его нет.'
                 : 'Система начислит ежемесячный бонус сопровождения за указанный период (при соблюдении лимита месяцев). В месяце начисления за подключение сопровождение не начисляется.'}
             </p>
           </div>

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
 
 export async function POST(req: NextRequest) {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Действие: Выборочное начисление бонусов по списку подключений
     if (action === 'accrue_selected') {
-      const mode = (payload?.mode || 'all').toLowerCase();
+      const mode = (payload?.mode || 'maintenance').toLowerCase();
       const settlementMonth = payload?.month || payload?.settlement_month || new Date().toISOString().slice(0, 7);
 
       // 2.1. Попытка вызова RPC-процедуры в СУБД
@@ -61,6 +62,7 @@ export async function POST(req: NextRequest) {
         });
 
         if (!rpcErr && rpcRes && (rpcRes as any).success) {
+          scheduleTelegramDispatch();
           return apiSuccess({
             success: true,
             action: 'accrue_selected',
@@ -254,6 +256,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      scheduleTelegramDispatch();
       return apiSuccess({
         success: true,
         action: 'accrue_selected',

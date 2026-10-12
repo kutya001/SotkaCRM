@@ -3,6 +3,7 @@ import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
 
 export async function POST(req: NextRequest) {
@@ -10,7 +11,8 @@ export async function POST(req: NextRequest) {
     const { supabase } = await requireAdmin();
 
     let targetMonth = new Date().toISOString().slice(0, 7);
-    let accrualType: 'all' | 'connection' | 'maintenance' = 'all';
+    // Бонус за подключение начисляется автоматически (триггер 035): процедура по умолчанию — сопровождение
+    let accrualType: 'all' | 'connection' | 'maintenance' = 'maintenance';
 
     try {
       const text = await req.text();
@@ -338,6 +340,7 @@ export async function POST(req: NextRequest) {
     revalidatePath('/connections');
     revalidatePath('/payouts');
     revalidatePath('/profile');
+    scheduleTelegramDispatch();
 
     return apiSuccess(resultData);
   } catch (err) {

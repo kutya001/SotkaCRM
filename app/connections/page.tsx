@@ -184,7 +184,7 @@ export default function ConnectionsPage() {
     month: string;
   }>({
     isOpen: false,
-    mode: 'all',
+    mode: 'maintenance_only',
     month: new Date().toISOString().slice(0, 7),
   });
 
@@ -235,7 +235,7 @@ export default function ConnectionsPage() {
           'info'
         );
       }
-      setBulkAccrueModal({ isOpen: false, mode: 'all', month: new Date().toISOString().slice(0, 7) });
+      setBulkAccrueModal({ isOpen: false, mode: 'maintenance_only', month: new Date().toISOString().slice(0, 7) });
       clearSelection();
       fetchData();
     } catch (err: any) {
@@ -1450,9 +1450,8 @@ export default function ConnectionsPage() {
                     }
                     className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    <option value="all">Все начисления (Подключение + Сопровождение)</option>
-                    <option value="connection_only">Только первичное подключение</option>
-                    <option value="maintenance_only">Только ежемесячное сопровождение</option>
+                    <option value="maintenance_only">Сопровождение за расчетный месяц</option>
+                    <option value="connection_only">Проверить бонусы за подключение (доначислить пропущенные)</option>
                   </select>
                 </div>
 

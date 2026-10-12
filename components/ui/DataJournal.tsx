@@ -77,6 +77,24 @@ export interface ColumnDef<T> {
   statusOptions?: StatusOption[];
   phoneAccessor?: (row: T) => string;
   renderCell?: (row: T, value: any) => React.ReactNode;
+  /** Служебное поле (ID и т.п.): скрыто в таблице и карточках по умолчанию, доступно в настройке колонок */
+  technical?: boolean;
+  /** Колонка — заголовок карточки в карточном режиме */
+  cardTitle?: boolean;
+  /** Текстовое представление значения для заголовка карточки (если значение — объект) */
+  textValue?: (row: T) => string;
+}
+
+/** Текст для заголовка карточки: примитив как есть, объект — по имени/названию */
+function columnTextValue<T extends Record<string, any>>(col: ColumnDef<T>, row: T): string | null {
+  if (col.textValue) return col.textValue(row) || null;
+  const val = row[col.key];
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'object') {
+    const named = val.full_name ?? val.name ?? val.label ?? val.title ?? val.client_name;
+    return named ? String(named) : null;
+  }
+  return String(val);
 }
 
 export interface ColumnFilterState {
@@ -869,10 +887,17 @@ const DataJournalCardInner = <T extends Record<string, any>>({
       colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
     });
 
-  const titleCol = orderedColumns.find(
-    (c) => c.type !== 'status' && c.type !== 'phone' && c.key !== 'id'
-  );
-  const cardTitle = titleCol ? String(row[titleCol.key] || 'Без названия') : rowKey;
+  const titleCol =
+    initialColumns.find((c) => c.cardTitle) ||
+    orderedColumns.find(
+      (c) =>
+        c.type !== 'status' &&
+        c.type !== 'phone' &&
+        !c.technical &&
+        c.key !== 'id' &&
+        columnTextValue(c, row) !== null
+    );
+  const cardTitle = titleCol ? columnTextValue(titleCol, row) || 'Без названия' : 'Без названия';
 
   return (
     <div
@@ -904,7 +929,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
 
       <div className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-300 border-t border-b border-zinc-100 dark:border-zinc-800/60 py-2.5">
         {orderedColumns
-          .filter((c) => c !== titleCol && c.type !== 'status')
+          .filter((c) => c !== titleCol && c.type !== 'status' && !c.technical)
           .slice(0, 4)
           .map((col) => {
             const val = row[col.key];
@@ -1291,7 +1316,7 @@ export function DataJournal<T extends Record<string, any>>({
     initialColumns.map((c) => c.key)
   );
   const [visibleColumns, setVisibleColumns] = React.useState<Record<string, boolean>>(() =>
-    initialColumns.reduce((acc, col) => ({ ...acc, [col.key]: true }), {})
+    initialColumns.reduce((acc, col) => ({ ...acc, [col.key]: !col.technical }), {})
   );
   const [columnWidths, setColumnWidths] = React.useState<Record<string, number>>(() =>
     initialColumns.reduce(
@@ -1305,14 +1330,23 @@ export function DataJournal<T extends Record<string, any>>({
       const savedOrder = localStorage.getItem(`datajournal_${storageKey}_order`);
       if (savedOrder) {
         const parsedOrder = JSON.parse(savedOrder) as string[];
-        if (Array.isArray(parsedOrder) && parsedOrder.length === initialColumns.length) {
-          setColumnsOrder(parsedOrder);
+        if (Array.isArray(parsedOrder)) {
+          // Сохраненный порядок применяется к известным колонкам, новые колонки добавляются в конец
+          const known = parsedOrder.filter((key) => initialColumns.some((c) => c.key === key));
+          const missing = initialColumns.map((c) => c.key).filter((key) => !known.includes(key));
+          setColumnsOrder([...known, ...missing]);
         }
       }
 
       const savedVis = localStorage.getItem(`datajournal_${storageKey}_visibility`);
       if (savedVis) {
-        setVisibleColumns(JSON.parse(savedVis));
+        const parsedVis = JSON.parse(savedVis) as Record<string, boolean>;
+        setVisibleColumns(
+          initialColumns.reduce(
+            (acc, col) => ({ ...acc, [col.key]: parsedVis[col.key] ?? !col.technical }),
+            {} as Record<string, boolean>
+          )
+        );
       }
 
       const savedWidths = localStorage.getItem(`datajournal_${storageKey}_widths`);
@@ -1328,6 +1362,23 @@ export function DataJournal<T extends Record<string, any>>({
     const updated = { ...visibleColumns, [key]: !visibleColumns[key] };
     setVisibleColumns(updated);
     localStorage.setItem(`datajournal_${storageKey}_visibility`, JSON.stringify(updated));
+  };
+
+  const persistColumnsOrder = (order: string[]) => {
+    setColumnsOrder(order);
+    try {
+      localStorage.setItem(`datajournal_${storageKey}_order`, JSON.stringify(order));
+    } catch {}
+  };
+
+  /** Перемещение колонки в настройках: на одну позицию вверх/вниз */
+  const moveColumn = (key: string, direction: -1 | 1) => {
+    const index = columnsOrder.indexOf(key);
+    const target = index + direction;
+    if (index === -1 || target < 0 || target >= columnsOrder.length) return;
+    const next = [...columnsOrder];
+    [next[index], next[target]] = [next[target], next[index]];
+    persistColumnsOrder(next);
   };
 
   // 3. Drag-to-resize колонок таблицы
@@ -1399,11 +1450,7 @@ export function DataJournal<T extends Record<string, any>>({
     if (sourceIndex !== -1 && targetIndex !== -1) {
       newOrder.splice(sourceIndex, 1);
       newOrder.splice(targetIndex, 0, sourceKey);
-      setColumnsOrder(newOrder);
-      localStorage.setItem(
-        `datajournal_${storageKey}_order`,
-        JSON.stringify(newOrder)
-      );
+      persistColumnsOrder(newOrder);
     }
     setDraggedColumnKey(null);
   };
@@ -1415,11 +1462,12 @@ export function DataJournal<T extends Record<string, any>>({
     order: 'asc' | 'desc' | null;
   }>({ field: '', order: null });
 
-  // Фильтры колонок
+  // Фильтры колонок: живут в пределах вкладки браузера (sessionStorage), чтобы при новом
+  // входе в модуль не оказаться с незаметно включенным старым фильтром
   const [columnFilters, setColumnFilters] = React.useState<ColumnFilters>(() => {
     if (typeof window === 'undefined') return {};
     try {
-      const saved = localStorage.getItem(`datajournal_${storageKey}_column_filters`);
+      const saved = sessionStorage.getItem(`datajournal_${storageKey}_column_filters`);
       if (saved) return JSON.parse(saved);
     } catch {}
     return {};
@@ -1512,7 +1560,7 @@ export function DataJournal<T extends Record<string, any>>({
       const nextCol = { ...current, ...updates };
       const updated = { ...prev, [key]: nextCol };
       try {
-        localStorage.setItem(
+        sessionStorage.setItem(
           `datajournal_${storageKey}_column_filters`,
           JSON.stringify(updated)
         );
@@ -1526,7 +1574,7 @@ export function DataJournal<T extends Record<string, any>>({
       const next = { ...prev };
       delete next[key];
       try {
-        localStorage.setItem(
+        sessionStorage.setItem(
           `datajournal_${storageKey}_column_filters`,
           JSON.stringify(next)
         );
@@ -1564,7 +1612,7 @@ export function DataJournal<T extends Record<string, any>>({
     if (onSearchChange) onSearchChange('');
     if (onResetAllFilters) onResetAllFilters();
     try {
-      localStorage.removeItem(`datajournal_${storageKey}_column_filters`);
+      sessionStorage.removeItem(`datajournal_${storageKey}_column_filters`);
     } catch {}
     showToast('Все фильтры сброшены', 'info');
   };
@@ -1589,6 +1637,8 @@ export function DataJournal<T extends Record<string, any>>({
     externalSearchQuery !== undefined
       ? externalSearchQuery
       : (searchQuery || urlSearchQuery);
+  // Поиск управляется шапкой приложения — своя строка поиска в журнале не нужна
+  const hasHeaderSearch = externalSearchQuery !== undefined;
 
   const totalActiveFilterCount = React.useMemo(() => {
     let count = 0;
@@ -1837,42 +1887,29 @@ export function DataJournal<T extends Record<string, any>>({
               </button>
             )}
 
-            {/* Строка глобального поиска (скрыта на экранах < md, т.к. поиск доступен в MobileHeader) */}
-            <div className="relative hidden md:flex flex-1 min-w-[180px] max-w-xs sm:max-w-sm md:max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={effectiveSearch}
-                onChange={(e) => handleSearchInputChange(e.target.value)}
-                className="w-full h-11 pl-9 pr-8 text-xs rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              />
-              {effectiveSearch && (
-                <button
-                  type="button"
-                  onClick={clearSearch}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-                  title="Очистить поиск"
-                >
-                  <X className="w-3.5 h-3.5" strokeWidth={2} />
-                </button>
-              )}
-            </div>
-
-            {/* Кнопка «Сбросить все фильтры» */}
-            {totalActiveFilterCount > 0 && (
-              <button
-                type="button"
-                onClick={resetAllFilters}
-                className="h-9 md:h-11 px-2.5 md:px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 flex-shrink-0 shadow-sm"
-                title="Сбросить все активные фильтры"
-              >
-                <RotateCcw className="w-3.5 h-3.5" strokeWidth={2} />
-                <span className="hidden md:inline">Сбросить фильтры</span>
-                <span className="w-5 h-5 rounded-full bg-rose-500/20 text-[10px] font-bold flex items-center justify-center">
-                  {totalActiveFilterCount}
-                </span>
-              </button>
+            {/* Строка поиска: только если поиск не вынесен в шапку приложения
+                (на экранах < md поиск всегда в MobileHeader) */}
+            {!hasHeaderSearch && (
+              <div className="relative hidden md:flex flex-1 min-w-[180px] max-w-xs sm:max-w-sm md:max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder={searchPlaceholder}
+                  value={effectiveSearch}
+                  onChange={(e) => handleSearchInputChange(e.target.value)}
+                  className="w-full h-11 pl-9 pr-8 text-xs rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                {effectiveSearch && (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                    title="Очистить поиск"
+                  >
+                    <X className="w-3.5 h-3.5" strokeWidth={2} />
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ) : (
@@ -2246,41 +2283,27 @@ export function DataJournal<T extends Record<string, any>>({
               )}
             </div>
 
-            {/* [ Поиск ] (скрыт на экранах < md, т.к. доступен в MobileHeader) */}
-            <div className="relative hidden md:flex flex-1 min-w-[160px] max-w-xs sm:max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-              <input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={effectiveSearch}
-                onChange={(e) => handleSearchInputChange(e.target.value)}
-                className="w-full h-11 pl-9 pr-8 text-xs rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              />
-              {effectiveSearch && (
-                <button
-                  type="button"
-                  onClick={clearSearch}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-                >
-                  <X className="w-3.5 h-3.5" strokeWidth={2} />
-                </button>
-              )}
-            </div>
-
-            {/* Кнопка «Сбросить» (если активно) */}
-            {totalActiveFilterCount > 0 && (
-              <button
-                type="button"
-                onClick={resetAllFilters}
-                className="h-9 md:h-11 px-2.5 md:px-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all flex-shrink-0 shadow-sm"
-                title="Сбросить все активные фильтры"
-              >
-                <RotateCcw className="w-3.5 h-3.5" strokeWidth={2} />
-                <span className="hidden md:inline">Сбросить</span>
-                <span className="w-5 h-5 rounded-full bg-rose-500/20 text-[10px] font-bold flex items-center justify-center md:hidden">
-                  {totalActiveFilterCount}
-                </span>
-              </button>
+            {/* [ Поиск ]: только если поиск не вынесен в шапку приложения (на экранах < md — MobileHeader) */}
+            {!hasHeaderSearch && (
+              <div className="relative hidden md:flex flex-1 min-w-[160px] max-w-xs sm:max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder={searchPlaceholder}
+                  value={effectiveSearch}
+                  onChange={(e) => handleSearchInputChange(e.target.value)}
+                  className="w-full h-11 pl-9 pr-8 text-xs rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                {effectiveSearch && (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                  >
+                    <X className="w-3.5 h-3.5" strokeWidth={2} />
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -2306,11 +2329,14 @@ export function DataJournal<T extends Record<string, any>>({
             </button>
 
             {activeDropdown === 'columns' && (
-              <div className="absolute right-0 top-13 z-50 w-56 p-3.5 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
+              <div className="absolute right-0 top-13 z-50 w-72 p-3.5 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
                 <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-2">
-                  <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                    Видимость колонок
-                  </span>
+                  <div>
+                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 block">
+                      Колонки
+                    </span>
+                    <span className="text-[10px] text-zinc-400">Видимость и порядок</span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setActiveDropdown(null)}
@@ -2319,22 +2345,58 @@ export function DataJournal<T extends Record<string, any>>({
                     <X className="w-3.5 h-3.5" strokeWidth={1.75} />
                   </button>
                 </div>
-                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                  {initialColumns.map((col) => (
-                    <label
-                      key={col.key}
-                      className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 cursor-pointer text-xs text-zinc-800 dark:text-zinc-200"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns[col.key] !== false}
-                        onChange={() => toggleColumnVisibility(col.key)}
-                        className="rounded border-zinc-300 dark:border-zinc-700 text-zinc-900 focus:ring-0"
-                      />
-                      <span className="truncate">{col.label}</span>
-                    </label>
-                  ))}
+                <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                  {columnsOrder.map((key, index) => {
+                    const col = initialColumns.find((c) => c.key === key);
+                    if (!col) return null;
+                    return (
+                      <div
+                        key={col.key}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, col.key)}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, col.key)}
+                        className={`flex items-center gap-1.5 pl-1 pr-0.5 py-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/60 text-xs text-zinc-800 dark:text-zinc-200 ${
+                          draggedColumnKey === col.key ? 'opacity-40' : ''
+                        }`}
+                      >
+                        <GripVertical className="w-3.5 h-3.5 text-zinc-300 dark:text-zinc-600 cursor-grab flex-shrink-0" strokeWidth={1.75} />
+                        <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={visibleColumns[col.key] !== false}
+                            onChange={() => toggleColumnVisibility(col.key)}
+                            className="rounded border-zinc-300 dark:border-zinc-700 text-zinc-900 focus:ring-0"
+                          />
+                          <span className={`truncate ${col.technical ? 'text-zinc-400' : ''}`}>{col.label}</span>
+                        </label>
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={() => moveColumn(col.key, -1)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-700/70 disabled:opacity-25 disabled:cursor-not-allowed"
+                          title="Переместить выше"
+                          aria-label="Переместить выше"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" strokeWidth={2} />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={index === columnsOrder.length - 1}
+                          onClick={() => moveColumn(col.key, 1)}
+                          className="w-6 h-6 rounded-md flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-700/70 disabled:opacity-25 disabled:cursor-not-allowed"
+                          title="Переместить ниже"
+                          aria-label="Переместить ниже"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" strokeWidth={2} />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
+                <p className="text-[10px] text-zinc-400 leading-snug pt-1 border-t border-zinc-200/60 dark:border-zinc-800/60">
+                  Порядок меняется стрелками или перетаскиванием; служебные поля (ID) по умолчанию скрыты.
+                </p>
               </div>
             )}
           </div>
@@ -2419,8 +2481,10 @@ export function DataJournal<T extends Record<string, any>>({
           <button
             type="button"
             onClick={resetAllFilters}
-            className="text-[11px] text-zinc-400 hover:text-rose-500 underline ml-1 transition-colors"
+            className="inline-flex items-center gap-1 h-6 px-2.5 rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-[11px] font-semibold transition-colors"
+            title="Сбросить все активные фильтры"
           >
+            <RotateCcw className="w-3 h-3" strokeWidth={2} />
             Сбросить все
           </button>
         </div>

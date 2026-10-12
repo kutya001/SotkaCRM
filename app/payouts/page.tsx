@@ -448,6 +448,7 @@ export default function PayoutsPage() {
         width: 100,
         minWidth: 80,
         sortable: true,
+        technical: true,
         renderCell: (row) => (
           <span className="font-mono text-[11px] text-zinc-500 font-medium">
             #{row.payout_id.slice(0, 8)}
@@ -461,6 +462,8 @@ export default function PayoutsPage() {
         minWidth: 180,
         sortable: true,
         filterable: true,
+        cardTitle: true,
+        textValue: (row) => row.recipient?.full_name || 'Неизвестный',
         renderCell: (row) => (
           <div className="flex items-center gap-2">
             <EmployeeBadge

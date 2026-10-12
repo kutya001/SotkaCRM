@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { LeadsBatchActionSchema } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
 
       if (error) throw error;
 
+      scheduleTelegramDispatch();
       return apiSuccess({
         success: true,
         action,
@@ -62,6 +64,7 @@ export async function POST(req: NextRequest) {
 
       if (error) throw error;
 
+      scheduleTelegramDispatch();
       return apiSuccess({
         success: true,
         action,
@@ -82,6 +85,7 @@ export async function POST(req: NextRequest) {
 
       if (error) throw error;
 
+      scheduleTelegramDispatch();
       return apiSuccess({
         success: true,
         action,

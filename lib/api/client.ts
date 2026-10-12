@@ -899,4 +899,44 @@ export const api = {
         bypassCache: options?.bypassCache,
       }),
   },
+
+  // 12. Telegram-уведомления
+  telegram: {
+    status: () =>
+      request<{
+        configured: boolean;
+        bot_username: string | null;
+        linked: boolean;
+        username: string | null;
+        linked_at: string | null;
+        prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean };
+        pending: { code: string; deep_link: string | null; expires_at: string } | null;
+      }>('/api/v1/telegram', { method: 'GET', bypassCache: true }),
+    createLink: () =>
+      request<{
+        code: string;
+        bot_username: string;
+        deep_link: string;
+        expires_at: string;
+        webhook_ok: boolean;
+        webhook_reason: string | null;
+      }>('/api/v1/telegram/link', { method: 'POST' }),
+    unlink: () => request<{ success: boolean }>('/api/v1/telegram/link', { method: 'DELETE' }),
+    updatePrefs: (prefs: Partial<{ payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean }>) =>
+      request<{ prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean } }>(
+        '/api/v1/telegram',
+        { method: 'PATCH', body: JSON.stringify({ prefs }) }
+      ),
+    sendTest: () => request<{ success: boolean }>('/api/v1/telegram/test', { method: 'POST' }),
+    broadcastStats: () =>
+      request<{ configured: boolean; total: number; by_role: Record<string, number> }>(
+        '/api/v1/telegram/broadcast',
+        { method: 'GET', bypassCache: true }
+      ),
+    broadcast: (data: { message: string; title?: string; roles?: string[] }) =>
+      request<{ queued: number; sent: number; failed: number; skipped?: number; message: string }>(
+        '/api/v1/telegram/broadcast',
+        { method: 'POST', body: JSON.stringify(data) }
+      ),
+  },
 };

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { requireAuth, requireRoles } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function GET(req: NextRequest) {
   try {
@@ -168,6 +169,8 @@ export async function POST(req: NextRequest) {
 
     if (error) throw error;
 
+    // Куратор получает уведомление о подключении и автоматическом начислении
+    scheduleTelegramDispatch();
     return apiSuccess(newConn, 201);
   } catch (err) {
     return handleApiError(err);

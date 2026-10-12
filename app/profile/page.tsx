@@ -18,6 +18,7 @@ import {
 } from './actions';
 import { signOut } from '@/app/auth/actions';
 import { ColorPicker } from '@/components/ui/ColorPicker';
+import { TelegramCard } from '@/components/profile/TelegramCard';
 import { DEFAULT_EMPLOYEE_COLOR, getEmployeeColorConfig } from '@/lib/constants/colors';
 import {
   User,
@@ -430,6 +431,10 @@ export default function ProfilePage() {
             </button>
           </div>
         </div>
+
+
+        {/* Telegram-уведомления (только для своего профиля) */}
+        {!activeViewingUserId && <TelegramCard />}
 
         {/* Ссылка на документацию API (Swagger) — строго для роли Администратора */}
         {currentUserRole === 'admin' && (

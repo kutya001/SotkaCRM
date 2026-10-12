@@ -12,6 +12,7 @@ import {
 } from '@/lib/services/sotka-api';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 import { applySellersOrder, findSellerByKey } from '@/lib/services/sellers';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import {
   normalizeSotkaSeller,
   resolveSotkaPlan,
@@ -524,6 +525,7 @@ export async function assignSellerManager(
       });
     }
 
+    scheduleTelegramDispatch();
     revalidatePath('/sellers');
     revalidatePath('/connections');
     revalidatePath('/payouts');

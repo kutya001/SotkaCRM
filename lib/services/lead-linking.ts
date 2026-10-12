@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import type { AuthContext } from '@/lib/auth/check-role';
 import type { UserRole } from '@/types/database.types';
 
@@ -73,6 +74,8 @@ export async function linkLeadToSellerAtomic(
   if (!res.success) {
     return { success: false, error: res.error || 'Ошибка связывания лида с продавцом' };
   }
+
+  scheduleTelegramDispatch();
 
   return {
     success: true,

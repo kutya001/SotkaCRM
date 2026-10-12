@@ -24,6 +24,8 @@ export interface EmployeeItem {
   birth_date: string | null;
   gender: 'male' | 'female' | null;
   bio: string | null;
+  telegram_username: string | null;
+  telegram_linked: boolean;
 }
 
 /** Поля анкеты сотрудника (адрес, координаты, ИНН, дата рождения, пол, биография) */
@@ -122,7 +124,7 @@ const fetchCachedEmployees = unstable_cache(
     let query = supabase
       .from('users')
       .select(
-        'user_id, login, full_name, phone, role, is_active, color, created_at, address, latitude, longitude, inn, birth_date, gender, bio',
+        'user_id, login, full_name, phone, role, is_active, color, created_at, address, latitude, longitude, inn, birth_date, gender, bio, telegram_username, telegram_chat_id',
         {
           count: 'exact',
         }
@@ -166,8 +168,14 @@ const fetchCachedEmployees = unstable_cache(
       return { employees: [], totalCount: 0, error: error.message };
     }
 
+    const employees: EmployeeItem[] = ((data || []) as any[]).map(({ telegram_chat_id, ...rest }) => ({
+      ...rest,
+      telegram_username: rest.telegram_username ?? null,
+      telegram_linked: telegram_chat_id !== null && telegram_chat_id !== undefined,
+    }));
+
     return {
-      employees: (data as EmployeeItem[]) || [],
+      employees,
       totalCount: count || 0,
     };
   },
@@ -186,6 +194,63 @@ export async function getEmployees(
     return await fetchCachedEmployees(JSON.stringify(params));
   } catch (err: any) {
     return { employees: [], totalCount: 0, error: err.message };
+  }
+}
+
+export interface EmployeeMapPointData {
+  user_id: string;
+  full_name: string;
+  login: string;
+  role: UserRole;
+  color: string | null;
+  phone: string | null;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * Сотрудники для общей карты (администратор): активные с заданными координатами
+ * и список имен тех, у кого место проживания не указано
+ */
+export async function getEmployeesForMap(): Promise<{
+  points: EmployeeMapPointData[];
+  withoutCoordinates: string[];
+  error?: string;
+}> {
+  try {
+    const { supabase } = await requireAdminAuth();
+    const { data, error } = await supabase
+      .from('users')
+      .select('user_id, full_name, login, role, color, phone, address, latitude, longitude')
+      .eq('is_active', true)
+      .order('full_name');
+
+    if (error) throw error;
+
+    const points: EmployeeMapPointData[] = [];
+    const withoutCoordinates: string[] = [];
+    for (const u of data || []) {
+      if (u.latitude !== null && u.longitude !== null) {
+        points.push({
+          user_id: u.user_id,
+          full_name: u.full_name,
+          login: u.login,
+          role: u.role,
+          color: u.color,
+          phone: u.phone,
+          address: u.address,
+          latitude: Number(u.latitude),
+          longitude: Number(u.longitude),
+        });
+      } else {
+        withoutCoordinates.push(u.full_name);
+      }
+    }
+
+    return { points, withoutCoordinates };
+  } catch (err: any) {
+    return { points: [], withoutCoordinates: [], error: err.message || 'Не удалось загрузить карту сотрудников' };
   }
 }
 

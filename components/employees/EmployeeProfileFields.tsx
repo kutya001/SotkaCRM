@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { MapPin, ExternalLink, Search } from 'lucide-react';
+import { LocationPicker } from '@/components/ui/LocationPicker';
 
 export interface EmployeeProfileFormValue {
   address: string;
@@ -83,42 +84,42 @@ export function mapLinkForCoordinates(lat: number, lon: number): string {
   return `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
 }
 
-/** Встроенная карта OpenStreetMap с маркером места проживания */
-export function EmployeeLocationMap({ latitude, longitude }: { latitude: number; longitude: number }) {
-  const delta = 0.01;
-  const bbox = [longitude - delta, latitude - delta, longitude + delta, latitude + delta]
-    .map((n) => n.toFixed(6))
-    .join(',');
-  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${latitude},${longitude}`;
-
+/** Карта места проживания: точка задается кликом/перетаскиванием, ссылки на внешние карты */
+export function EmployeeLocationMap({
+  latitude,
+  longitude,
+  onChange,
+}: {
+  latitude: number | null;
+  longitude: number | null;
+  onChange?: (latitude: number, longitude: number) => void;
+}) {
+  const hasPoint = latitude !== null && longitude !== null;
   return (
     <div className="space-y-1.5">
-      <iframe
-        title="Место проживания сотрудника"
-        src={src}
-        loading="lazy"
-        className="w-full h-48 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800"
-      />
-      <div className="flex items-center gap-3 text-[11px]">
-        <a
-          href={mapLinkForCoordinates(latitude, longitude)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
-        >
-          <ExternalLink className="w-3 h-3" />
-          Открыть в Google Maps
-        </a>
-        <a
-          href={`https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
-        >
-          <ExternalLink className="w-3 h-3" />
-          OpenStreetMap
-        </a>
-      </div>
+      <LocationPicker latitude={latitude} longitude={longitude} onChange={onChange} readOnly={!onChange} />
+      {hasPoint && (
+        <div className="flex items-center gap-3 text-[11px]">
+          <a
+            href={mapLinkForCoordinates(latitude, longitude)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Открыть в Google Maps
+          </a>
+          <a
+            href={`https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            <ExternalLink className="w-3 h-3" />
+            OpenStreetMap
+          </a>
+        </div>
+      )}
     </div>
   );
 }
@@ -128,7 +129,8 @@ const inputClass =
 
 /**
  * Поля анкеты сотрудника для форм создания и редактирования.
- * В поле широты можно вставить пару координат «42.8746, 74.5698» из карт — она разделится сама.
+ * Место проживания задается кликом по карте (или поиском адреса); координаты можно
+ * ввести и вручную — в поле широты принимается пара «42.8746, 74.5698» из карт.
  */
 export function EmployeeProfileFields({
   value,
@@ -153,6 +155,8 @@ export function EmployeeProfileFields({
   const lat = parseCoordinate(value.latitude, 90);
   const lon = parseCoordinate(value.longitude, 180);
   const hasPoint = lat !== null && lon !== null;
+  const handleMapPick = (pickedLat: number, pickedLon: number) =>
+    onChange({ ...value, latitude: String(pickedLat), longitude: String(pickedLon) });
   const age = ageFromBirthDate(value.birth_date);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -257,10 +261,10 @@ export function EmployeeProfileFields({
         </div>
       </div>
       <p className="text-[10px] text-zinc-400 -mt-2">
-        Можно вставить в «Широту» пару координат из карт, например «42.874621, 74.569762».
+        Кликните по карте ниже — координаты заполнятся сами. Или вставьте в «Широту» пару из карт, например «42.874621, 74.569762».
       </p>
 
-      {hasPoint && <EmployeeLocationMap latitude={lat} longitude={lon} />}
+      <EmployeeLocationMap latitude={hasPoint ? lat : null} longitude={hasPoint ? lon : null} onChange={handleMapPick} />
 
       <div className="space-y-1">
         <label className="font-semibold text-zinc-700 dark:text-zinc-300">Биография</label>

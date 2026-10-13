@@ -133,7 +133,7 @@ export function DesktopSidebar({
   return (
     <aside
       data-collapsed={collapsed ? '' : undefined}
-      className="app-sidebar hidden lg:flex flex-col fixed top-4 left-4 bottom-4 z-40 rounded-3xl island-glass w-64"
+      className="app-sidebar hidden lg:flex flex-col fixed top-4 left-4 bottom-4 z-40 rounded-3xl island-glass overflow-hidden"
     >
       {/* Логотип и переключатель сворачивания */}
       <div className="h-18 flex items-center justify-between px-4 border-b border-zinc-200/40 dark:border-zinc-800/40">

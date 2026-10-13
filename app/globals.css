@@ -48,21 +48,23 @@
 }
 
 @layer components {
-  .app-sidebar {
+  /* Селекторы с «html» — выше по специфичности, чем утилиты Tailwind (w-64, left-72, px-3),
+     иначе утилита на элементе перебивает ширину/отступ оболочки и сайдбар не сворачивается */
+  html .app-sidebar {
     width: var(--sidebar-w);
   }
 
   @media (min-width: 1024px) {
-    .app-header {
+    html .app-header {
       left: var(--shell-left);
     }
 
-    .app-main {
+    html .app-main {
       padding-left: var(--shell-left);
     }
   }
 
-  .app-content {
+  html .app-content {
     max-width: var(--content-max);
   }
 

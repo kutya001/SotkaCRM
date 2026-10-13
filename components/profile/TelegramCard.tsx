@@ -12,7 +12,7 @@ type PrefKey = keyof TelegramStatus['prefs'];
 
 const PREF_LABELS: Record<PrefKey, { title: string; hint: string }> = {
   payroll: { title: 'Операции по ЗП', hint: 'Начисления, удержания и выплаты' },
-  connections: { title: 'Подключения', hint: 'Новые подключения и переданные продавцы' },
+  connections: { title: 'Подключения', hint: 'Подтверждение и отклонение подключений' },
   leads: { title: 'Лиды', hint: 'Лиды, назначенные вам' },
   broadcast: { title: 'Сообщения администратора', hint: 'Напоминания и объявления для всех' },
 };

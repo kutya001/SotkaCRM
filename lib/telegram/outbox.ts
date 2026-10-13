@@ -13,7 +13,7 @@ export type TelegramKind = 'payroll' | 'connections' | 'leads' | 'broadcast' | '
 
 export const TELEGRAM_KIND_LABELS: Record<Exclude<TelegramKind, 'system'>, string> = {
   payroll: 'Операции по ЗП: начисления, удержания, выплаты',
-  connections: 'Новые подключения и передача продавцов',
+  connections: 'Подтвержденные и отклоненные подключения',
   leads: 'Назначенные лиды',
   broadcast: 'Сообщения администратора',
 };

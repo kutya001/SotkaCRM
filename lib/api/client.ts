@@ -971,5 +971,77 @@ export const api = {
         '/api/v1/telegram/broadcast',
         { method: 'POST', body: JSON.stringify(data) }
       ),
+    // Модуль «Telegram» (администратор)
+    adminOverview: () =>
+      request<{
+        configured: boolean;
+        bot: { username: string; name: string } | null;
+        webhook: {
+          url: string | null;
+          secret_configured: boolean;
+          pending_updates: number;
+          last_error: string | null;
+          last_error_at: string | null;
+        } | null;
+        outbox: { total: number; pending: number; sent: number; failed: number; skipped: number };
+        employees: {
+          user_id: string;
+          full_name: string;
+          login: string;
+          role: string;
+          color: string | null;
+          is_active: boolean;
+          linked: boolean;
+          username: string | null;
+          linked_at: string | null;
+          prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean };
+          sent_count: number;
+          last_sent_at: string | null;
+        }[];
+        linked_total: number;
+      }>('/api/v1/telegram/admin/overview', { method: 'GET', bypassCache: true }),
+    adminOutbox: (params: { status?: string; kind?: string; user_id?: string; limit?: number } = {}) => {
+      const qs = new URLSearchParams();
+      if (params.status) qs.set('status', params.status);
+      if (params.kind) qs.set('kind', params.kind);
+      if (params.user_id) qs.set('user_id', params.user_id);
+      if (params.limit) qs.set('limit', String(params.limit));
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return request<{
+        items: {
+          id: string;
+          user_id: string | null;
+          kind: string;
+          title: string;
+          body: string;
+          status: string;
+          attempts: number;
+          error: string | null;
+          created_at: string;
+          sent_at: string | null;
+          recipient: { user_id: string; full_name: string; login: string; role: string; color: string | null } | null;
+        }[];
+        total: number;
+      }>(`/api/v1/telegram/admin/outbox${suffix}`, { method: 'GET', bypassCache: true });
+    },
+    adminRetry: (id: string) =>
+      request<{ success: boolean; status: string; error: string | null }>(`/api/v1/telegram/admin/outbox/${id}/retry`, {
+        method: 'POST',
+      }),
+    adminUnlinkUser: (userId: string) =>
+      request<{ success: boolean; was_linked: boolean }>(`/api/v1/telegram/admin/users/${userId}/link`, { method: 'DELETE' }),
+    adminUpdateUserPrefs: (
+      userId: string,
+      prefs: Partial<{ payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean }>
+    ) =>
+      request<{ prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean } }>(
+        `/api/v1/telegram/admin/users/${userId}/link`,
+        { method: 'PATCH', body: JSON.stringify({ prefs }) }
+      ),
+    dispatchNow: () =>
+      request<{ success: boolean; claimed: number; sent: number; failed: number; skipped: number; deferred: number }>(
+        '/api/telegram/dispatch',
+        { method: 'POST' }
+      ),
   },
 };

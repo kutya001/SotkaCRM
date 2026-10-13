@@ -2911,3 +2911,17 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 
 ### 27.5. Telegram
 * `trg_telegram_on_connection` (`AFTER INSERT OR UPDATE OF manager_id, confirmation_status`): `pending` → всем активным администраторам с привязанным чатом «Подключение ожидает подтверждения»; `pending → confirmed` → консультанту «Подключение подтверждено»; `→ rejected` → консультанту «Подключение отклонено» с причиной; подтвержденные вставки/передача куратору — как в 036.
+
+---
+
+## 28. Спецификация Миграции 038 (`038_telegram_confirmation_and_cascade_cleanup.sql`)
+
+### 28.1. Telegram
+* `trg_telegram_on_payout()`: операция `accrual_connection` не создает уведомление (о подключении консультант уже получает сообщение). Остальные виды операций — как в 036.
+* `trg_telegram_on_connection()`: подтвержденное подключение (назначение администратором, подтверждение после «Взять себе», передача куратору) приходит консультанту одним сообщением «Подключение подтверждено» (с именем подтвердившего, если это не сам куратор); `pending` — администраторам «Подключение ожидает подтверждения»; `rejected` — консультанту с причиной.
+* Модуль «Telegram» (администратор): сводка бота/вебхука, подключения сотрудников (виды уведомлений, отвязка), журнал `telegram_outbox`, повторная отправка, рассылка. API: `GET /api/v1/telegram/admin/overview`, `GET /api/v1/telegram/admin/outbox`, `POST /api/v1/telegram/admin/outbox/[id]/retry`, `DELETE|PATCH /api/v1/telegram/admin/users/[id]/link`.
+
+### 28.2. Каскадная очистка
+* `trg_cleanup_connection_payouts` переведен в `BEFORE DELETE ON connections`: начисления куратора (`employee_payouts` с `connection_id` подключения: `accrual_connection`/`accrual_maintenance` и прочие со знаком `+`) и строки `connection_accruals` удаляются до того, как внешний ключ `employee_payouts.connection_id ON DELETE SET NULL` обнулит ссылку (в варианте AFTER очистка не находила записи).
+* `trg_seller_cascade_cleanup` (`BEFORE DELETE ON sellers`, `fn_seller_cascade_cleanup()`): лиды продавца отвязываются (`seller_phone = NULL`, «Подписан» → «Назначен»), подключения удаляются (с начислениями по триггеру выше), остатки начислений по `seller_phone` удаляются.
+* `trg_seller_manager_removed` (`AFTER UPDATE OF manager_id ON sellers`, `fn_seller_manager_removed()`): снятие куратора (`manager_id → NULL`) удаляет подключения продавца, кроме `rejected` (остаются как история отклонения). Срабатывает для всех путей: снятие в карточке продавца, отвязка лида, удаление подключения.

@@ -43,6 +43,7 @@ const MODULE_TITLES: Record<string, string> = {
   '/analytics': 'KPI и аналитика',
   '/employees': 'Сотрудники',
   '/profile': 'Мой профиль',
+  '/telegram': 'Telegram',
 };
 
 const ROLE_LABELS: Record<UserRole, string> = {

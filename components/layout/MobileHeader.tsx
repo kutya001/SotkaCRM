@@ -27,6 +27,7 @@ const MODULE_TITLES: Record<string, string> = {
   '/analytics': 'Аналитика',
   '/employees': 'Сотрудники',
   '/profile': 'Мой профиль',
+  '/telegram': 'Telegram',
 };
 
 export function MobileHeader({

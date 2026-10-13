@@ -57,7 +57,6 @@ import {
   type EmployeeProfileFormValue,
 } from '@/components/employees/EmployeeProfileFields';
 import { EmployeesMapModal } from '@/components/employees/EmployeesMapModal';
-import { TelegramBroadcastModal } from '@/components/employees/TelegramBroadcastModal';
 
 const CREATE_FORM_ID = 'employee-create-form';
 const EDIT_FORM_ID = 'employee-edit-form';
@@ -80,9 +79,8 @@ export default function EmployeesPage() {
   const [roleFilter, setRoleFilter] = React.useState<string>('all');
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
 
-  // Общая карта сотрудников и рассылка в Telegram (администратор)
+  // Общая карта сотрудников (администратор)
   const [isMapOpen, setIsMapOpen] = React.useState(false);
-  const [isBroadcastOpen, setIsBroadcastOpen] = React.useState(false);
 
   // Модальное окно создания сотрудника
   const [isCreateModalOpen, setIsCreateModalOpen] = React.useState(false);
@@ -655,15 +653,6 @@ export default function EmployeesPage() {
           <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
             <button
               type="button"
-              onClick={() => setIsBroadcastOpen(true)}
-              className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
-              title="Сообщение всем сотрудникам с подключенным Telegram"
-            >
-              <Send className="w-4 h-4 text-sky-500" strokeWidth={2} />
-              <span>Рассылка в Telegram</span>
-            </button>
-            <button
-              type="button"
               onClick={() => setIsMapOpen(true)}
               className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
               title="Места проживания сотрудников на одной карте"
@@ -683,7 +672,6 @@ export default function EmployeesPage() {
         </div>
 
         <EmployeesMapModal isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} />
-        <TelegramBroadcastModal isOpen={isBroadcastOpen} onClose={() => setIsBroadcastOpen(false)} />
 
         {/* Карточки оперативной статистики по сотрудникам */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">

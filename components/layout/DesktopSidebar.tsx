@@ -20,6 +20,7 @@ import {
   Layers,
   Users,
   Receipt,
+  Send,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
@@ -87,6 +88,12 @@ const NAV_ITEMS: NavItem[] = [
     href: '/analytics',
     icon: BarChart3,
     roles: ['admin', 'supervisor', 'consultant'],
+  },
+  {
+    title: 'Telegram',
+    href: '/telegram',
+    icon: Send,
+    roles: ['admin'],
   },
 ];
 

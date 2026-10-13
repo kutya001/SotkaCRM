@@ -74,7 +74,7 @@ export function TopHeader({
   return (
     <header
       data-collapsed={collapsed ? '' : undefined}
-      className="app-header hidden lg:flex items-center justify-between fixed top-4 left-72 right-4 z-40 h-16 rounded-2xl island-glass px-5 gap-4"
+      className="app-header hidden lg:flex items-center justify-between fixed top-4 right-4 z-40 h-16 rounded-2xl island-glass px-5 gap-4"
     >
       {/* 1. Левая часть: Название раздела */}
       <div className="flex items-center gap-3 flex-shrink-0">

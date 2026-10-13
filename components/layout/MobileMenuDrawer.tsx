@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Shield,
   Receipt,
+  Send,
 } from 'lucide-react';
 import { useUser } from '@/components/auth/AuthProvider';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
@@ -84,6 +85,12 @@ const ALL_NAV_ITEMS: NavItem[] = [
     href: '/analytics',
     icon: BarChart3,
     roles: ['admin', 'supervisor', 'consultant'],
+  },
+  {
+    title: 'Telegram',
+    href: '/telegram',
+    icon: Send,
+    roles: ['admin'],
   },
 ];
 

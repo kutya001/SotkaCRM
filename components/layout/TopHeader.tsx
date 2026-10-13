@@ -73,9 +73,8 @@ export function TopHeader({
 
   return (
     <header
-      className={`hidden lg:flex items-center justify-between fixed top-4 right-4 z-40 h-16 rounded-2xl island-glass px-5 transition-all duration-300 gap-4 ${
-        collapsed ? 'left-24' : 'left-72'
-      }`}
+      data-collapsed={collapsed ? '' : undefined}
+      className="app-header hidden lg:flex items-center justify-between fixed top-4 left-72 right-4 z-40 h-16 rounded-2xl island-glass px-5 gap-4"
     >
       {/* 1. Левая часть: Название раздела */}
       <div className="flex items-center gap-3 flex-shrink-0">

@@ -38,6 +38,7 @@ export const viewport: Viewport = {
 import { ToastProvider } from '@/components/ui/Toast';
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { AuthProvider } from '@/components/auth/AuthProvider';
+import { AppShell, SHELL_INIT_SCRIPT } from '@/components/layout/AppShell';
 
 // Layout не читает cookies(): иначе все страницы становятся динамическими,
 // <Link> не может их предзагрузить и каждый переход ждет ответа сервера.
@@ -50,6 +51,8 @@ export default function RootLayout({
   return (
     <html lang="ru" suppressHydrationWarning className={inter.variable}>
       <body suppressHydrationWarning className="font-sans antialiased selection:bg-zinc-800 selection:text-white dark:selection:bg-zinc-200 dark:selection:text-zinc-900">
+        {/* Свернутость сайдбара и ширина контента — на <html> до первой отрисовки (без мерцания) */}
+        <script dangerouslySetInnerHTML={{ __html: SHELL_INIT_SCRIPT }} />
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
@@ -58,7 +61,9 @@ export default function RootLayout({
         >
           <AuthProvider>
             <ToastProvider>
-              <ConfirmProvider>{children}</ConfirmProvider>
+              <ConfirmProvider>
+                <AppShell>{children}</AppShell>
+              </ConfirmProvider>
             </ToastProvider>
           </AuthProvider>
         </ThemeProvider>

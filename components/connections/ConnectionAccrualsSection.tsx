@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { formatMonth } from '@/lib/utils/format';
 import {
   Banknote,
   CheckCircle2,
@@ -227,11 +228,11 @@ export const ConnectionAccrualsSection: React.FC<ConnectionAccrualsSectionProps>
               <div className="flex items-center gap-2 flex-wrap text-xs">
                 {getOperationBadge(item.operation_type)}
                 <span className="font-mono text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                  {item.settlement_month || '—'}
+                  {item.settlement_month ? formatMonth(item.settlement_month) : '—'}
                 </span>
                 <span className="text-[11px] text-zinc-400 font-mono">
                   {item.actual_date ? (
-                    <FormattedDate date={item.actual_date} type="date" />
+                    <FormattedDate date={item.actual_date} type="dateOnly" />
                   ) : (
                     '—'
                   )}

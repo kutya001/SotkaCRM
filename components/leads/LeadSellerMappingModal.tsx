@@ -163,7 +163,7 @@ export function LeadSellerMappingModal({
               <span>Связать лид с продавцом платформы</span>
             </h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Лид: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{lead.client_name}</span> (+{lead.phone})
+              Лид: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{lead.client_name}</span> ({formatPhoneDisplay(lead.phone, lead.country_code)})
             </p>
           </div>
           <button
@@ -260,7 +260,7 @@ export function LeadSellerMappingModal({
                         {seller.store || 'Магазин без названия'}
                       </div>
                       <div className="text-[11px] text-zinc-500 truncate">
-                        {seller.seller_name} • <span className="font-mono">+{seller.seller_phone}</span>
+                        {seller.seller_name} • <span className="font-mono">{formatPhoneDisplay(seller.seller_phone)}</span>
                       </div>
                     </div>
                   </div>

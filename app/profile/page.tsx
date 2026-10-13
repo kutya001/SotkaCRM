@@ -6,6 +6,9 @@ import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { PhoneInput, usePhoneParts } from '@/components/ui/PhoneInput';
+import { formatDateTime } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import {
   getUserProfileAndKpi,
   updateProfileData,
@@ -80,7 +83,7 @@ export default function ProfilePage() {
   // Модальное окно редактирования профиля
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
   const [editFullName, setEditFullName] = React.useState('');
-  const [editPhone, setEditPhone] = React.useState('');
+  const editPhoneParts = usePhoneParts(null);
   const [editRole, setEditRole] = React.useState<UserRole>('consultant');
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
@@ -172,7 +175,7 @@ export default function ProfilePage() {
   const openEditModal = () => {
     if (!profile) return;
     setEditFullName(profile.full_name);
-    setEditPhone(profile.phone || '');
+    editPhoneParts.reset(profile.phone);
     setEditRole(profile.role);
     setEditColor(profile.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(profile.is_active);
@@ -185,12 +188,16 @@ export default function ProfilePage() {
       showToast('ФИО должно содержать не менее 2 символов', 'error');
       return;
     }
+    if (!editPhoneParts.isValid) {
+      showToast('Укажите корректный номер телефона для выбранной страны', 'error');
+      return;
+    }
 
     setIsSavingProfile(true);
     try {
       const res = await updateProfileData({
         full_name: editFullName.trim(),
-        phone: editPhone.trim() || null,
+        phone: editPhoneParts.full,
         role: editRole,
         color: editColor,
         is_active: editIsActive,
@@ -341,14 +348,14 @@ export default function ProfilePage() {
                     <span>•</span>
                     <span className="flex items-center gap-1 font-mono">
                       <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      +{profile.phone}
+                      {formatPhoneDisplay(profile.phone)}
                     </span>
                   </>
                 )}
               </div>
               {profile?.created_at && (
                 <p className="text-[11px] text-zinc-400 pt-0.5">
-                  В системе с <FormattedDate date={profile.created_at} type="monthYear" />
+                  В системе с <FormattedDate date={profile.created_at} type="date" />
                 </p>
               )}
             </div>
@@ -656,14 +663,8 @@ export default function ProfilePage() {
               </div>
               <div className="p-4 rounded-2xl backdrop-blur-xl bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 shadow-sm space-y-1">
                 <span className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">Синхронизация API</span>
-                <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 pt-1.5 truncate">
-                  {adminStats.lastSyncedAt
-                    ? new Date(adminStats.lastSyncedAt).toLocaleTimeString('ru-RU', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })
-                    : 'Синхронизировано'}
+                <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 pt-1.5 truncate font-mono" suppressHydrationWarning>
+                  {adminStats.lastSyncedAt ? formatDateTime(adminStats.lastSyncedAt) : 'Синхронизировано'}
                 </p>
               </div>
             </div>
@@ -741,13 +742,7 @@ export default function ProfilePage() {
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                     Номер телефона
                   </label>
-                  <input
-                    type="text"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                    placeholder="996555123456"
-                  />
+                  <PhoneInput value={editPhoneParts.parts} onChange={editPhoneParts.setParts} size="lg" />
                 </div>
 
                 {/* Поля роли и активности доступны только администратору */}

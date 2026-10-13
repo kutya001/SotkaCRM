@@ -491,6 +491,7 @@ export async function getAvailableLeadsForSellerLinking(
     lead_id: string;
     client_name: string;
     phone: string;
+    country_code?: string | null;
     status: string;
     assigned_to: string | null;
     assigned_user?: {
@@ -511,6 +512,7 @@ export async function getAvailableLeadsForSellerLinking(
         lead_id,
         client_name,
         phone,
+        country_code,
         status,
         assigned_to,
         created_at,

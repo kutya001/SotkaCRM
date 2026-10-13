@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { formatDateOnly } from '@/lib/utils/format';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api/client';
 import {
@@ -679,12 +680,12 @@ export default function PlansPage() {
                               {Number(item.price).toLocaleString('ru-RU')} сом
                             </span>
                             <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono text-[10px] font-semibold border border-blue-500/20">
-                              с {item.effective_from}
+                              с {formatDateOnly(item.effective_from)}
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-zinc-400 font-mono hidden sm:inline">
-                              Создано: <FormattedDate date={item.created_at} type="shortDate" />
+                              Создано: <FormattedDate date={item.created_at} type="dateTime" />
                             </span>
                             {currentUserRole === 'admin' && priceItems.length > 1 && (
                               <button
@@ -760,7 +761,7 @@ export default function PlansPage() {
                           </span>
                         </div>
                         <span className="text-[10px] text-zinc-400 font-mono">
-                          <FormattedDate date={item.changed_at} type="shortDate" />
+                          <FormattedDate date={item.changed_at} type="dateTime" />
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-200/40 dark:border-zinc-700/40">

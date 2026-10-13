@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Calendar, Play, CheckCircle2, AlertCircle, X, Loader2, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
+import { formatMonth } from '@/lib/utils/format';
 
 interface MaintenanceBillingModalProps {
   isOpen: boolean;
@@ -116,7 +117,7 @@ export const MaintenanceBillingModal: React.FC<MaintenanceBillingModalProps> = (
             <div>
               <span className="font-semibold block">{result.message}</span>
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 block font-mono">
-                Период: {result.billing_month} | Создано: {result.generated_accruals}
+                Период: {formatMonth(result.billing_month)} | Создано: {result.generated_accruals}
               </span>
             </div>
           </div>

@@ -29,6 +29,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useToast, type ToastType } from '@/components/ui/Toast';
 import { formatDate, formatDateTime, formatMonth } from '@/lib/utils/format';
+import { telHref, waHref } from '@/lib/utils/phone';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 function UrlSearchParamsSync({ onQuery }: { onQuery: (q: string) => void }) {
@@ -1005,7 +1006,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
           {cleanDigits && (
             <>
               <a
-                href={`tel:${cleanDigits}`}
+                href={telHref(rawPhone)}
                 className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors"
                 title="Позвонить"
               >
@@ -1013,7 +1014,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
               </a>
 
               <a
-                href={`https://wa.me/${cleanDigits}`}
+                href={waHref(rawPhone)}
                 target="_blank"
                 rel="noreferrer"
                 className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
@@ -1249,7 +1250,7 @@ function DataJournalContextMenuInner<T extends Record<string, any>>({
         if (!cleanDigits) return null;
         return (
           <a
-            href={`https://wa.me/${cleanDigits}`}
+            href={waHref(rawPhone)}
             target="_blank"
             rel="noreferrer"
             onClick={() => setMenu(null)}

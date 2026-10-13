@@ -6,6 +6,9 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { PhoneInput, usePhoneParts } from '@/components/ui/PhoneInput';
+import { formatMonth } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { api } from '@/lib/api/client';
 import {
   resetEmployeePassword,
@@ -80,7 +83,7 @@ export default function EmployeesPage() {
   const [newLogin, setNewLogin] = React.useState('');
   const [newPassword, setNewPassword] = React.useState('');
   const [newFullName, setNewFullName] = React.useState('');
-  const [newPhone, setNewPhone] = React.useState('');
+  const newPhoneParts = usePhoneParts(null);
   const [newRole, setNewRole] = React.useState<UserRole>('consultant');
   const [newColor, setNewColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [newProfile, setNewProfile] = React.useState<EmployeeProfileFormValue>(EMPTY_EMPLOYEE_PROFILE);
@@ -90,7 +93,7 @@ export default function EmployeesPage() {
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
   const [selectedEmployee, setSelectedEmployee] = React.useState<EmployeeItem | null>(null);
   const [editFullName, setEditFullName] = React.useState('');
-  const [editPhone, setEditPhone] = React.useState('');
+  const editPhoneParts = usePhoneParts(null);
   const [editRole, setEditRole] = React.useState<UserRole>('consultant');
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
@@ -184,6 +187,10 @@ export default function EmployeesPage() {
       showToast(newProfileError, 'error');
       return;
     }
+    if (!newPhoneParts.isValid) {
+      showToast('Укажите корректный номер телефона для выбранной страны', 'error');
+      return;
+    }
 
     setIsCreating(true);
     try {
@@ -191,7 +198,7 @@ export default function EmployeesPage() {
         login: newLogin.trim(),
         password: newPassword,
         full_name: newFullName.trim(),
-        phone: newPhone.trim() || undefined,
+        phone: newPhoneParts.full || undefined,
         role: newRole,
         color: newColor,
         ...employeeProfileToPayload(newProfile),
@@ -202,7 +209,7 @@ export default function EmployeesPage() {
       setNewLogin('');
       setNewPassword('');
       setNewFullName('');
-      setNewPhone('');
+      newPhoneParts.reset(null);
       setNewRole('consultant');
       setNewColor(DEFAULT_EMPLOYEE_COLOR);
       setNewProfile(EMPTY_EMPLOYEE_PROFILE);
@@ -218,7 +225,7 @@ export default function EmployeesPage() {
   const handleOpenEdit = async (emp: EmployeeItem) => {
     setSelectedEmployee(emp);
     setEditFullName(emp.full_name);
-    setEditPhone(emp.phone || '');
+    editPhoneParts.reset(emp.phone);
     setEditRole(emp.role);
     setEditColor(emp.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(emp.is_active);
@@ -297,12 +304,16 @@ export default function EmployeesPage() {
       showToast(editProfileError, 'error');
       return;
     }
+    if (!editPhoneParts.isValid) {
+      showToast('Укажите корректный номер телефона для выбранной страны', 'error');
+      return;
+    }
 
     setIsUpdating(true);
     try {
       await api.employees.update(selectedEmployee.user_id, {
         full_name: editFullName.trim(),
-        phone: editPhone.trim() || null,
+        phone: editPhoneParts.full,
         role: editRole,
         is_active: editIsActive,
         color: editColor,
@@ -442,7 +453,7 @@ export default function EmployeesPage() {
       renderCell: (item: EmployeeItem) =>
         item.phone ? (
           <span className="font-mono text-xs text-zinc-600 dark:text-zinc-300">
-            +{item.phone}
+            {formatPhoneDisplay(item.phone)}
           </span>
         ) : (
           <span className="text-zinc-400 text-xs">—</span>
@@ -510,7 +521,7 @@ export default function EmployeesPage() {
         const age = ageFromBirthDate(item.birth_date);
         return (
           <span className="text-xs text-zinc-600 dark:text-zinc-300">
-            <FormattedDate date={item.birth_date} type="date" />
+            <FormattedDate date={item.birth_date} type="dateOnly" />
             {age !== null && <span className="text-zinc-400"> • {age} лет</span>}
           </span>
         );
@@ -565,8 +576,8 @@ export default function EmployeesPage() {
       label: 'Дата добавления',
       sortable: true,
       renderCell: (item: EmployeeItem) => (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400">
-          <FormattedDate date={item.created_at} type="date" />
+        <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">
+          <FormattedDate date={item.created_at} type="dateTime" />
         </span>
       ),
     },
@@ -782,13 +793,7 @@ export default function EmployeesPage() {
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                     Номер телефона
                   </label>
-                  <input
-                    type="text"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                    placeholder="996555123456"
-                  />
+                  <PhoneInput value={newPhoneParts.parts} onChange={newPhoneParts.setParts} size="lg" />
                 </div>
 
                 <div className="space-y-1">
@@ -884,12 +889,7 @@ export default function EmployeesPage() {
                   <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                     Номер телефона
                   </label>
-                  <input
-                    type="text"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                  />
+                  <PhoneInput value={editPhoneParts.parts} onChange={editPhoneParts.setParts} size="lg" />
                 </div>
 
                 <div className="space-y-1">
@@ -1040,7 +1040,7 @@ export default function EmployeesPage() {
                       >
                         <div className="flex items-center gap-2">
                           <span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-mono text-[11px] font-bold border border-purple-500/20">
-                            {item.effective_from}
+                            {formatMonth(item.effective_from)}
                           </span>
                           <div className="flex items-center gap-2 font-mono">
                             <span className="text-zinc-800 dark:text-zinc-200">

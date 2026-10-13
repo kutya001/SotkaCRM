@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Coins, Calendar, RotateCcw, CheckCircle2, X, Link2, Clock, Check } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
+import { formatMonth } from '@/lib/utils/format';
 
 interface AccrueBonusesModalProps {
   isOpen: boolean;
@@ -192,11 +193,11 @@ export function AccrueBonusesModal({
                 {months.length > 0 ? (
                   months.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {formatMonth(m)}
                     </option>
                   ))
                 ) : (
-                  <option value={currentMonthStr}>{currentMonthStr}</option>
+                  <option value={currentMonthStr}>{formatMonth(currentMonthStr)}</option>
                 )}
               </select>
               <Calendar className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />

@@ -6,6 +6,7 @@ import { getAvailableLeadsForSellerLinking, type SellerItem } from '@/app/seller
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api/client';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 
 interface LinkSellerLeadModalProps {
   isOpen: boolean;
@@ -18,6 +19,7 @@ interface LeadOption {
   lead_id: string;
   client_name: string;
   phone: string;
+  country_code?: string | null;
   status: string;
   assigned_to: string | null;
   assigned_user?: {
@@ -143,7 +145,7 @@ export function LinkSellerLeadModal({
             </div>
             <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 font-mono">
               <Phone className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-              <span>+{seller.seller_phone}</span>
+              <span>{formatPhoneDisplay(seller.seller_phone)}</span>
             </div>
           </div>
           <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 whitespace-nowrap">
@@ -233,7 +235,7 @@ export function LinkSellerLeadModal({
                       </span>
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
-                      <span>+{lead.phone}</span>
+                      <span>{formatPhoneDisplay(lead.phone, lead.country_code)}</span>
                       <span>•</span>
                       {lead.assigned_user ? (
                         <EmployeeBadge

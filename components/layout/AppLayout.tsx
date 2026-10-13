@@ -108,10 +108,11 @@ export function AppLayout({
     setInternalSyncing(true);
     try {
       const data = await api.sellers.syncSotka();
-      const timeStr = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      setLastSyncedAt(timeStr);
+      // Хранится ISO-отметка: отображение «ДД.ММ.ГГГГ - чч:мм:сс» делает TopHeader
+      const syncedAtIso = new Date().toISOString();
+      setLastSyncedAt(syncedAtIso);
       try {
-        localStorage.setItem('crm_last_sotka_sync', timeStr);
+        localStorage.setItem('crm_last_sotka_sync', syncedAtIso);
       } catch {}
       showToast(
         `Синхронизация завершена: ${data.synced_count} продавцов (всего ${data.total_available})`,

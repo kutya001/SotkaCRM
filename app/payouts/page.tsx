@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { formatMonth } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api/client';
 import {
@@ -566,7 +568,7 @@ export default function PayoutsPage() {
         filterable: true,
         renderCell: (row) => (
           <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-            <FormattedDate date={row.actual_date} type="date" />
+            <FormattedDate date={row.actual_date} type="dateOnly" />
           </span>
         ),
       },
@@ -579,7 +581,7 @@ export default function PayoutsPage() {
         filterable: true,
         renderCell: (row) => (
           <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-            {row.settlement_month}
+            {formatMonth(row.settlement_month)}
           </span>
         ),
       },
@@ -660,7 +662,7 @@ export default function PayoutsPage() {
                   className="font-mono text-[10px] text-zinc-400 hover:text-blue-500 transition-colors"
                   title="Перейти к продавцу"
                 >
-                  +{row.seller_phone}
+                  {formatPhoneDisplay(row.seller_phone)}
                 </Link>
               )}
             </div>
@@ -1011,13 +1013,13 @@ export default function PayoutsPage() {
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Расчетный месяц:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    {selectedPayout.settlement_month}
+                    {formatMonth(selectedPayout.settlement_month)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Дата операции:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    <FormattedDate date={selectedPayout.actual_date} type="date" />
+                    <FormattedDate date={selectedPayout.actual_date} type="dateOnly" />
                   </span>
                 </div>
                 {selectedPayout.connection_id && (
@@ -1042,7 +1044,7 @@ export default function PayoutsPage() {
                       title="Открыть карточку продавца"
                     >
                       <ExternalLink className="w-3 h-3" />
-                      <span>+{selectedPayout.seller_phone}</span>
+                      <span>{formatPhoneDisplay(selectedPayout.seller_phone)}</span>
                     </Link>
                   </div>
                 )}
@@ -1147,7 +1149,7 @@ export default function PayoutsPage() {
                     <div className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                       <div className="flex items-center gap-1.5">
                         <FileSpreadsheet className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
-                        <span>Текущий расчетный лист ({formData.settlement_month})</span>
+                        <span>Текущий расчетный лист ({formatMonth(formData.settlement_month)})</span>
                       </div>
                       {isLoadingPreview && (
                         <span className="text-[11px] text-zinc-400 font-normal">Загрузка сальдо...</span>

@@ -707,7 +707,7 @@ export default function SellersPage() {
         filterable: false,
         renderCell: (row: SellerItem) => (
           <span className="text-xs text-zinc-600 dark:text-zinc-400 font-mono whitespace-nowrap">
-            <FormattedDate date={row.registered_at} type="date" fallback="—" />
+            <FormattedDate date={row.registered_at} type="dateTime" fallback="—" />
           </span>
         ),
       },

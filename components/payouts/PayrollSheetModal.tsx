@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { SALARY_OPERATION_TYPE_LABELS, type SalaryOperationType } from '@/lib/validations';
+import { formatDateOnly, formatMonth } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import type { UserRole } from '@/types/database.types';
 
 interface PayrollSheetModalProps {
@@ -207,10 +209,10 @@ export function PayrollSheetModal({
                   className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40 transition-colors"
                 >
                   <td className="py-2 px-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
-                    {dateVal}
+                    {dateVal === '—' ? '—' : formatDateOnly(dateVal)}
                   </td>
                   <td className="py-2 px-3 font-mono text-[11px] text-zinc-500">
-                    {monthVal}
+                    {formatMonth(monthVal)}
                   </td>
                   <td className="py-2 px-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -236,7 +238,7 @@ export function PayrollSheetModal({
                     )}
                     {row.seller_phone && !row.connection_id && (
                       <span className="font-mono text-[10px] text-zinc-400 block">
-                        +{row.seller_phone}
+                        {formatPhoneDisplay(row.seller_phone)}
                       </span>
                     )}
                   </td>
@@ -336,11 +338,11 @@ export function PayrollSheetModal({
                 {months.length > 0 ? (
                   months.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {formatMonth(m)}
                     </option>
                   ))
                 ) : (
-                  <option value={currentMonthStr}>{currentMonthStr}</option>
+                  <option value={currentMonthStr}>{formatMonth(currentMonthStr)}</option>
                 )}
               </select>
               <Calendar className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />

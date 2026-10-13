@@ -36,7 +36,6 @@ import {
   RotateCcw,
   Store,
   Layers,
-  X,
   Coins,
   CheckCircle2,
   AlertCircle,
@@ -46,12 +45,10 @@ import {
   Trash2,
   Receipt,
   Check,
-  Loader2,
   Hourglass,
   XCircle,
   ShieldCheck,
 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { ClientLifecycleStatus, ConnectionConfirmationStatus, UserRole } from '@/types/database.types';
 
@@ -1142,36 +1139,37 @@ export default function ConnectionsPage() {
           )}
         />
 
-        {/* 4. Модальное окно деталей закрепления и смены статуса (Glassmorphism) */}
+        {/* 4. Модальное окно деталей закрепления и смены статуса */}
         {selectedConnection && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-5"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Шапка модалки */}
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                    <Link2 className="w-5 h-5" strokeWidth={2} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      {selectedConnection.seller_name}
-                    </h3>
-                    <p className="text-xs text-zinc-400">
-                      {selectedConnection.store || 'Без магазина'} • {formatPhoneDisplay(selectedConnection.seller_phone)}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSelectedConnection(null)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
-                >
-                  <X className="w-4 h-4" strokeWidth={2} />
-                </button>
-              </div>
-
+          <Modal
+            open
+            onClose={() => setSelectedConnection(null)}
+            title={selectedConnection.seller_name}
+            subtitle={`${selectedConnection.store || 'Без магазина'} • ${formatPhoneDisplay(selectedConnection.seller_phone)}`}
+            icon={Link2}
+            tone="info"
+            size="lg"
+            footerClassName="justify-between"
+            footer={
+              <>
+                {currentUserRole === 'admin' ? (
+                  <Button
+                    variant="dangerSoft"
+                    onClick={() => setConnectionToDelete(selectedConnection)}
+                    leftIcon={<Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                  >
+                    Удалить
+                  </Button>
+                ) : (
+                  <span />
+                )}
+                <Button variant="outline" onClick={() => setSelectedConnection(null)}>
+                  Закрыть
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-5">
               {/* Подтверждение администратором (037) */}
               <div
                 className={`p-3.5 rounded-2xl border space-y-2 text-xs ${
@@ -1267,11 +1265,12 @@ export default function ConnectionsPage() {
                   </div>
                   {currentUserRole === 'admin' ? (
                     <div className="space-y-1 pt-0.5">
-                      <input
+                      <Input
                         type="date"
+                        size="sm"
+                        mono
                         value={editAssignedDate}
                         onChange={(e) => handleDateOrPlanChange(e.target.value, editPlanId)}
-                        className="w-full px-2 py-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       <span className="text-[10px] text-zinc-400 block font-mono">
                         Период: {formatMonth(editAssignedDate ? editAssignedDate.substring(0, 7) : selectedConnection.accrual_month)}
@@ -1324,10 +1323,10 @@ export default function ConnectionsPage() {
                             </button>
                           )}
                         </div>
-                        <select
+                        <Select
+                          size="sm"
                           value={editPlanId}
                           onChange={(e) => handleDateOrPlanChange(editAssignedDate, e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         >
                           <option value="">Без тарифа</option>
                           {activePlans.map((p) => (
@@ -1335,15 +1334,17 @@ export default function ConnectionsPage() {
                               {p.plan_name} ({p.price.toLocaleString('ru-RU')} с)
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </div>
 
                       <div className="space-y-1">
                         <label className="text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
                           Стоимость тарифа (сом)
                         </label>
-                        <input
+                        <Input
                           type="number"
+                          size="sm"
+                          mono
                           step="0.01"
                           min="0"
                           value={editPlanPrice || ''}
@@ -1352,7 +1353,6 @@ export default function ConnectionsPage() {
                             setEditPlanPrice(val);
                             setPreviewBonus(Math.round(((val * previewRatePercent) / 100) * 100) / 100);
                           }}
-                          className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
                     </div>
@@ -1405,20 +1405,20 @@ export default function ConnectionsPage() {
                           <span className="text-[10px] text-zinc-400 italic block">Пересчет...</span>
                         )}
                       </div>
-                      <button
-                        type="button"
+                      <Button
+                        variant="success"
+                        size="sm"
                         onClick={handleSaveConnectionRetroactive}
+                        loading={isUpdatingTariff}
                         disabled={
-                          isUpdatingTariff ||
                           isRecalculating ||
                           (editPlanId === (selectedConnection.plan_id || '') &&
                             editPlanPrice === Number(selectedConnection.plan_price) &&
                             editAssignedDate === selectedConnection.assigned_at.substring(0, 10))
                         }
-                        className="h-8 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isUpdatingTariff ? 'Сохранение...' : 'Сохранить (задним числом)'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ) : (
@@ -1500,23 +1500,26 @@ export default function ConnectionsPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <input
+                      <Input
                         type="number"
+                        size="sm"
+                        mono
                         min="1"
                         max="24"
                         value={editMaintenanceMonthsTotal}
                         onChange={(e) => setEditMaintenanceMonthsTotal(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-16 h-8 px-2 text-center text-xs font-mono font-bold rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        className="w-16 text-center font-bold"
                       />
-                      <button
-                        type="button"
+                      <Button
+                        size="sm"
+                        className="bg-purple-600 hover:bg-purple-700 text-white"
                         onClick={handleSaveMaintenanceMonths}
-                        disabled={isUpdatingMaintenanceMonths || editMaintenanceMonthsTotal === (selectedConnection.maintenance_months_total || selectedConnection.maintenance_months_limit || 2)}
-                        className="h-8 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer"
+                        loading={isUpdatingMaintenanceMonths}
+                        disabled={editMaintenanceMonthsTotal === (selectedConnection.maintenance_months_total || selectedConnection.maintenance_months_limit || 2)}
+                        leftIcon={<Check className="w-3 h-3" />}
                       >
-                        {isUpdatingMaintenanceMonths ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                        <span>Сохранить</span>
-                      </button>
+                        Сохранить
+                      </Button>
                     </div>
                   </div>
                 ) : null}
@@ -1530,29 +1533,8 @@ export default function ConnectionsPage() {
                   onUpdated={fetchData}
                 />
               </div>
-
-              {/* Кнопка закрытия и удаления */}
-              <div className="flex items-center justify-between pt-2">
-                {currentUserRole === 'admin' ? (
-                  <button
-                    type="button"
-                    onClick={() => setConnectionToDelete(selectedConnection)}
-                    className="h-9 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    <span>Удалить</span>
-                  </button>
-                ) : <div />}
-                <button
-                  type="button"
-                  onClick={() => setSelectedConnection(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                >
-                  Закрыть
-                </button>
-              </div>
             </div>
-          </div>
+          </Modal>
         )}
 
         {/* 5. Модальное окно пакетного начисления бонусов (Admin Only) */}

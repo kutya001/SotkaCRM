@@ -21,6 +21,10 @@ import {
 } from './actions';
 import { signOut } from '@/app/auth/actions';
 import { ColorPicker } from '@/components/ui/ColorPicker';
+import { Modal } from '@/components/ui/Modal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Button } from '@/components/ui/Button';
+import { FormField, Input, Select } from '@/components/ui/Field';
 import { TelegramCard } from '@/components/profile/TelegramCard';
 import { DEFAULT_EMPLOYEE_COLOR, getEmployeeColorConfig } from '@/lib/constants/colors';
 import {
@@ -55,6 +59,9 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
+
+const PROFILE_FORM_ID = 'profile-edit-form';
+const PASSWORD_FORM_ID = 'profile-password-form';
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -709,220 +716,146 @@ export default function ProfilePage() {
         )}
 
         {/* 3. МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ ПРОФИЛЯ */}
-        {isEditModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                  <Edit3 className="w-4 h-4 text-blue-500" strokeWidth={2} />
-                  <span>Редактирование профиля</span>
-                </h3>
-                <span className="text-xs text-zinc-400 font-mono">@{profile?.login}</span>
-              </div>
+        <Modal
+          open={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          title="Редактирование профиля"
+          subtitle={profile?.login ? `@${profile.login}` : undefined}
+          icon={Edit3}
+          tone="info"
+          size="md"
+          busy={isSavingProfile}
+          formId={PROFILE_FORM_ID}
+          onSubmit={handleSaveProfile}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setIsEditModalOpen(false)} disabled={isSavingProfile}>
+                Отмена
+              </Button>
+              <Button type="submit" form={PROFILE_FORM_ID} loading={isSavingProfile}>
+                {isSavingProfile ? 'Сохранение...' : 'Сохранить изменения'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <FormField label="ФИО сотрудника" required htmlFor="profile-edit-name">
+              <Input
+                id="profile-edit-name"
+                type="text"
+                required
+                value={editFullName}
+                onChange={(e) => setEditFullName(e.target.value)}
+                placeholder="Например: Исмаилов Айбек"
+                size="lg"
+              />
+            </FormField>
 
-              <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    ФИО сотрудника <span className="text-rose-500">*</span>
-                  </label>
+            <FormField label="Номер телефона">
+              <PhoneInput value={editPhoneParts.parts} onChange={editPhoneParts.setParts} size="lg" />
+            </FormField>
+
+            {/* Поля роли и активности доступны только администратору */}
+            {currentUserRole === 'admin' && (
+              <>
+                <FormField label="Роль в системе CRM" htmlFor="profile-edit-role">
+                  <Select
+                    id="profile-edit-role"
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value as UserRole)}
+                    className="font-semibold"
+                    size="lg"
+                  >
+                    <option value="consultant">Продавец-консультант</option>
+                    <option value="admin">Администратор</option>
+                    <option value="smm">SMM-специалист</option>
+                  </Select>
+                </FormField>
+
+                <label className="flex items-center justify-between p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 cursor-pointer text-xs">
+                  <div>
+                    <span className="font-semibold text-zinc-900 dark:text-zinc-100 block">
+                      Статус активности аккаунта
+                    </span>
+                    <span className="text-[11px] text-zinc-400">Разрешить вход в систему CRM</span>
+                  </div>
                   <input
-                    type="text"
-                    required
-                    value={editFullName}
-                    onChange={(e) => setEditFullName(e.target.value)}
-                    className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Например: Исмаилов Айбек"
+                    type="checkbox"
+                    checked={editIsActive}
+                    onChange={(e) => setEditIsActive(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
-                </div>
+                </label>
+              </>
+            )}
 
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Номер телефона
-                  </label>
-                  <PhoneInput value={editPhoneParts.parts} onChange={editPhoneParts.setParts} size="lg" />
-                </div>
-
-                {/* Поля роли и активности доступны только администратору */}
-                {currentUserRole === 'admin' && (
-                  <>
-                    <div className="space-y-1.5">
-                      <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                        Роль в системе CRM
-                      </label>
-                      <select
-                        value={editRole}
-                        onChange={(e) => setEditRole(e.target.value as UserRole)}
-                        className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
-                      >
-                        <option value="consultant">Продавец-консультант</option>
-                        <option value="admin">Администратор</option>
-                        <option value="smm">SMM-специалист</option>
-                      </select>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
-                      <div>
-                        <span className="font-semibold text-zinc-900 dark:text-zinc-100 block">
-                          Статус активности аккаунта
-                        </span>
-                        <span className="text-[11px] text-zinc-400">
-                          Разрешить вход в систему CRM
-                        </span>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={editIsActive}
-                        onChange={(e) => setEditIsActive(e.target.checked)}
-                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-                      />
-                    </div>
-                  </>
-                )}
-
-                <ColorPicker
-                  value={editColor}
-                  onChange={setEditColor}
-                  label="Цвет индикатора сотрудника"
-                />
-
-                <div className="flex items-center justify-end gap-2.5 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsEditModalOpen(false)}
-                    className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                  >
-                    Отмена
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSavingProfile}
-                    className="h-9 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                  >
-                    {isSavingProfile ? 'Сохранение...' : 'Сохранить изменения'}
-                  </button>
-                </div>
-              </form>
-            </div>
+            <ColorPicker value={editColor} onChange={setEditColor} label="Цвет индикатора сотрудника" />
           </div>
-        )}
+        </Modal>
 
         {/* 4. МОДАЛЬНОЕ ОКНО СМЕНЫ ПАРОЛЯ */}
-        {isPasswordModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-sm p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3 text-blue-500">
-                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center">
-                  <KeyRound className="w-5 h-5" strokeWidth={2} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Смена пароля
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    {profile?.full_name} (@{profile?.login})
-                  </p>
-                </div>
-              </div>
+        <Modal
+          open={isPasswordModalOpen}
+          onClose={() => setIsPasswordModalOpen(false)}
+          title="Смена пароля"
+          subtitle={profile ? `${profile.full_name} (@${profile.login})` : undefined}
+          icon={KeyRound}
+          tone="info"
+          size="sm"
+          busy={isSavingPassword}
+          formId={PASSWORD_FORM_ID}
+          onSubmit={handleSavePassword}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setIsPasswordModalOpen(false)} disabled={isSavingPassword}>
+                Отмена
+              </Button>
+              <Button type="submit" form={PASSWORD_FORM_ID} variant="info" loading={isSavingPassword}>
+                {isSavingPassword ? 'Сохранение...' : 'Обновить пароль'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <FormField label="Новый пароль (от 6 символов)" required htmlFor="profile-new-password">
+              <Input
+                id="profile-new-password"
+                type="password"
+                required
+                minLength={6}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="••••••••"
+                size="lg"
+              />
+            </FormField>
 
-              <form onSubmit={handleSavePassword} className="space-y-3.5 text-xs">
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Новый пароль (от 6 символов)
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="••••••••"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Подтверждение пароля
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="••••••••"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsPasswordModalOpen(false)}
-                    className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                  >
-                    Отмена
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSavingPassword}
-                    className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                  >
-                    {isSavingPassword ? 'Сохранение...' : 'Обновить пароль'}
-                  </button>
-                </div>
-              </form>
-            </div>
+            <FormField label="Подтверждение пароля" required htmlFor="profile-confirm-password">
+              <Input
+                id="profile-confirm-password"
+                type="password"
+                required
+                minLength={6}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••"
+                size="lg"
+              />
+            </FormField>
           </div>
-        )}
+        </Modal>
 
         {/* 5. ДИАЛОГ ВЫХОДА */}
-        {isSignOutConfirmOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-sm p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3 text-rose-500">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 flex items-center justify-center">
-                  <LogOut className="w-5 h-5" strokeWidth={2} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Выход из системы
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    Завершить текущую сессию CRM?
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSignOutConfirmOpen(false)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmSignOut}
-                  disabled={isSigningOut}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isSigningOut ? 'Выход...' : 'Выйти из аккаунта'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={isSignOutConfirmOpen}
+          onClose={() => setIsSignOutConfirmOpen(false)}
+          onConfirm={handleConfirmSignOut}
+          title="Выход из системы"
+          subtitle="Завершить текущую сессию CRM?"
+          icon={LogOut}
+          tone="danger"
+          confirmLabel="Выйти из аккаунта"
+        />
       </div>
     </AppLayout>
   );

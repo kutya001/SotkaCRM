@@ -3,6 +3,8 @@
 import * as React from 'react';
 import { MapPin, ExternalLink, Search } from 'lucide-react';
 import { LocationPicker } from '@/components/ui/LocationPicker';
+import { FormField, Input, Select, Textarea } from '@/components/ui/Field';
+import { ButtonLink } from '@/components/ui/Button';
 
 export interface EmployeeProfileFormValue {
   address: string;
@@ -124,9 +126,6 @@ export function EmployeeLocationMap({
   );
 }
 
-const inputClass =
-  'w-full h-10 px-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500';
-
 /**
  * Поля анкеты сотрудника для форм создания и редактирования.
  * Место проживания задается кликом по карте (или поиском адреса); координаты можно
@@ -160,105 +159,108 @@ export function EmployeeProfileFields({
   const age = ageFromBirthDate(value.birth_date);
   const today = new Date().toISOString().slice(0, 10);
 
+  const innInvalid = Boolean(value.inn) && value.inn.length !== 14;
+
   return (
-    <div className="space-y-3.5">
+    <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <label className="font-semibold text-zinc-700 dark:text-zinc-300">ИНН</label>
-          <input
+        <FormField label="ИНН" error={innInvalid ? `Осталось цифр: ${14 - value.inn.length}` : undefined}>
+          <Input
             type="text"
             inputMode="numeric"
             maxLength={14}
             value={value.inn}
             onChange={(e) => set('inn', e.target.value.replace(/\D/g, '').slice(0, 14))}
             placeholder="14 цифр"
-            className={`${inputClass} font-mono ${value.inn && value.inn.length !== 14 ? 'border-rose-500' : ''}`}
+            mono
+            size="lg"
+            invalid={innInvalid}
           />
-          {value.inn && value.inn.length !== 14 && (
-            <p className="text-[10px] text-rose-500">Осталось цифр: {14 - value.inn.length}</p>
-          )}
-        </div>
+        </FormField>
 
-        <div className="space-y-1">
-          <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-            Дата рождения{age !== null ? ` (${age} лет)` : ''}
-          </label>
-          <input
+        <FormField label={`Дата рождения${age !== null ? ` (${age} лет)` : ''}`}>
+          <Input
             type="date"
             min="1900-01-01"
             max={today}
             value={value.birth_date}
             onChange={(e) => set('birth_date', e.target.value)}
-            className={`${inputClass} font-mono`}
+            mono
+            size="lg"
           />
-        </div>
+        </FormField>
 
-        <div className="space-y-1">
-          <label className="font-semibold text-zinc-700 dark:text-zinc-300">Пол</label>
-          <select
+        <FormField label="Пол">
+          <Select
             value={value.gender}
             onChange={(e) => set('gender', e.target.value as EmployeeProfileFormValue['gender'])}
-            className={inputClass}
+            size="lg"
           >
             <option value="">Не указан</option>
             <option value="male">{GENDER_LABELS.male}</option>
             <option value="female">{GENDER_LABELS.female}</option>
-          </select>
-        </div>
+          </Select>
+        </FormField>
       </div>
 
-      <div className="space-y-1">
-        <label className="font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
-          <MapPin className="w-3.5 h-3.5 text-rose-500" strokeWidth={1.75} />
-          Адрес проживания
-        </label>
+      <FormField
+        label={
+          <span className="flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5 text-rose-500" strokeWidth={1.75} />
+            Адрес проживания
+          </span>
+        }
+      >
         <div className="flex gap-2">
-          <input
+          <Input
             type="text"
             maxLength={300}
             value={value.address}
             onChange={(e) => set('address', e.target.value)}
             placeholder="г. Бишкек, ул. Киевская, 95"
-            className={inputClass}
+            size="lg"
           />
           {value.address.trim() && (
-            <a
+            <ButtonLink
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(value.address.trim())}`}
               target="_blank"
-              rel="noopener noreferrer"
               title="Найти адрес на карте и скопировать координаты"
-              className="h-10 px-3 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5 whitespace-nowrap"
+              variant="secondary"
+              size="lg"
+              className="text-xs"
+              leftIcon={<Search className="w-3.5 h-3.5" strokeWidth={1.75} />}
             >
-              <Search className="w-3.5 h-3.5" strokeWidth={1.75} />
               <span className="hidden sm:inline">На карте</span>
-            </a>
+            </ButtonLink>
           )}
         </div>
-      </div>
+      </FormField>
 
       <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <label className="font-semibold text-zinc-700 dark:text-zinc-300">Широта</label>
-          <input
+        <FormField label="Широта">
+          <Input
             type="text"
             inputMode="decimal"
             value={value.latitude}
             onChange={(e) => handleLatitudeChange(e.target.value)}
             placeholder="42.874621"
-            className={`${inputClass} font-mono ${value.latitude && lat === null ? 'border-rose-500' : ''}`}
+            mono
+            size="lg"
+            invalid={Boolean(value.latitude) && lat === null}
           />
-        </div>
-        <div className="space-y-1">
-          <label className="font-semibold text-zinc-700 dark:text-zinc-300">Долгота</label>
-          <input
+        </FormField>
+        <FormField label="Долгота">
+          <Input
             type="text"
             inputMode="decimal"
             value={value.longitude}
             onChange={(e) => set('longitude', e.target.value)}
             placeholder="74.569762"
-            className={`${inputClass} font-mono ${value.longitude && lon === null ? 'border-rose-500' : ''}`}
+            mono
+            size="lg"
+            invalid={Boolean(value.longitude) && lon === null}
           />
-        </div>
+        </FormField>
       </div>
       <p className="text-[10px] text-zinc-400 -mt-2">
         Кликните по карте ниже — координаты заполнятся сами. Или вставьте в «Широту» пару из карт, например «42.874621, 74.569762».
@@ -266,17 +268,15 @@ export function EmployeeProfileFields({
 
       <EmployeeLocationMap latitude={hasPoint ? lat : null} longitude={hasPoint ? lon : null} onChange={handleMapPick} />
 
-      <div className="space-y-1">
-        <label className="font-semibold text-zinc-700 dark:text-zinc-300">Биография</label>
-        <textarea
+      <FormField label="Биография">
+        <Textarea
           rows={3}
           maxLength={2000}
           value={value.bio}
           onChange={(e) => set('bio', e.target.value)}
           placeholder="Опыт работы, образование, навыки..."
-          className="w-full px-3.5 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-      </div>
+      </FormField>
     </div>
   );
 }

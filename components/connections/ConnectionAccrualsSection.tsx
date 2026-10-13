@@ -4,6 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { FormField, Input } from '@/components/ui/Field';
 import { formatMonth } from '@/lib/utils/format';
 import {
   Banknote,
@@ -12,11 +16,7 @@ import {
   Trash2,
   Edit2,
   Check,
-  X,
   Loader2,
-  Calendar,
-  FileText,
-  DollarSign,
 } from 'lucide-react';
 
 export interface RealPostingItem {
@@ -52,6 +52,7 @@ export const ConnectionAccrualsSection: React.FC<ConnectionAccrualsSectionProps>
   onUpdated,
 }) => {
   const { showToast } = useToast();
+  const confirmDialog = useConfirm();
   const [postings, setPostings] = useState<RealPostingItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -130,7 +131,14 @@ export const ConnectionAccrualsSection: React.FC<ConnectionAccrualsSectionProps>
   };
 
   const handleDeletePosting = async (id: string) => {
-    if (!confirm('Вы уверены, что хотите удалить эту проводку начисления?')) return;
+    const ok = await confirmDialog({
+      title: 'Удалить проводку начисления?',
+      description: 'Проводка будет удалена из регистра операций по ЗП. Действие необратимо.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
     try {
       await api.payouts.delete(id);
       showToast('Проводка удалена', 'success');
@@ -295,121 +303,64 @@ export const ConnectionAccrualsSection: React.FC<ConnectionAccrualsSectionProps>
         </div>
       )}
 
-      {/* Модальное окно редактирования проводки (для admin) */}
-      {editingPosting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-2xl p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                  Редактирование проводки начисления
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={closeEditModal}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSavePosting} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Дата проводки (actual_date)
-                </label>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 absolute left-3 top-2.5 text-zinc-400" />
-                  <input
-                    type="date"
-                    value={editActualDate}
-                    onChange={(e) => setEditActualDate(e.target.value)}
-                    required
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Расчетный месяц (settlement_month)
-                </label>
-                <input
-                  type="month"
-                  value={editSettlementMonth}
-                  onChange={(e) => setEditSettlementMonth(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 text-xs rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Сумма начисления (сом)
-                </label>
-                <div className="relative">
-                  <DollarSign className="w-4 h-4 absolute left-3 top-2.5 text-zinc-400" />
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    required
-                    className="w-full pl-9 pr-3 py-2 text-xs font-mono rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                  Примечание / Комментарий
-                </label>
-                <div className="relative">
-                  <FileText className="w-4 h-4 absolute left-3 top-2.5 text-zinc-400" />
-                  <input
-                    type="text"
-                    value={editNote}
-                    onChange={(e) => setEditNote(e.target.value)}
-                    placeholder="Например: Бонус за подключение ТТ"
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={closeEditModal}
-                  disabled={isSaving}
-                  className="px-3 py-2 rounded-xl text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1.5 shadow-sm transition-colors"
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Сохранение...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Сохранить изменения</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
+      {/* Модальное окно редактирования проводки (для admin) — вложенное поверх карточки подключения */}
+      <Modal
+        open={editingPosting !== null}
+        onClose={() => !isSaving && closeEditModal()}
+        title="Редактирование проводки начисления"
+        subtitle={editingPosting ? `${editingPosting.operation_type} · ${formatMonth(editingPosting.settlement_month)}` : undefined}
+        icon={Edit2}
+        tone="purple"
+        size="md"
+        level={2}
+        busy={isSaving}
+        formId="connection-accrual-edit-form"
+        onSubmit={handleSavePosting}
+        footer={
+          <>
+            <Button variant="outline" onClick={closeEditModal} disabled={isSaving}>
+              Отмена
+            </Button>
+            <Button
+              type="submit"
+              form="connection-accrual-edit-form"
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+              loading={isSaving}
+              leftIcon={<Check className="w-3.5 h-3.5" />}
+            >
+              Сохранить изменения
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <FormField label="Дата проводки" required>
+            <Input type="date" value={editActualDate} onChange={(e) => setEditActualDate(e.target.value)} required mono />
+          </FormField>
+          <FormField label="Расчетный месяц" required>
+            <Input type="month" value={editSettlementMonth} onChange={(e) => setEditSettlementMonth(e.target.value)} required mono />
+          </FormField>
+          <FormField label="Сумма начисления (сом)" required>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={editAmount}
+              onChange={(e) => setEditAmount(e.target.value)}
+              required
+              mono
+            />
+          </FormField>
+          <FormField label="Примечание / Комментарий">
+            <Input
+              type="text"
+              value={editNote}
+              onChange={(e) => setEditNote(e.target.value)}
+              placeholder="Например: Бонус за подключение ТТ"
+            />
+          </FormField>
         </div>
-      )}
+      </Modal>
     </div>
   );
 };

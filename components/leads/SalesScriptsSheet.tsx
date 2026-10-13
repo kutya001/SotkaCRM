@@ -12,6 +12,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { useModalBehavior } from '@/components/ui/Modal';
 import salesScriptsData from '@/data/sales-scripts.json';
 
 export interface SalesScript {
@@ -42,6 +43,9 @@ export function SalesScriptsSheet({ isOpen, onClose }: SalesScriptsSheetProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [selectedStage, setSelectedStage] = React.useState('Все');
   const [copiedScriptId, setCopiedScriptId] = React.useState<string | null>(null);
+
+  // Escape, блокировка прокрутки и возврат фокуса — как у остальных окон
+  useModalBehavior(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -75,7 +79,7 @@ export function SalesScriptsSheet({ isOpen, onClose }: SalesScriptsSheetProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex justify-end bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-modal flex justify-end bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" role="dialog" aria-modal="true" aria-label="Скрипты продаж">
       {/* Оверлей закрытия */}
       <div className="fixed inset-0" onClick={onClose} />
 

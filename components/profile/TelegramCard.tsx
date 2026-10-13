@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Send, Link2, Unlink, Copy, Check, Loader2, BellRing, ExternalLink, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { formatDateTime } from '@/lib/utils/format';
 
 type TelegramStatus = Awaited<ReturnType<typeof api.telegram.status>>;
@@ -22,6 +23,7 @@ const POLL_MAX_MS = 5 * 60 * 1000;
 /** Подключение Telegram-уведомлений для текущего сотрудника */
 export function TelegramCard() {
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [status, setStatus] = React.useState<TelegramStatus | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isWorking, setIsWorking] = React.useState(false);
@@ -92,7 +94,14 @@ export function TelegramCard() {
   };
 
   const handleUnlink = async () => {
-    if (!window.confirm('Отключить Telegram-уведомления?')) return;
+    const ok = await confirm({
+      title: 'Отключить Telegram-уведомления?',
+      description: 'Уведомления о начислениях, подключениях и лидах перестанут приходить в Telegram. Подключить заново можно в любой момент.',
+      tone: 'warning',
+      icon: Unlink,
+      confirmLabel: 'Отключить',
+    });
+    if (!ok) return;
     setIsWorking(true);
     try {
       await api.telegram.unlink();

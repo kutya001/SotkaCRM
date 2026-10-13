@@ -3,7 +3,22 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireAuth } from '@/lib/auth/check-role';
-import { LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { CancelReasonSchema, LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
+import {
+  canChangeLeadStatus,
+  canEditLeadFields,
+  implicitStatusForAssignment,
+  isCancelStatus,
+} from '@/lib/leads/status-rules';
+import {
+  DEFAULT_COUNTRY_CODE,
+  digitsOnly,
+  findPhoneCountry,
+  isKnownCountryCode,
+  isValidNational,
+  normalizeNational,
+} from '@/lib/utils/phone';
 import type { Database, LeadStatus } from '@/types/database.types';
 
 export interface LeadItem {
@@ -20,6 +35,8 @@ export interface LeadItem {
   seller_phone: string | null;
   linked_at: string | null;
   updated_at: string;
+  cancel_reason?: string | null;
+  cancelled_at?: string | null;
   assigned_user?: {
     user_id: string;
     full_name: string;
@@ -154,10 +171,10 @@ export async function createLead(input: {
   try {
     const { profile, supabase } = await requireAuth();
 
-    if (profile.role === 'consultant') {
+    if (profile.role !== 'admin' && profile.role !== 'smm') {
       return {
         success: false,
-        error: 'Консультанты не имеют прав на добавление лидов',
+        error: 'Добавлять лиды могут администратор и SMM-специалист',
       };
     }
 
@@ -189,20 +206,9 @@ export async function createLead(input: {
 
     const valid = parsed.data;
 
-    // Очистка телефона от лишних символов (хранятся строго цифры)
-    const cleanPhone = valid.phone.replace(/\D/g, '');
-    if (!cleanPhone || cleanPhone.length < 6) {
-      return {
-        success: false,
-        error: 'Укажите корректный номер телефона (минимум 6 цифр)',
-      };
-    }
-
-    // Если номер указан с кодом 996 (12 цифр), отсекаем его для унификации хранения
-    const phoneWithoutCode =
-      cleanPhone.startsWith('996') && cleanPhone.length > 9
-        ? cleanPhone.substring(3)
-        : cleanPhone;
+    // Национальный номер без кода страны (длина проверена схемой по коду страны)
+    const countryCode = digitsOnly(valid.country_code) || DEFAULT_COUNTRY_CODE;
+    const phoneWithoutCode = normalizeNational(valid.phone, countryCode);
 
     // Инвариант назначения ответственного:
     // 1. Для SMM куратор не назначается (заполняется администратором при переводе в «Назначен»)
@@ -217,7 +223,7 @@ export async function createLead(input: {
       .insert({
         client_name: valid.client_name.trim(),
         phone: phoneWithoutCode,
-        country_code: valid.country_code || '996',
+        country_code: countryCode,
         status: 'Открыт',
         instagram: valid.instagram || null,
         comment: valid.comment || null,
@@ -264,10 +270,10 @@ export async function updateLead(
   try {
     const { profile, supabase } = await requireAuth();
 
-    // RBAC: Проверка прав доступа и валидация статусов перед изменением
+    // RBAC: единая матрица ролей (lib/leads/status-rules)
     const { data: targetLead } = await supabase
       .from('leads')
-      .select('created_by, assigned_to, status')
+      .select('created_by, assigned_to, status, country_code')
       .eq('lead_id', leadId)
       .single();
 
@@ -275,39 +281,15 @@ export async function updateLead(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    if (profile.role === 'smm') {
-      if (targetLead.created_by !== profile.user_id) {
-        return { success: false, error: 'Роль SMM может редактировать только созданные собой лиды' };
-      }
-      if (targetLead.status !== 'Открыт' && targetLead.status !== 'Обработан') {
-        return {
-          success: false,
-          error: 'SMM-специалист не может изменять лид на этапе «Назначен», «Подписан» или «Отмена»',
-        };
-      }
-      if (updates.status && updates.status !== 'Открыт' && updates.status !== 'Обработан') {
-        return {
-          success: false,
-          error: 'SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»',
-        };
-      }
-      // SMM не имеет прав назначать ответственного
-      updates.assigned_to = undefined;
-    } else if (profile.role === 'consultant') {
-      if (targetLead.assigned_to !== profile.user_id) {
-        return { success: false, error: 'Лид назначен на другого консультанта' };
-      }
-      if (!['Назначен', 'Подписан', 'Отмена'].includes(targetLead.status)) {
-        return {
-          success: false,
-          error: 'Консультанту доступны только лиды в статусах «Назначен», «Подписан» или «Отмена»',
-        };
-      }
-      if (updates.status && !['Назначен', 'Подписан', 'Отмена'].includes(updates.status)) {
-        return {
-          success: false,
-          error: 'Консультант может переводить статус только в «Назначен», «Подписан» или «Отмена»',
-        };
+    if (!canEditLeadFields(profile.role, targetLead, profile.user_id)) {
+      return { success: false, error: 'Недостаточно прав для редактирования этого лида' };
+    }
+
+    if (updates.status !== undefined && updates.status !== targetLead.status) {
+      const check = canChangeLeadStatus(profile.role, targetLead, profile.user_id, updates.status);
+      if (!check.ok) return { success: false, error: check.reason };
+      if (isCancelStatus(updates.status)) {
+        return { success: false, error: 'Для отмены лида используйте действие «Отменить» с указанием причины' };
       }
     }
 
@@ -324,7 +306,6 @@ export async function updateLead(
     } else {
       // Администратор и SMM (с учетом проверок выше)
       if (updates.client_name !== undefined) payload.client_name = updates.client_name.trim();
-      if (updates.country_code !== undefined) payload.country_code = updates.country_code;
       if (updates.instagram !== undefined) {
         payload.instagram = updates.instagram && updates.instagram.trim() !== '' ? updates.instagram.trim() : null;
       }
@@ -333,15 +314,28 @@ export async function updateLead(
       }
       if (updates.assigned_to !== undefined && profile.role === 'admin') {
         payload.assigned_to = normalizeNullableUuid(updates.assigned_to);
+        const implicit = implicitStatusForAssignment(targetLead.status, payload.assigned_to);
+        if (implicit && updates.status === undefined) payload.status = implicit;
       }
       if (updates.status !== undefined) payload.status = updates.status;
 
-      if (updates.phone !== undefined) {
-        const cleanPhone = updates.phone.replace(/\D/g, '');
-        payload.phone =
-          cleanPhone.startsWith('996') && cleanPhone.length > 9
-            ? cleanPhone.substring(3)
-            : cleanPhone;
+      if (updates.phone !== undefined || updates.country_code !== undefined) {
+        const countryCode = digitsOnly(updates.country_code ?? targetLead.country_code) || DEFAULT_COUNTRY_CODE;
+        if (!isKnownCountryCode(countryCode)) {
+          return { success: false, error: 'Неизвестный код страны' };
+        }
+        payload.country_code = countryCode;
+        if (updates.phone !== undefined) {
+          const national = normalizeNational(updates.phone, countryCode);
+          if (!isValidNational(national, countryCode)) {
+            const country = findPhoneCountry(countryCode);
+            return {
+              success: false,
+              error: `Номер для +${countryCode} должен содержать ${country?.nationalLength ?? 9} цифр без кода страны`,
+            };
+          }
+          payload.phone = national;
+        }
       }
     }
 
@@ -391,29 +385,16 @@ export async function updateLeadStatus(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    if (profile.role === 'smm') {
-      if (targetLead.created_by !== profile.user_id) {
-        return { success: false, error: 'Роль SMM может управлять только созданными собой лидами' };
-      }
-      if (!['Открыт', 'Обработан'].includes(targetLead.status) || !['Открыт', 'Обработан'].includes(status)) {
-        return {
-          success: false,
-          error: 'SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»',
-        };
-      }
-    } else if (profile.role === 'consultant') {
-      if (targetLead.assigned_to !== profile.user_id) {
-        return { success: false, error: 'Лид назначен на другого консультанта' };
-      }
-      if (!['Назначен', 'Подписан', 'Отмена'].includes(status)) {
-        return {
-          success: false,
-          error: 'Консультант может переводить статус только в «Назначен», «Подписан» или «Отмена»',
-        };
-      }
+    const check = canChangeLeadStatus(profile.role, targetLead, profile.user_id, status);
+    if (!check.ok) {
+      return { success: false, error: check.reason };
+    }
+    if (isCancelStatus(status)) {
+      return { success: false, error: 'Для отмены лида укажите причину (действие «Отменить»)' };
     }
 
-    const { error } = await supabase
+    // Запись сервисным клиентом: права проверены матрицей ролей, RLS — страховка
+    const { error } = await createAdminClient()
       .from('leads')
       .update({
         status,
@@ -434,7 +415,7 @@ export async function updateLeadStatus(
 }
 
 /**
- * Перевод лида в статус «Отмена» с сохранением причины
+ * Перевод лида в статус «Отмена» с обязательной причиной (колонка cancel_reason, миграция 037)
  * ВНИМАНИЕ: Физический вызов delete() строго запрещен триггером prevent_lead_delete!
  */
 export async function cancelLead(
@@ -444,14 +425,14 @@ export async function cancelLead(
   try {
     const { profile, supabase } = await requireAuth();
 
-    if (profile.role === 'smm') {
-      return { success: false, error: 'Роль SMM не имеет прав на отмену сделки' };
+    const parsedReason = CancelReasonSchema.safeParse(reason ?? '');
+    if (!parsedReason.success) {
+      return { success: false, error: parsedReason.error.issues[0]?.message || 'Укажите причину отмены' };
     }
 
-    // Получаем текущий комментарий лида и проверяем права
     const { data: currentLead } = await supabase
       .from('leads')
-      .select('assigned_to, comment')
+      .select('created_by, assigned_to, status')
       .eq('lead_id', leadId)
       .single();
 
@@ -459,27 +440,18 @@ export async function cancelLead(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    if (
-      profile.role === 'consultant' &&
-      currentLead.assigned_to &&
-      currentLead.assigned_to !== profile.user_id
-    ) {
-      return { success: false, error: 'Лид назначен на другого консультанта' };
+    const check = canChangeLeadStatus(profile.role, currentLead, profile.user_id, 'Отмена');
+    if (!check.ok) {
+      return { success: false, error: check.reason };
     }
 
-    const now = new Date().toLocaleDateString('ru-RU');
-    const cancellationNote = `[Отмена (${now})]: ${reason.trim()}`;
-    const updatedComment = currentLead?.comment
-      ? `${currentLead.comment}\n${cancellationNote}`
-      : cancellationNote;
-
-    const { error } = await supabase
+    const { error } = await createAdminClient()
       .from('leads')
       .update({
         status: 'Отмена',
-        comment: updatedComment,
+        cancel_reason: parsedReason.data,
         updated_at: new Date().toISOString(),
-      })
+      } as any)
       .eq('lead_id', leadId);
 
     if (error) {

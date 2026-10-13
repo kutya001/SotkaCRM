@@ -7,6 +7,16 @@ import { DataJournal, type ColumnDef, type DataJournalTab, PIPELINE_STATUS_OPTIO
 import dynamic from 'next/dynamic';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
+import { FormField, Textarea } from '@/components/ui/Field';
+import { formatDateTime } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
+import {
+  allowedLeadTransitions,
+  canChangeLeadStatus,
+  canEditLeadFields,
+  isCancelStatus,
+} from '@/lib/leads/status-rules';
 
 const SalesScriptsSheet = dynamic(
   () => import('@/components/leads/SalesScriptsSheet').then((m) => m.SalesScriptsSheet),
@@ -48,6 +58,7 @@ import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
 function LeadsContent() {
   const router = useRouter();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const user = useUser();
 
@@ -92,18 +103,20 @@ function LeadsContent() {
     selectedLead: null,
   });
 
-  // Диалог отмены лида с причиной
+  // Диалог отмены лида (одного или нескольких) с обязательной причиной
   const [cancelDialog, setCancelDialog] = React.useState<{
     isOpen: boolean;
-    leadId: string | null;
+    leadIds: string[];
     clientName: string;
     reason: string;
+    onDone?: () => void;
   }>({
     isOpen: false,
-    leadId: null,
+    leadIds: [],
     clientName: '',
     reason: '',
   });
+  const closeCancelDialog = () => setCancelDialog({ isOpen: false, leadIds: [], clientName: '', reason: '' });
 
   // Состояние модального окна связывания «Лид -> Продавец»
   const [currentUserId, setCurrentUserId] = React.useState<string>('');
@@ -270,15 +283,12 @@ function LeadsContent() {
         minWidth: 130,
         sortable: true,
         filterable: true,
-        phoneAccessor: (row) => `+${row.country_code || '996'} ${row.phone}`,
-        renderCell: (row) => {
-          const fullPhone = `+${row.country_code || '996'} ${row.phone}`;
-          return (
-            <span className="font-mono text-zinc-800 dark:text-zinc-200">
-              {fullPhone}
-            </span>
-          );
-        },
+        phoneAccessor: (row) => formatPhoneDisplay(row.phone, row.country_code),
+        renderCell: (row) => (
+          <span className="font-mono text-zinc-800 dark:text-zinc-200">
+            {formatPhoneDisplay(row.phone, row.country_code)}
+          </span>
+        ),
       },
       {
         key: 'status',
@@ -361,13 +371,14 @@ function LeadsContent() {
       {
         key: 'created_at',
         label: 'Поступил',
-        width: 140,
-        minWidth: 120,
+        type: 'datetime',
+        width: 170,
+        minWidth: 150,
         sortable: true,
         filterable: true,
         renderCell: (row) => (
           <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
-            <FormattedDate date={row.created_at} type="shortDateTime" />
+            <FormattedDate date={row.created_at} type="dateTime" />
           </span>
         ),
       },
@@ -400,6 +411,7 @@ function LeadsContent() {
       {
         name: 'created_at',
         label: 'Дата поступления',
+        type: 'datetime',
         immutable: true,
         isSystem: true,
       },
@@ -416,8 +428,6 @@ function LeadsContent() {
         type: 'phone',
         required: true,
         immutable: currentUserRole === 'consultant',
-        placeholder: '700123456 (без кода страны)',
-        helperText: 'Номер абонента без пробелов и тире (код страны слева)',
       },
       {
         name: 'instagram',
@@ -429,14 +439,15 @@ function LeadsContent() {
         name: 'status',
         label: 'Этап воронки',
         type: 'status',
-        required: true,
+        // Новый лид всегда «Открыт»; смена — только из панели быстрых действий по правилам ролей
+        isSystem: true,
       },
       {
         name: 'assigned_to',
         label: 'Ответственный консультант',
         type: 'select',
         disabled: currentUserRole !== 'admin',
-        immutable: currentUserRole === 'consultant',
+        immutable: currentUserRole !== 'admin',
         isSystem: currentUserRole === 'smm',
         defaultValue: currentUserRole === 'consultant' ? currentUserId : '',
         helperText:
@@ -444,22 +455,21 @@ function LeadsContent() {
             ? 'Лид закреплен за вами'
             : currentUserRole === 'smm'
             ? 'Куратор назначается администратором'
-            : undefined,
-        options:
-          currentUserRole === 'consultant'
-            ? [
-                {
-                  value: currentUserId,
-                  label: `${userName || 'Текущий сотрудник'} (Консультант)`,
-                },
-              ]
-            : [
-                { value: '', label: '— Не назначен —' },
-                ...consultants.map((c) => ({
-                  value: c.user_id,
-                  label: `● ${c.full_name} (${c.role === 'admin' ? 'Администратор' : 'Консультант'})`,
-                })),
-              ],
+            : 'Назначение из «Открыт»/«Обработан» переводит лид в «Назначен»',
+        options: [
+          { value: '', label: '— Не назначен —' },
+          ...consultants.map((c) => ({
+            value: c.user_id,
+            label: `● ${c.full_name} (${c.role === 'admin' ? 'Администратор' : 'Консультант'})`,
+          })),
+        ],
+        // В карточке — имя и цвет сотрудника вместо идентификатора
+        renderCustomView: (_val, lead) =>
+          lead.assigned_user ? (
+            <EmployeeBadge name={lead.assigned_user.full_name} color={lead.assigned_user.color} size="sm" />
+          ) : (
+            <span className="text-zinc-400">— Не назначен —</span>
+          ),
       },
       {
         name: 'comment',
@@ -467,37 +477,53 @@ function LeadsContent() {
         type: 'textarea',
         placeholder: 'Заметки по клиенту, детали разговора, пожелания...',
       },
+      {
+        name: 'cancel_reason',
+        label: 'Причина отмены',
+        type: 'textarea',
+        immutable: true,
+        isSystem: true,
+        hidden: (lead) => !isCancelStatus(lead.status),
+        renderCustomView: (val) => <span className="whitespace-pre-wrap text-rose-700 dark:text-rose-300">{val || '—'}</span>,
+      },
+      {
+        name: 'cancelled_at',
+        label: 'Дата отмены',
+        type: 'datetime',
+        immutable: true,
+        isSystem: true,
+        hidden: (lead) => !isCancelStatus(lead.status),
+      },
     ],
-    [consultants, currentUserRole, currentUserId, userName]
+    [consultants, currentUserRole, currentUserId]
   );
 
-  // Права на редактирование текущего лида в EntityModal
-  const canEditCurrentLead = React.useMemo(() => {
-    if (currentUserRole === 'admin') return true;
-    if (currentUserRole === 'consultant') {
-      return (
-        modalState.selectedLead?.assigned_to === currentUserId &&
-        ['Назначен', 'Подписан', 'Отмена'].includes(modalState.selectedLead?.status || '')
-      );
-    }
-    if (currentUserRole === 'smm') {
-      return ['Открыт', 'Обработан'].includes(modalState.selectedLead?.status || '');
-    }
-    return false;
-  }, [currentUserRole, currentUserId, modalState.selectedLead]);
+  // Права на редактирование полей текущего лида в EntityModal (единая матрица ролей)
+  const canEditCurrentLead = React.useMemo(
+    () =>
+      Boolean(modalState.selectedLead) &&
+      canEditLeadFields(currentUserRole, modalState.selectedLead as LeadItem, currentUserId),
+    [currentUserRole, currentUserId, modalState.selectedLead]
+  );
 
-  // Доступные статусы воронки по ролям
-  const roleStatusOptions = React.useMemo(() => {
-    if (currentUserRole === 'smm') {
-      return PIPELINE_STATUS_OPTIONS.filter((s) => ['Открыт', 'Обработан'].includes(s.value));
-    }
-    if (currentUserRole === 'consultant') {
-      return PIPELINE_STATUS_OPTIONS.filter((s) =>
-        ['Назначен', 'Подписан', 'Отмена'].includes(s.value)
-      );
-    }
-    return PIPELINE_STATUS_OPTIONS;
-  }, [currentUserRole]);
+  // Статусы, в которые текущий пользователь может перевести открытый в карточке лид
+  const allowedStatusesForModal = React.useMemo(
+    () =>
+      modalState.selectedLead && modalState.mode !== 'create'
+        ? allowedLeadTransitions(currentUserRole, modalState.selectedLead, currentUserId)
+        : [],
+    [currentUserRole, currentUserId, modalState.selectedLead, modalState.mode]
+  );
+
+  // Варианты статуса для строки/карточки реестра: только разрешенные переходы (иначе — бейдж)
+  const getLeadStatusOptions = React.useCallback(
+    (row: LeadItem) => {
+      const allowed = allowedLeadTransitions(currentUserRole, row, currentUserId);
+      if (allowed.length === 0) return null;
+      return PIPELINE_STATUS_OPTIONS.filter((o) => o.value === row.status || allowed.includes(o.value as LeadStatus));
+    },
+    [currentUserRole, currentUserId]
+  );
 
   // Обработчики строк DataJournal
   const handleRowClick = (lead: LeadItem) => {
@@ -508,9 +534,11 @@ function LeadsContent() {
     });
   };
 
+  const canCreateLeads = currentUserRole === 'admin' || currentUserRole === 'smm';
+
   const handleCreateClick = () => {
-    if (currentUserRole === 'consultant') {
-      showToast('Консультанты не имеют прав на добавление лидов', 'error');
+    if (!canCreateLeads) {
+      showToast('Добавлять лиды могут администратор и SMM-специалист', 'error');
       return;
     }
     setModalState({
@@ -529,6 +557,19 @@ function LeadsContent() {
 
   const handleBatchStatus = async (status: LeadStatus, clearSelection: () => void) => {
     if (selectedLeadIds.length === 0) return;
+
+    // Массовая отмена — только с причиной
+    if (isCancelStatus(status)) {
+      setCancelDialog({
+        isOpen: true,
+        leadIds: [...selectedLeadIds],
+        clientName: `Выбрано лидов: ${selectedLeadIds.length}`,
+        reason: '',
+        onDone: clearSelection,
+      });
+      return;
+    }
+
     setIsBatchLoading(true);
     try {
       await api.leads.batch({
@@ -567,9 +608,15 @@ function LeadsContent() {
 
   const handleBatchDelete = async (clearSelection: () => void) => {
     if (selectedLeadIds.length === 0) return;
-    if (!window.confirm(`Удалить навсегда ${selectedLeadIds.length} выбранных лидов? Действие нельзя отменить.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Удалить выбранные лиды навсегда?',
+      subtitle: `Выбрано лидов: ${selectedLeadIds.length}`,
+      description: 'Записи будут физически удалены из базы без возможности восстановления.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить навсегда',
+    });
+    if (!ok) return;
     setIsBatchLoading(true);
     try {
       const res = await api.leads.batch({
@@ -586,43 +633,48 @@ function LeadsContent() {
     }
   };
 
-  const handleStatusChangeInJournal = async (lead: LeadItem, newStatus: string) => {
-    if (currentUserRole === 'smm') {
-      if (!['Открыт', 'Обработан'].includes(lead.status)) {
-        showToast('SMM-специалисту запрещено менять статус на стадии «Назначен», «Подписан» или «Отмена»', 'error');
-        return;
+  /**
+   * Смена статуса из реестра/карточки по единым правилам ролей.
+   * Возвращает false, если смена не выполнена (запрет или открыт диалог причины отмены).
+   */
+  const changeLeadStatus = React.useCallback(
+    async (lead: LeadItem, newStatus: string): Promise<boolean> => {
+      const check = canChangeLeadStatus(currentUserRole, lead, currentUserId, newStatus);
+      if (!check.ok) {
+        showToast(check.reason, 'error');
+        return false;
       }
-      if (!['Открыт', 'Обработан'].includes(newStatus)) {
-        showToast('SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»', 'error');
-        return;
+
+      if (isCancelStatus(newStatus)) {
+        setCancelDialog({ isOpen: true, leadIds: [lead.lead_id], clientName: lead.client_name, reason: '' });
+        return false;
       }
-    }
-    if (currentUserRole === 'consultant') {
-      if (lead.assigned_to !== currentUserId) {
-        showToast('Консультант может изменять статус только своих лидов', 'error');
-        return;
-      }
-      if (!['Назначен', 'Подписан', 'Отмена'].includes(newStatus)) {
-        showToast('Консультанту доступны только статусы «Назначен», «Подписан» или «Отмена»', 'error');
-        return;
-      }
-    }
-    try {
-      await api.leads.updateStatus(lead.lead_id, newStatus);
+
+      const res = await api.leads.updateStatus(lead.lead_id, newStatus);
       setLeads((prev) =>
         prev.map((item) =>
           item.lead_id === lead.lead_id
-            ? { ...item, status: newStatus as LeadStatus }
+            ? { ...item, status: newStatus as LeadStatus, cancel_reason: null, cancelled_at: null, ...(res || {}) }
             : item
         )
       );
+      setModalState((prev) =>
+        prev.selectedLead?.lead_id === lead.lead_id
+          ? { ...prev, selectedLead: { ...prev.selectedLead, status: newStatus as LeadStatus, cancel_reason: null, cancelled_at: null } }
+          : prev
+      );
       getLeadsStats().then(setStats);
-    } catch (err: any) {
-      showToast(err.message || 'Ошибка при обновлении статуса лида', 'error');
-    }
-  };
+      return true;
+    },
+    [currentUserRole, currentUserId, showToast]
+  );
 
-  // Обработчики формы EntityModal
+  const handleStatusChangeInJournal = React.useCallback(
+    (lead: LeadItem, newStatus: string) => changeLeadStatus(lead, newStatus),
+    [changeLeadStatus]
+  );
+
+  // Обработчики формы EntityModal (статус через форму не меняется — только панель быстрых действий)
   const handleSaveLead = async (updated: LeadItem) => {
     try {
       await api.leads.update(updated.lead_id, {
@@ -631,8 +683,7 @@ function LeadsContent() {
         country_code: updated.country_code,
         instagram: updated.instagram,
         comment: updated.comment,
-        assigned_to: updated.assigned_to,
-        status: updated.status,
+        ...(currentUserRole === 'admin' ? { assigned_to: updated.assigned_to || null } : {}),
       });
       await fetchInitialData();
     } catch (err: any) {
@@ -668,35 +719,41 @@ function LeadsContent() {
   };
 
   const handleStatusChangeInModal = async (newStatus: string) => {
-    if (!modalState.selectedLead) return;
+    if (!modalState.selectedLead) return false;
     try {
-      await api.leads.updateStatus(modalState.selectedLead.lead_id, newStatus);
-      await fetchInitialData();
+      return await changeLeadStatus(modalState.selectedLead, newStatus);
     } catch (err: any) {
       throw new Error(err.message || 'Ошибка при смене статуса');
     }
   };
 
-  const handleOpenCancelDialog = (lead: LeadItem) => {
-    setCancelDialog({
-      isOpen: true,
-      leadId: lead.lead_id,
-      clientName: lead.client_name,
-      reason: '',
-    });
-  };
-
   const handleConfirmCancelLead = async () => {
-    if (!cancelDialog.leadId || !cancelDialog.reason.trim()) {
-      showToast('Укажите причину отмены сделки', 'error');
+    const reason = cancelDialog.reason.trim();
+    if (cancelDialog.leadIds.length === 0 || reason.length < 3) {
+      showToast('Укажите причину отмены (не менее 3 символов)', 'error');
       return;
     }
 
     try {
-      await api.leads.updateStatus(cancelDialog.leadId, 'Отмена', cancelDialog.reason.trim());
-      showToast('Лид переведен в статус «Отмена»', 'info');
-      setCancelDialog({ isOpen: false, leadId: null, clientName: '', reason: '' });
-      setModalState((prev) => ({ ...prev, isOpen: false }));
+      if (cancelDialog.leadIds.length === 1) {
+        await api.leads.updateStatus(cancelDialog.leadIds[0], 'Отмена', reason);
+        showToast('Лид переведен в статус «Отмена»', 'info');
+      } else {
+        await api.leads.batch({
+          lead_ids: cancelDialog.leadIds,
+          action: 'change_status',
+          status: 'Отмена',
+          cancel_reason: reason,
+        });
+        showToast(`Отменено лидов: ${cancelDialog.leadIds.length}`, 'info');
+      }
+      cancelDialog.onDone?.();
+      closeCancelDialog();
+      setModalState((prev) =>
+        prev.selectedLead && cancelDialog.leadIds.includes(prev.selectedLead.lead_id)
+          ? { ...prev, isOpen: false }
+          : prev
+      );
       await fetchInitialData();
     } catch (err: any) {
       showToast(err.message || 'Ошибка при отмене сделки', 'error');
@@ -705,10 +762,10 @@ function LeadsContent() {
 
   const handleLinkSeller = (lead: LeadItem) => {
     if (lead.seller_phone) {
-      showToast(`Лид уже привязан к продавцу +${lead.seller_phone}`, 'info');
+      showToast(`Лид уже привязан к продавцу ${formatPhoneDisplay(lead.seller_phone)}`, 'info');
       return;
     }
-    if (currentUserRole === 'smm') {
+    if (currentUserRole !== 'admin' && currentUserRole !== 'consultant') {
       showToast('Привязка продавцов доступна только администраторам и консультантам', 'error');
       return;
     }
@@ -812,7 +869,7 @@ function LeadsContent() {
     (row: LeadItem) => {
       const actions: React.ReactNode[] = [];
 
-      if (currentUserRole !== 'smm') {
+      if (currentUserRole === 'admin' || currentUserRole === 'consultant') {
         if (!row.seller_phone && row.status !== 'Отмена') {
           actions.push(
             <button
@@ -834,7 +891,7 @@ function LeadsContent() {
             <span
               key="linked"
               className="p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-mono flex items-center gap-1"
-              title={`Привязан к продавцу +${row.seller_phone}`}
+              title={`Привязан к продавцу ${formatPhoneDisplay(row.seller_phone)}`}
             >
               <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
               <span className="hidden xl:inline font-semibold">Связан</span>
@@ -900,7 +957,7 @@ function LeadsContent() {
       searchPlaceholder="Быстрый поиск по телефону, имени или заметке..."
       filterCount={activeFilterCount}
       filterContent={filterContent}
-      onCreateClick={currentUserRole === 'consultant' ? undefined : handleCreateClick}
+      onCreateClick={canCreateLeads ? handleCreateClick : undefined}
       createTooltip="Добавить лид"
       hideFab={isAnyModalOpen}
     >
@@ -977,6 +1034,7 @@ function LeadsContent() {
           customRowActions={renderCustomRowActions}
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
+          getStatusOptions={getLeadStatusOptions}
           totalCount={totalCount}
         />
 
@@ -993,20 +1051,23 @@ function LeadsContent() {
             keyField="lead_id"
             phoneField="phone"
             statusField="status"
-            statusOptions={roleStatusOptions}
+            statusOptions={PIPELINE_STATUS_OPTIONS}
+            allowedStatusValues={allowedStatusesForModal}
             onSave={canEditCurrentLead ? handleSaveLead : undefined}
-            onCreate={handleCreateLead}
-            onStatusChange={canEditCurrentLead ? handleStatusChangeInModal : undefined}
-            onLinkSeller={handleLinkSeller}
+            onCreate={canCreateLeads ? handleCreateLead : undefined}
+            onStatusChange={allowedStatusesForModal.length > 0 ? handleStatusChangeInModal : undefined}
+            onLinkSeller={
+              currentUserRole === 'admin' || currentUserRole === 'consultant' ? handleLinkSeller : undefined
+            }
             onDelete={currentUserRole === 'admin' ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
             linkedBanner={
               modalState.selectedLead?.seller_phone
                 ? {
-                    title: `Привязанный продавец: +${modalState.selectedLead.seller_phone}`,
+                    title: `Привязанный продавец: ${formatPhoneDisplay(modalState.selectedLead.seller_phone)}`,
                     description: `Связан ${
                       modalState.selectedLead.linked_at
-                        ? new Date(modalState.selectedLead.linked_at).toLocaleDateString('ru-RU')
+                        ? formatDateTime(modalState.selectedLead.linked_at)
                         : 'в системе'
                     }`,
                     navigateLabel: 'К продавцу',
@@ -1039,64 +1100,36 @@ function LeadsContent() {
           />
         )}
 
-        {/* 6. Диалог отмены сделки с указанием причины */}
-        {cancelDialog.isOpen && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3 text-rose-500">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 flex items-center justify-center">
-                  <Ban className="w-5 h-5" strokeWidth={2} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Отмена сделки
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    {cancelDialog.clientName}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                  Укажите причину отмены (обязательно):
-                </label>
-                <textarea
-                  value={cancelDialog.reason}
-                  onChange={(e) =>
-                    setCancelDialog((prev) => ({ ...prev, reason: e.target.value }))
-                  }
-                  rows={3}
-                  placeholder="Например: Высокая цена, закрылся бизнес, выбрал другое решение..."
-                  className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-rose-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCancelDialog({ isOpen: false, leadId: null, clientName: '', reason: '' })
-                  }
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Назад
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmCancelLead}
-                  disabled={!cancelDialog.reason.trim()}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-md transition-all disabled:opacity-50"
-                >
-                  Подтвердить отмену
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* 6. Диалог отмены сделки с обязательной причиной (один лид или массово) */}
+        <ConfirmDialog
+          open={cancelDialog.isOpen}
+          onClose={closeCancelDialog}
+          onConfirm={handleConfirmCancelLead}
+          title={cancelDialog.leadIds.length > 1 ? 'Отмена сделок' : 'Отмена сделки'}
+          subtitle={cancelDialog.clientName}
+          tone="danger"
+          icon={Ban}
+          confirmLabel="Подтвердить отмену"
+          cancelLabel="Назад"
+          confirmDisabled={cancelDialog.reason.trim().length < 3}
+          level={2}
+          description={
+            currentUserRole === 'admin'
+              ? 'Вернуть лид из статуса «Отмена» сможет только администратор.'
+              : 'После отмены вернуть лид в работу сможет только администратор.'
+          }
+        >
+          <FormField label="Причина отмены" required hint="Не менее 3 символов. Причина сохраняется в карточке лида.">
+            <Textarea
+              value={cancelDialog.reason}
+              onChange={(e) => setCancelDialog((prev) => ({ ...prev, reason: e.target.value }))}
+              rows={3}
+              autoFocus
+              maxLength={500}
+              placeholder="Например: высокая цена, закрылся бизнес, выбрал другое решение..."
+            />
+          </FormField>
+        </ConfirmDialog>
 
         {/* 7. Модальное окно ручного связывания Лид -> Продавец */}
         {mappingModal.isOpen && (
@@ -1115,120 +1148,54 @@ function LeadsContent() {
         )}
 
         {/* 8. Диалог подтверждения безвозвратного удаления лида (Admin Only) */}
-        {leadToDelete && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Удалить лид навсегда?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {leadToDelete.client_name} ({leadToDelete.phone ? `+${leadToDelete.phone}` : 'без телефона'})
-                  </p>
-                </div>
+        <ConfirmDialog
+          open={leadToDelete !== null}
+          onClose={() => !isDeletingLead && setLeadToDelete(null)}
+          onConfirm={handleConfirmDeleteLead}
+          title="Удалить лид навсегда?"
+          subtitle={
+            leadToDelete
+              ? `${leadToDelete.client_name} (${leadToDelete.phone ? formatPhoneDisplay(leadToDelete.phone, leadToDelete.country_code) : 'без телефона'})`
+              : undefined
+          }
+          tone="danger"
+          icon={Trash2}
+          confirmLabel="Удалить навсегда"
+          level={2}
+          description={
+            <div className="space-y-1.5">
+              <div className="font-semibold flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                <span>Внимание: действие необратимо</span>
               </div>
-
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 space-y-1.5">
-                <div className="font-semibold flex items-center gap-1.5">
-                  <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-                  <span>Внимание: действие необратимо</span>
-                </div>
-                <p className="text-[11px] leading-relaxed">
-                  Вы действительно хотите безвозвратно удалить этот лид из базы? Запись будет физически удалена без возможности восстановления.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isDeletingLead}
-                  onClick={() => setLeadToDelete(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeletingLead}
-                  onClick={handleConfirmDeleteLead}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isDeletingLead ? (
-                    <span>Удаление...</span>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Удалить навсегда</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <p className="text-[11px] leading-relaxed">
+                Запись будет физически удалена из базы без возможности восстановления.
+              </p>
             </div>
-          </div>
-        )}
+          }
+        />
 
         {/* 9. Диалог подтверждения отвязки продавца от лида */}
-        {leadToUnlink && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-                  <RotateCcw className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Отвязать продавца от лида?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {leadToUnlink.client_name} (Продавец: +{leadToUnlink.seller_phone})
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 space-y-1.5">
-                <p className="text-[11px] leading-relaxed">
-                  При отвязке лид вернется в статус <b>«Назначен»</b>, привязка к продавцу будет разорвана, а у продавца будет сброшен назначенный куратор.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isUnlinkingSeller}
-                  onClick={() => setLeadToUnlink(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isUnlinkingSeller}
-                  onClick={handleConfirmUnlinkSeller}
-                  className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isUnlinkingSeller ? (
-                    <span>Отвязка...</span>
-                  ) : (
-                    <>
-                      <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Подтвердить отвязку</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={leadToUnlink !== null}
+          onClose={() => !isUnlinkingSeller && setLeadToUnlink(null)}
+          onConfirm={handleConfirmUnlinkSeller}
+          title="Отвязать продавца от лида?"
+          subtitle={
+            leadToUnlink
+              ? `${leadToUnlink.client_name} (Продавец: ${formatPhoneDisplay(leadToUnlink.seller_phone)})`
+              : undefined
+          }
+          tone="warning"
+          icon={RotateCcw}
+          confirmLabel="Подтвердить отвязку"
+          level={2}
+          description={
+            <>
+              При отвязке лид вернется в статус <b>«Назначен»</b>, привязка к продавцу будет разорвана, а у продавца будет сброшен назначенный куратор.
+            </>
+          }
+        />
       </div>
     </AppLayout>
   );

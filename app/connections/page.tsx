@@ -3,9 +3,15 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataJournal, type ColumnDef, type StatusOption } from '@/components/ui/DataJournal';
+import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { FormField, Input, Select, Textarea } from '@/components/ui/Field';
+import { formatDateTime, formatMonth, currentMonthISO } from '@/lib/utils/format';
+import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
 import { api } from '@/lib/api/client';
 import {
   getConnectionsStats,
@@ -41,10 +47,45 @@ import {
   Receipt,
   Check,
   Loader2,
+  Hourglass,
+  XCircle,
+  ShieldCheck,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
-import type { ClientLifecycleStatus, UserRole } from '@/types/database.types';
+import type { ClientLifecycleStatus, ConnectionConfirmationStatus, UserRole } from '@/types/database.types';
+
+/** Подтверждение подключения администратором (миграция 037) */
+const CONFIRMATION_STATUS_OPTIONS: StatusOption[] = [
+  {
+    value: 'pending',
+    label: 'Ожидает подтверждения',
+    colorClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+    dotColor: 'bg-amber-500',
+  },
+  {
+    value: 'confirmed',
+    label: 'Подтверждено',
+    colorClass: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    dotColor: 'bg-emerald-500',
+  },
+  {
+    value: 'rejected',
+    label: 'Отклонено',
+    colorClass: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
+    dotColor: 'bg-rose-500',
+  },
+];
+
+function ConfirmationBadge({ status, className = '' }: { status?: string | null; className?: string }) {
+  const opt = CONFIRMATION_STATUS_OPTIONS.find((o) => o.value === (status || 'confirmed')) || CONFIRMATION_STATUS_OPTIONS[1];
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-semibold border ${opt.colorClass} ${className}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${opt.dotColor || 'bg-current'}`} />
+      <span>{opt.label}</span>
+    </span>
+  );
+}
 
 const CLIENT_STATUS_OPTIONS: StatusOption[] = [
   {
@@ -87,6 +128,7 @@ const CLIENT_STATUS_OPTIONS: StatusOption[] = [
 export default function ConnectionsPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const user = useUser();
 
   const [connections, setConnections] = React.useState<ConnectionItem[]>([]);
@@ -109,6 +151,17 @@ export default function ConnectionsPage() {
   const [accrualMonths, setAccrualMonths] = React.useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = React.useState<string>('all');
   const [selectedStatus, setSelectedStatus] = React.useState<string>('all');
+
+  // Вкладки подтверждения подключений (037): all | pending | confirmed | rejected
+  const [confirmationTab, setConfirmationTab] = React.useState<string>('all');
+  const [pendingCount, setPendingCount] = React.useState(0);
+
+  // Диалог отклонения подключения с причиной (Admin Only)
+  const [rejectDialog, setRejectDialog] = React.useState<{ connection: ConnectionItem | null; reason: string }>({
+    connection: null,
+    reason: '',
+  });
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
 
   // Модальное окно просмотра / смены статуса
   const [selectedConnection, setSelectedConnection] = React.useState<ConnectionItem | null>(null);
@@ -180,13 +233,40 @@ export default function ConnectionsPage() {
 
   const [bulkAccrueModal, setBulkAccrueModal] = React.useState<{
     isOpen: boolean;
-    mode: 'all' | 'connection_only' | 'maintenance_only';
+    mode: 'connection_only' | 'maintenance_only';
     month: string;
   }>({
     isOpen: false,
     mode: 'maintenance_only',
-    month: new Date().toISOString().slice(0, 7),
+    month: currentMonthISO(),
   });
+  const closeBulkAccrueModal = () =>
+    setBulkAccrueModal({ isOpen: false, mode: 'maintenance_only', month: currentMonthISO() });
+
+  const handleBulkConfirmSelected = async (clearSelection: () => void) => {
+    if (selectedConnectionIds.length === 0) return;
+    const ok = await confirm({
+      title: 'Подтвердить выбранные подключения?',
+      subtitle: `Выбрано подключений: ${selectedConnectionIds.length}`,
+      description:
+        'Подтверждаются только подключения в статусе «Ожидает подтверждения»; остальные будут пропущены. После подтверждения куратору начисляется бонус за подключение.',
+      tone: 'success',
+      icon: ShieldCheck,
+      confirmLabel: 'Подтвердить',
+    });
+    if (!ok) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.connections.batch({ action: 'confirm_selected', connection_ids: selectedConnectionIds });
+      showToast(res.message || `Подтверждено подключений: ${res.confirmed_count ?? 0}`, 'success');
+      clearSelection();
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового подтверждения', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
 
   const handleBulkUpdateMaintenanceMonths = async (clearSelection: () => void) => {
     if (selectedConnectionIds.length === 0) return;
@@ -196,6 +276,7 @@ export default function ConnectionsPage() {
         action: 'update_maintenance_months',
         connection_ids: selectedConnectionIds,
         payload: {
+          months_total: bulkMaintenanceModal.months,
           maintenance_months_total: bulkMaintenanceModal.months,
         },
       });
@@ -235,7 +316,7 @@ export default function ConnectionsPage() {
           'info'
         );
       }
-      setBulkAccrueModal({ isOpen: false, mode: 'maintenance_only', month: new Date().toISOString().slice(0, 7) });
+      closeBulkAccrueModal();
       clearSelection();
       fetchData();
     } catch (err: any) {
@@ -246,11 +327,12 @@ export default function ConnectionsPage() {
   };
 
   // Загрузка данных
-  const fetchData = React.useCallback(async (month?: string, status?: string) => {
+  const fetchData = React.useCallback(async (month?: string, status?: string, confirmation?: string) => {
     setIsLoading(true);
     try {
       const monthFilter = month !== undefined ? month : selectedMonth;
       const statusFilter = status !== undefined ? status : selectedStatus;
+      const confirmationFilter = confirmation !== undefined ? confirmation : confirmationTab;
 
       const [res, statsRes, monthsRes, plansRes] = await Promise.all([
         api.connections.getAll({
@@ -258,6 +340,8 @@ export default function ConnectionsPage() {
           pageSize: 50,
           accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
           clientStatus: statusFilter !== 'all' ? statusFilter : undefined,
+          confirmation: confirmationFilter !== 'all' ? confirmationFilter : undefined,
+          bypassCache: true,
         }),
         getConnectionsStats(),
         getAccrualMonthsList(),
@@ -266,6 +350,7 @@ export default function ConnectionsPage() {
 
       setConnections(res.items || []);
       setTotalCount(res.total || 0);
+      setPendingCount(Number(res.pending_count) || 0);
       setStats(statsRes);
       setAccrualMonths(monthsRes);
       setActivePlans(plansRes);
@@ -280,7 +365,77 @@ export default function ConnectionsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedMonth, selectedStatus, showToast]);
+  }, [selectedMonth, selectedStatus, confirmationTab, showToast]);
+
+  const handleConfirmationTabChange = (tabId: string) => {
+    setConfirmationTab(tabId);
+    fetchData(undefined, undefined, tabId);
+  };
+
+  // Подтверждение подключения администратором (бонус начисляется триггером БД)
+  const handleConfirmConnection = React.useCallback(
+    async (conn: ConnectionItem) => {
+      const ok = await confirm({
+        title: 'Подтвердить подключение?',
+        subtitle: `${conn.seller_name} (${formatPhoneDisplay(conn.seller_phone)}) → ${conn.manager_user?.full_name || 'куратор'}`,
+        description: `Куратору будет начислен бонус за подключение: +${Number(
+          conn.tariff_connection_fee || conn.connection_fee || conn.connection_fee_amount || 0
+        ).toLocaleString('ru-RU')} сом.`,
+        tone: 'success',
+        icon: ShieldCheck,
+        confirmLabel: 'Подтвердить',
+      });
+      if (!ok) return;
+      setConfirmingId(conn.connection_id);
+      try {
+        const res = await api.connections.setConfirmation(conn.connection_id, 'confirm');
+        showToast(res.message || 'Подключение подтверждено', 'success');
+        setSelectedConnection((prev) =>
+          prev?.connection_id === conn.connection_id
+            ? { ...prev, confirmation_status: 'confirmed', confirmed_at: new Date().toISOString(), rejection_reason: null }
+            : prev
+        );
+        fetchData();
+      } catch (err: any) {
+        showToast(err.message || 'Не удалось подтвердить подключение', 'error');
+      } finally {
+        setConfirmingId(null);
+      }
+    },
+    [confirm, showToast, fetchData]
+  );
+
+  const handleRejectConnection = async () => {
+    const conn = rejectDialog.connection;
+    const reason = rejectDialog.reason.trim();
+    if (!conn || reason.length < 3) {
+      showToast('Укажите причину отклонения (не менее 3 символов)', 'error');
+      return;
+    }
+    try {
+      const res = await api.connections.setConfirmation(conn.connection_id, 'reject', reason);
+      showToast(res.message || 'Подключение отклонено, куратор у продавца снят', 'info');
+      setRejectDialog({ connection: null, reason: '' });
+      setSelectedConnection((prev) =>
+        prev?.connection_id === conn.connection_id
+          ? { ...prev, confirmation_status: 'rejected', rejection_reason: reason, confirmed_at: new Date().toISOString() }
+          : prev
+      );
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось отклонить подключение', 'error');
+    }
+  };
+
+  const confirmationTabs: DataJournalTab[] = React.useMemo(
+    () => [
+      { id: 'all', label: 'Все', icon: Link2 },
+      { id: 'pending', label: 'Ожидают подтверждения', icon: Hourglass, count: pendingCount },
+      { id: 'confirmed', label: 'Подтверждены', icon: ShieldCheck },
+      { id: 'rejected', label: 'Отклонены', icon: XCircle },
+    ],
+    [pendingCount]
+  );
 
   React.useEffect(() => {
     if (user.profile) {
@@ -507,17 +662,16 @@ export default function ConnectionsPage() {
         sortable: true,
         filterable: true,
         type: 'phone',
-        phoneAccessor: (row) => row.seller_phone,
+        phoneAccessor: (row) => formatPhoneDisplay(row.seller_phone),
         renderCell: (row) => {
-          const cleanPhone = row.seller_phone.replace(/\D/g, '');
           return (
             <div className="flex items-center gap-2">
               <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
-                +{row.seller_phone}
+                {formatPhoneDisplay(row.seller_phone)}
               </span>
               <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                 <a
-                  href={`https://wa.me/${cleanPhone}`}
+                  href={waHref(row.seller_phone)}
                   target="_blank"
                   rel="noreferrer"
                   title="Написать в WhatsApp"
@@ -526,7 +680,7 @@ export default function ConnectionsPage() {
                   <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
                 </a>
                 <a
-                  href={`tel:+${cleanPhone}`}
+                  href={telHref(row.seller_phone)}
                   title="Позвонить"
                   className="w-6 h-6 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 flex items-center justify-center transition-colors"
                 >
@@ -562,15 +716,37 @@ export default function ConnectionsPage() {
         },
       },
       {
+        key: 'confirmation_status',
+        label: 'Подтверждение',
+        type: 'status',
+        statusOptions: CONFIRMATION_STATUS_OPTIONS,
+        width: 190,
+        minWidth: 170,
+        sortable: true,
+        filterable: true,
+        groupable: true,
+        renderCell: (row) => (
+          <div className="flex flex-col gap-0.5">
+            <ConfirmationBadge status={row.confirmation_status} />
+            {row.confirmation_status === 'rejected' && row.rejection_reason && (
+              <span className="text-[10px] text-zinc-400 truncate max-w-[170px]" title={row.rejection_reason}>
+                {row.rejection_reason}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
         key: 'assigned_at',
         label: 'Дата привязки',
-        width: 140,
-        minWidth: 120,
+        type: 'datetime',
+        width: 170,
+        minWidth: 150,
         sortable: true,
         filterable: true,
         renderCell: (row) => (
           <span className="text-zinc-500 dark:text-zinc-400 font-mono text-[11px]">
-            <FormattedDate date={row.assigned_at} type="date" />
+            <FormattedDate date={row.assigned_at} type="dateTime" />
           </span>
         ),
       },
@@ -626,13 +802,14 @@ export default function ConnectionsPage() {
       {
         key: 'accrual_month',
         label: 'Период',
+        type: 'month',
         width: 110,
         minWidth: 95,
         sortable: true,
         filterable: true,
         renderCell: (row) => (
           <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-            {row.accrual_month}
+            {formatMonth(row.accrual_month)}
           </span>
         ),
       },
@@ -753,7 +930,7 @@ export default function ConnectionsPage() {
           <option value="all">Все месяцы</option>
           {accrualMonths.map((m) => (
             <option key={m} value={m}>
-              {m}
+              {formatMonth(m)}
             </option>
           ))}
         </select>
@@ -826,21 +1003,51 @@ export default function ConnectionsPage() {
   const renderCustomRowActions = React.useCallback(
     (row: ConnectionItem) => {
       if (currentUserRole !== 'admin') return null;
+      const isPending = row.confirmation_status === 'pending';
       return (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setConnectionToDelete(row);
-          }}
-          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
-        >
-          <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
-          <span>Удалить подключение</span>
-        </button>
+        <div className="flex flex-col gap-0.5">
+          {isPending && (
+            <>
+              <button
+                type="button"
+                disabled={confirmingId === row.connection_id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleConfirmConnection(row);
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <ShieldCheck className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
+                <span>Подтвердить подключение</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRejectDialog({ connection: row, reason: '' });
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+              >
+                <XCircle className="w-4 h-4 text-amber-500" strokeWidth={1.75} />
+                <span>Отклонить…</span>
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setConnectionToDelete(row);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
+            <span>Удалить подключение</span>
+          </button>
+        </div>
       );
     },
-    [currentUserRole]
+    [currentUserRole, confirmingId, handleConfirmConnection]
   );
 
   return (
@@ -887,6 +1094,9 @@ export default function ConnectionsPage() {
           onRowClick={handleRowClick}
           totalCount={totalCount}
           externalSearchQuery={searchQuery}
+          tabs={confirmationTabs}
+          activeTab={confirmationTab}
+          onTabChange={handleConfirmationTabChange}
           customActions={connectionActions}
           customRowActions={renderCustomRowActions}
           enableSelection={currentUserRole === 'admin'}
@@ -894,6 +1104,17 @@ export default function ConnectionsPage() {
           onSelectionChange={setSelectedConnectionIds}
           renderBulkActions={(ids, clearSelection) => (
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isBatchLoading}
+                onClick={() => handleBulkConfirmSelected(clearSelection)}
+                className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Подтвердить подключения, ожидающие подтверждения"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Подтвердить ({ids.length})</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setBulkMaintenanceModal({ isOpen: true, months: 2 })}
@@ -908,8 +1129,8 @@ export default function ConnectionsPage() {
                 onClick={() =>
                   setBulkAccrueModal({
                     isOpen: true,
-                    mode: 'all',
-                    month: new Date().toISOString().slice(0, 7),
+                    mode: 'maintenance_only',
+                    month: currentMonthISO(),
                   })
                 }
                 className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -939,7 +1160,7 @@ export default function ConnectionsPage() {
                       {selectedConnection.seller_name}
                     </h3>
                     <p className="text-xs text-zinc-400">
-                      {selectedConnection.store || 'Без магазина'} • +{selectedConnection.seller_phone}
+                      {selectedConnection.store || 'Без магазина'} • {formatPhoneDisplay(selectedConnection.seller_phone)}
                     </p>
                   </div>
                 </div>
@@ -949,6 +1170,66 @@ export default function ConnectionsPage() {
                 >
                   <X className="w-4 h-4" strokeWidth={2} />
                 </button>
+              </div>
+
+              {/* Подтверждение администратором (037) */}
+              <div
+                className={`p-3.5 rounded-2xl border space-y-2 text-xs ${
+                  selectedConnection.confirmation_status === 'pending'
+                    ? 'bg-amber-500/5 border-amber-500/30'
+                    : selectedConnection.confirmation_status === 'rejected'
+                    ? 'bg-rose-500/5 border-rose-500/30'
+                    : 'bg-emerald-500/5 border-emerald-500/20'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <ConfirmationBadge status={selectedConnection.confirmation_status} />
+                  {currentUserRole === 'admin' && selectedConnection.confirmation_status === 'pending' && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="success"
+                        size="sm"
+                        loading={confirmingId === selectedConnection.connection_id}
+                        onClick={() => handleConfirmConnection(selectedConnection)}
+                        leftIcon={<ShieldCheck className="w-3.5 h-3.5" strokeWidth={2} />}
+                      >
+                        Подтвердить
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRejectDialog({ connection: selectedConnection, reason: '' })}
+                        leftIcon={<XCircle className="w-3.5 h-3.5" strokeWidth={2} />}
+                      >
+                        Отклонить…
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <span>
+                    Запросил: <b className="text-zinc-700 dark:text-zinc-200">{selectedConnection.assigned_user?.full_name || 'Система'}</b>
+                    {' · '}
+                    {formatDateTime(selectedConnection.assigned_at)}
+                  </span>
+                  {selectedConnection.confirmation_status !== 'pending' && (
+                    <span>
+                      {selectedConnection.confirmation_status === 'rejected' ? 'Отклонил' : 'Подтвердил'}:{' '}
+                      <b className="text-zinc-700 dark:text-zinc-200">{selectedConnection.confirmed_user?.full_name || '—'}</b>
+                      {selectedConnection.confirmed_at ? ` · ${formatDateTime(selectedConnection.confirmed_at)}` : ''}
+                    </span>
+                  )}
+                  {selectedConnection.confirmation_status === 'pending' && (
+                    <span className="text-amber-700 dark:text-amber-300">
+                      Бонус за подключение начислится после подтверждения администратором
+                    </span>
+                  )}
+                  {selectedConnection.confirmation_status === 'rejected' && selectedConnection.rejection_reason && (
+                    <span className="sm:col-span-2 text-rose-700 dark:text-rose-300">
+                      Причина: {selectedConnection.rejection_reason}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Сетка параметров */}
@@ -993,16 +1274,16 @@ export default function ConnectionsPage() {
                         className="w-full px-2 py-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       <span className="text-[10px] text-zinc-400 block font-mono">
-                        Период: {editAssignedDate ? editAssignedDate.substring(0, 7) : selectedConnection.accrual_month}
+                        Период: {formatMonth(editAssignedDate ? editAssignedDate.substring(0, 7) : selectedConnection.accrual_month)}
                       </span>
                     </div>
                   ) : (
                     <>
                       <p className="font-semibold text-zinc-900 dark:text-zinc-100 font-mono">
-                        <FormattedDate date={selectedConnection.assigned_at} type="date" />
+                        <FormattedDate date={selectedConnection.assigned_at} type="dateTime" />
                       </p>
                       <span className="text-[10px] text-zinc-400 block font-mono">
-                        Период: {selectedConnection.accrual_month}
+                        Период: {formatMonth(selectedConnection.accrual_month)}
                       </span>
                     </>
                   )}
@@ -1283,230 +1564,159 @@ export default function ConnectionsPage() {
         />
 
         {/* 6. Диалог подтверждения удаления подключения (Admin Only) */}
-        {connectionToDelete && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Удалить подключение?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {connectionToDelete.seller_name} (+{connectionToDelete.seller_phone})
-                  </p>
-                </div>
+        <ConfirmDialog
+          open={connectionToDelete !== null}
+          onClose={() => !isDeletingConnection && setConnectionToDelete(null)}
+          onConfirm={() => (connectionToDelete ? handleDeleteConnection(connectionToDelete) : undefined)}
+          title="Удалить подключение?"
+          subtitle={
+            connectionToDelete
+              ? `${connectionToDelete.seller_name} (${formatPhoneDisplay(connectionToDelete.seller_phone)})`
+              : undefined
+          }
+          tone="danger"
+          icon={Trash2}
+          confirmLabel="Удалить подключение"
+          level={2}
+          description={
+            <div className="space-y-1.5">
+              <div className="font-semibold flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                <span>Внимание: действие необратимо</span>
               </div>
-
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 space-y-1.5">
-                <div className="font-semibold flex items-center gap-1.5">
-                  <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-                  <span>Внимание: действие необратимо</span>
-                </div>
-                <p className="text-[11px] leading-relaxed">
-                  Будут удалены все начисления куратора по этому клиенту, а назначенный куратор в карточке продавца будет автоматически сброшен.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isDeletingConnection}
-                  onClick={() => setConnectionToDelete(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeletingConnection}
-                  onClick={() => handleDeleteConnection(connectionToDelete)}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isDeletingConnection ? (
-                    <span>Удаление...</span>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Удалить подключение</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <p className="text-[11px] leading-relaxed">
+                Будут удалены все начисления куратора по этому клиенту, а назначенный куратор в карточке продавца будет автоматически сброшен.
+              </p>
             </div>
-          </div>
-        )}
+          }
+        />
+
+        {/* 6.1. Диалог отклонения подключения с причиной (Admin Only) */}
+        <ConfirmDialog
+          open={rejectDialog.connection !== null}
+          onClose={() => setRejectDialog({ connection: null, reason: '' })}
+          onConfirm={handleRejectConnection}
+          title="Отклонить подключение?"
+          subtitle={
+            rejectDialog.connection
+              ? `${rejectDialog.connection.seller_name} (${formatPhoneDisplay(rejectDialog.connection.seller_phone)}) → ${
+                  rejectDialog.connection.manager_user?.full_name || 'куратор'
+                }`
+              : undefined
+          }
+          tone="warning"
+          icon={XCircle}
+          confirmLabel="Отклонить"
+          confirmDisabled={rejectDialog.reason.trim().length < 3}
+          level={2}
+          description="Куратор у продавца будет снят, привязанный лид вернется в статус «Назначен». Консультант получит уведомление с причиной."
+        >
+          <FormField label="Причина отклонения" required hint="Не менее 3 символов">
+            <Textarea
+              value={rejectDialog.reason}
+              onChange={(e) => setRejectDialog((prev) => ({ ...prev, reason: e.target.value }))}
+              rows={3}
+              autoFocus
+              maxLength={500}
+              placeholder="Например: продавец уже ведется другим сотрудником, дубликат, не наш клиент..."
+            />
+          </FormField>
+        </ConfirmDialog>
 
         {/* 7. Диалог массового изменения срока сопровождения */}
-        {bulkMaintenanceModal.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
-                  <Clock className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Изменить срок сопровождения
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Выбрано подключений: {selectedConnectionIds.length}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                  Общий срок сопровождения (месяцев):
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="24"
-                  value={bulkMaintenanceModal.months}
-                  onChange={(e) =>
-                    setBulkMaintenanceModal((prev) => ({
-                      ...prev,
-                      months: Math.max(1, parseInt(e.target.value) || 1),
-                    }))
-                  }
-                  className="w-full px-3 py-2 text-sm font-mono font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-                <p className="text-[11px] text-zinc-400">
-                  Значение будет установлено для всех выбранных клиентов.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isBatchLoading}
-                  onClick={() => setBulkMaintenanceModal({ isOpen: false, months: 2 })}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isBatchLoading}
-                  onClick={() =>
-                    handleBulkUpdateMaintenanceMonths(() => setSelectedConnectionIds([]))
-                  }
-                  className="h-9 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isBatchLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Check className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  )}
-                  <span>Применить срок</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <Modal
+          open={bulkMaintenanceModal.isOpen}
+          onClose={() => !isBatchLoading && setBulkMaintenanceModal({ isOpen: false, months: 2 })}
+          title="Изменить срок сопровождения"
+          subtitle={`Выбрано подключений: ${selectedConnectionIds.length}`}
+          icon={Clock}
+          tone="purple"
+          size="md"
+          busy={isBatchLoading}
+          footer={
+            <>
+              <Button variant="outline" disabled={isBatchLoading} onClick={() => setBulkMaintenanceModal({ isOpen: false, months: 2 })}>
+                Отмена
+              </Button>
+              <Button
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+                loading={isBatchLoading}
+                onClick={() => handleBulkUpdateMaintenanceMonths(() => setSelectedConnectionIds([]))}
+                leftIcon={<Check className="w-3.5 h-3.5" strokeWidth={1.75} />}
+              >
+                Применить срок
+              </Button>
+            </>
+          }
+        >
+          <FormField label="Общий срок сопровождения (месяцев)" hint="Значение будет установлено для всех выбранных клиентов.">
+            <Input
+              type="number"
+              min={1}
+              max={24}
+              mono
+              value={bulkMaintenanceModal.months}
+              onChange={(e) =>
+                setBulkMaintenanceModal((prev) => ({
+                  ...prev,
+                  months: Math.max(1, parseInt(e.target.value) || 1),
+                }))
+              }
+            />
+          </FormField>
+        </Modal>
 
         {/* 8. Диалог массового начисления бонусов выбранным */}
-        {bulkAccrueModal.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                  <Coins className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Начислить бонусы выбранным
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Выбрано клиентов: {selectedConnectionIds.length}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Тип начисления:
-                  </label>
-                  <select
-                    value={bulkAccrueModal.mode}
-                    onChange={(e) =>
-                      setBulkAccrueModal((prev) => ({
-                        ...prev,
-                        mode: e.target.value as any,
-                      }))
-                    }
-                    className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="maintenance_only">Сопровождение за расчетный месяц</option>
-                    <option value="connection_only">Проверить бонусы за подключение (доначислить пропущенные)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Расчетный месяц:
-                  </label>
-                  <input
-                    type="month"
-                    value={bulkAccrueModal.month}
-                    onChange={(e) =>
-                      setBulkAccrueModal((prev) => ({
-                        ...prev,
-                        month: e.target.value,
-                      }))
-                    }
-                    className="w-full px-3 py-2 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isBatchLoading}
-                  onClick={() =>
-                    setBulkAccrueModal({
-                      isOpen: false,
-                      mode: 'all',
-                      month: new Date().toISOString().slice(0, 7),
-                    })
-                  }
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isBatchLoading}
-                  onClick={() =>
-                    handleBulkAccrueSelected(() => setSelectedConnectionIds([]))
-                  }
-                  className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isBatchLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Coins className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  )}
-                  <span>Запустить начисление</span>
-                </button>
-              </div>
-            </div>
+        <Modal
+          open={bulkAccrueModal.isOpen}
+          onClose={() => !isBatchLoading && closeBulkAccrueModal()}
+          title="Начислить бонусы выбранным"
+          subtitle={`Выбрано клиентов: ${selectedConnectionIds.length}`}
+          icon={Coins}
+          tone="success"
+          size="md"
+          busy={isBatchLoading}
+          footer={
+            <>
+              <Button variant="outline" disabled={isBatchLoading} onClick={closeBulkAccrueModal}>
+                Отмена
+              </Button>
+              <Button
+                variant="success"
+                loading={isBatchLoading}
+                onClick={() => handleBulkAccrueSelected(() => setSelectedConnectionIds([]))}
+                leftIcon={<Coins className="w-3.5 h-3.5" strokeWidth={1.75} />}
+              >
+                Запустить начисление
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <FormField label="Тип начисления" hint="Начисляются только подтвержденные администратором подключения.">
+              <Select
+                value={bulkAccrueModal.mode}
+                onChange={(e) =>
+                  setBulkAccrueModal((prev) => ({
+                    ...prev,
+                    mode: e.target.value as 'connection_only' | 'maintenance_only',
+                  }))
+                }
+              >
+                <option value="maintenance_only">Сопровождение за расчетный месяц</option>
+                <option value="connection_only">Проверить бонусы за подключение (доначислить пропущенные)</option>
+              </Select>
+            </FormField>
+            <FormField label="Расчетный месяц">
+              <Input
+                type="month"
+                mono
+                value={bulkAccrueModal.month}
+                onChange={(e) => setBulkAccrueModal((prev) => ({ ...prev, month: e.target.value }))}
+              />
+            </FormField>
           </div>
-        )}
+        </Modal>
       </div>
     </AppLayout>
   );

@@ -21,7 +21,8 @@ export async function POST(
 async function handleUnlinkFromSeller(paramsPromise: Promise<{ id: string }>) {
   try {
     const { id } = await paramsPromise;
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    // Руководитель — только просмотр (решение по матрице ролей)
+    const { supabase } = await requireRoles(['admin']);
 
     // 1. Поиск продавца по organization_id или seller_phone
     const seller = await findSellerByKey(supabase, id, ['seller_phone', 'seller_name', 'manager_id'] as const);

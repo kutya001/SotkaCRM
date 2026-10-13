@@ -17,14 +17,21 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search');
     const accrualMonth = searchParams.get('accrualMonth');
     const clientStatus = searchParams.get('clientStatus');
+    const confirmation = searchParams.get('confirmation');
     const managerId = searchParams.get('managerId');
     const sortBy = searchParams.get('sortBy') || 'assigned_at';
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc';
 
     let query = (supabase as any).from('connections_with_accruals').select('*', { count: 'exact' });
+    // Число подключений, ожидающих подтверждения (в той же ролевой видимости)
+    let pendingQuery = (supabase as any)
+      .from('connections')
+      .select('connection_id', { count: 'exact', head: true })
+      .eq('confirmation_status', 'pending');
 
     if (profile.role === 'consultant') {
       query = query.eq('manager_id', profile.user_id);
+      pendingQuery = pendingQuery.eq('manager_id', profile.user_id);
     } else if (managerId && managerId !== 'all') {
       query = query.eq('manager_id', managerId);
     }
@@ -35,6 +42,10 @@ export async function GET(req: NextRequest) {
 
     if (clientStatus && clientStatus !== 'all') {
       query = query.eq('client_status', clientStatus as any);
+    }
+
+    if (confirmation && confirmation !== 'all' && ['pending', 'confirmed', 'rejected'].includes(confirmation)) {
+      query = query.eq('confirmation_status', confirmation);
     }
 
     if (search && search.trim()) {
@@ -48,12 +59,16 @@ export async function GET(req: NextRequest) {
     const to = from + pageSize - 1;
     query = query.order(sortBy, { ascending: sortOrder === 'asc', nullsFirst: false }).range(from, to);
 
-    const { data: connections, count, error } = await query;
+    const [{ data: connections, count, error }, { count: pendingCount }] = await Promise.all([query, pendingQuery]);
     if (error) throw error;
 
-    // Обогащаем данными менеджеров
+    // Обогащаем данными менеджеров, назначивших и подтвердивших
     const managerIds: string[] = Array.from(
-      new Set((connections || []).map((c: any) => c.manager_id).filter(Boolean))
+      new Set(
+        (connections || [])
+          .flatMap((c: any) => [c.manager_id, c.assigned_by, c.confirmed_by])
+          .filter(Boolean)
+      )
     );
 
     let managersMap = new Map();
@@ -113,12 +128,15 @@ export async function GET(req: NextRequest) {
         tariff_connection_fee: Number(c.connection_fee || c.connection_fee_amount || 0),
         tariff_maintenance_fee_monthly: Number(c.maintenance_fee_monthly || 0),
         manager_user: c.manager_id ? managersMap.get(c.manager_id) || null : null,
+        assigned_user: c.assigned_by ? managersMap.get(c.assigned_by) || null : null,
+        confirmed_user: c.confirmed_by ? managersMap.get(c.confirmed_by) || null : null,
       };
     });
 
     return apiSuccess({
       items: enriched,
       total: count || 0,
+      pending_count: pendingCount || 0,
       page,
       pageSize,
     });
@@ -159,6 +177,10 @@ export async function POST(req: NextRequest) {
       client_status: body.client_status || 'новый',
       maintenance_months_limit: Number(body.maintenance_months_limit) || 3,
       maintenance_months_accrued: 0,
+      // Создано администратором/руководителем — подтверждения не требует
+      confirmation_status: 'confirmed' as const,
+      confirmed_by: profile.user_id,
+      confirmed_at: nowIso,
     };
 
     const { data: newConn, error } = await supabase

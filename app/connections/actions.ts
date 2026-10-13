@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireAuth } from '@/lib/auth/check-role';
-import type { Database, UserRole, ClientLifecycleStatus } from '@/types/database.types';
+import type { Database, UserRole, ClientLifecycleStatus, ConnectionConfirmationStatus } from '@/types/database.types';
 
 export interface ConnectionItem {
   connection_id: string;
@@ -50,6 +50,17 @@ export interface ConnectionItem {
     full_name: string;
     role: string;
     login: string;
+    color?: string;
+  } | null;
+  /** Подтверждение администратором (миграция 037) */
+  confirmation_status?: ConnectionConfirmationStatus;
+  confirmed_by?: string | null;
+  confirmed_at?: string | null;
+  rejection_reason?: string | null;
+  confirmed_user?: {
+    user_id: string;
+    full_name: string;
+    role: string;
     color?: string;
   } | null;
 }

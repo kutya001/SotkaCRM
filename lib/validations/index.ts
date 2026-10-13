@@ -1,4 +1,14 @@
 import { z } from 'zod';
+import {
+  DEFAULT_COUNTRY_CODE,
+  digitsOnly,
+  findPhoneCountry,
+  isKnownCountryCode,
+  isValidNational,
+  normalizeNational,
+  splitFullNumber,
+  toFullDigits,
+} from '@/lib/utils/phone';
 
 export const PG_UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -146,16 +156,71 @@ export const LeadStatusSchema = z.enum(['Открыт', 'Обработан', '�
   message: 'Недопустимый статус лида',
 });
 
+/** Причина отмены лида: обязательна при переводе в «Отмена» */
+export const CancelReasonSchema = z
+  .string()
+  .trim()
+  .min(3, 'Укажите причину отмены (не менее 3 символов)')
+  .max(500, 'Причина отмены не длиннее 500 символов');
+
 export const LeadsBatchActionSchema = z.object({
   action: z.enum(['change_status', 'change_assigned', 'delete']),
   ids: z.array(z.string().regex(PG_UUID_REGEX)).optional(),
   lead_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional(),
   status: LeadStatusSchema.optional(),
+  cancel_reason: z.string().optional().nullable(),
   assigned_to: z.string().uuid().nullable().optional(),
   payload: z.any().optional(),
 }).refine((data) => (data.ids && data.ids.length > 0) || (data.lead_ids && data.lead_ids.length > 0), {
   message: 'Необходимо выбрать хотя бы один лид',
 });
+
+/**
+ * Телефон с кодом страны СНГ: код из справочника, национальный номер нужной длины.
+ * Входные данные: country_code (цифры) и phone (национальный номер, допускается ввод с кодом).
+ */
+export const phonePartsRefine = {
+  check: (d: { phone?: string | null; country_code?: string | null }) => {
+    if (d.phone === undefined || d.phone === null) return true;
+    const code = digitsOnly(d.country_code) || DEFAULT_COUNTRY_CODE;
+    if (!isKnownCountryCode(code)) return false;
+    return isValidNational(normalizeNational(d.phone, code), code);
+  },
+  message: {
+    path: ['phone'],
+    error: (issue: { input?: unknown }) => {
+      const d = (issue.input || {}) as { country_code?: string | null };
+      const code = digitsOnly(d.country_code) || DEFAULT_COUNTRY_CODE;
+      const country = findPhoneCountry(code);
+      return country
+        ? `Номер для ${country.name} (+${country.code}) должен содержать ${country.nationalLength} цифр без кода страны`
+        : 'Неизвестный код страны';
+    },
+  },
+};
+
+/**
+ * Полный номер цифрами с кодом страны СНГ («996555123456», допускается «+996 555 123 456»).
+ * Пустая строка → null. Результат — нормализованная строка цифр.
+ */
+export const fullPhoneSchema = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+  z
+    .string()
+    .transform((v, ctx) => {
+      const parts = splitFullNumber(v);
+      if (!parts) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Укажите номер с кодом страны СНГ, например +996 555 123 456',
+        });
+        return z.NEVER;
+      }
+      return toFullDigits(parts.countryCode, parts.national);
+    })
+    .nullable()
+    .optional()
+);
 
 export const SellersBatchActionSchema = z.object({
   action: z.enum(['change_manager', 'delete']),
@@ -200,19 +265,21 @@ export function normalizeNullableUuid(val: unknown): string | null {
   return null;
 }
 
-export const LeadCreateSchema = z.object({
-  client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов'),
-  phone: z.string().min(6, 'Укажите корректный номер телефона'),
-  country_code: z.string().default('996').optional(),
-  instagram: z.string().optional().nullable(),
-  comment: z.string().optional().nullable(),
-  assigned_to: z
-    .preprocess(
-      (val) => normalizeNullableUuid(val),
-      z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор ответственного').nullable().optional()
-    )
-    .default(null),
-});
+export const LeadCreateSchema = z
+  .object({
+    client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов'),
+    phone: z.string().min(6, 'Укажите корректный номер телефона'),
+    country_code: z.string().default('996').optional(),
+    instagram: z.string().optional().nullable(),
+    comment: z.string().optional().nullable(),
+    assigned_to: z
+      .preprocess(
+        (val) => normalizeNullableUuid(val),
+        z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор ответственного').nullable().optional()
+      )
+      .default(null),
+  })
+  .refine(phonePartsRefine.check, phonePartsRefine.message);
 
 /**
  * Валидация произвольного HEX-кода цвета (#RGB или #RRGGBB)
@@ -227,7 +294,7 @@ export const employeeSchema = z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника').optional(),
   login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
   full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
-  phone: z.string().nullable().optional(),
+  phone: fullPhoneSchema,
   role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
   is_active: z.boolean().default(true),
   color: HexColorSchema,
@@ -279,7 +346,7 @@ export const createEmployeeSchema = z
     login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
     password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
     full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
-    phone: z.string().optional().nullable(),
+    phone: fullPhoneSchema,
     role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
     color: HexColorSchema,
   })
@@ -289,7 +356,7 @@ export const createEmployeeSchema = z
 export const updateEmployeeSchema = z
   .object({
     full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа').optional(),
-    phone: z.string().nullable().optional(),
+    phone: fullPhoneSchema,
     role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }).optional(),
     is_active: z.boolean().optional(),
     color: HexColorSchema,
@@ -297,13 +364,15 @@ export const updateEmployeeSchema = z
   .extend(employeeProfileFieldsSchema.shape)
   .refine(coordinatesPairRefine.check, coordinatesPairRefine.message);
 
-export const LeadUpdateSchema = z.object({
-  client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов').optional(),
-  phone: z.string().min(6, 'Укажите корректный номер телефона').optional(),
-  country_code: z.string().optional(),
-  instagram: z.string().optional().nullable(),
-  comment: z.string().optional().nullable(),
-  assigned_to: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор ответственного').nullable().optional(),
-});
+export const LeadUpdateSchema = z
+  .object({
+    client_name: z.string().min(2, 'Имя должно содержать не менее 2 символов').optional(),
+    phone: z.string().min(6, 'Укажите корректный номер телефона').optional(),
+    country_code: z.string().optional(),
+    instagram: z.string().optional().nullable(),
+    comment: z.string().optional().nullable(),
+    assigned_to: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор ответственного').nullable().optional(),
+  })
+  .refine(phonePartsRefine.check, phonePartsRefine.message);
 
 

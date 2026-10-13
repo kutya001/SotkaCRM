@@ -9,7 +9,8 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const ctx = await requireRoles(['admin', 'supervisor', 'consultant']);
+    // Руководитель — только просмотр (решение по матрице ролей)
+    const ctx = await requireRoles(['admin', 'consultant']);
     const body = await req.json();
 
     const sellerPhone = body.seller_phone;
@@ -34,6 +35,7 @@ export async function POST(
       seller_phone: sellerPhone,
       connection_id: result.connectionId,
       connection_fee_amount: result.connectionFeeAmount,
+      confirmation_status: result.confirmationStatus,
     });
   } catch (err) {
     return handleApiError(err);
@@ -46,7 +48,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    const { supabase } = await requireRoles(['admin']);
 
     const { data: lead } = await supabase
       .from('leads')

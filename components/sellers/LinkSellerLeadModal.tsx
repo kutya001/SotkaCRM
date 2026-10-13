@@ -85,10 +85,17 @@ export function LinkSellerLeadModal({
     setIsSubmitting(true);
     try {
       const res = await api.sellers.linkLead(seller.seller_phone, selectedLeadId);
-      showToast(
-        `Продавец успешно связан с лидом! Начислено вознаграждение: +${res.connection_fee_amount || 0} сом`,
-        'success'
-      );
+      if (res.confirmation_status === 'pending') {
+        showToast(
+          `Продавец связан с лидом. Бонус +${res.connection_fee_amount || 0} сом будет начислен после подтверждения администратором`,
+          'info'
+        );
+      } else {
+        showToast(
+          `Продавец успешно связан с лидом! Начислено вознаграждение: +${res.connection_fee_amount || 0} сом`,
+          'success'
+        );
+      }
       onSuccess();
       onClose();
     } catch (err: any) {

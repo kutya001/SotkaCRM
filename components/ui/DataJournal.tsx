@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useToast, type ToastType } from '@/components/ui/Toast';
+import { formatDate, formatDateTime, formatMonth } from '@/lib/utils/format';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 function UrlSearchParamsSync({ onQuery }: { onQuery: (q: string) => void }) {
@@ -71,7 +72,8 @@ export interface ColumnDef<T> {
   sortable?: boolean;
   filterable?: boolean;
   groupable?: boolean;
-  type?: 'text' | 'number' | 'date' | 'status' | 'phone' | 'currency';
+  /** date — «ДД.ММ.ГГГГ», datetime — «ДД.ММ.ГГГГ - чч:мм:сс», month — «ММ.ГГГГ» (без renderCell форматируются автоматически) */
+  type?: 'text' | 'number' | 'date' | 'datetime' | 'month' | 'status' | 'phone' | 'currency';
   filterType?: 'text' | 'select' | 'range' | 'dateRange';
   filterOptions?: ColumnFilterOption[];
   statusOptions?: StatusOption[];
@@ -83,6 +85,21 @@ export interface ColumnDef<T> {
   cardTitle?: boolean;
   /** Текстовое представление значения для заголовка карточки (если значение — объект) */
   textValue?: (row: T) => string;
+}
+
+/** Значение ячейки без renderCell: даты и месяцы форматируются по типу колонки */
+function formatPlainValue<T extends Record<string, any>>(col: ColumnDef<T>, val: unknown): string {
+  if (val === null || val === undefined || val === '') return '—';
+  switch (col.type) {
+    case 'date':
+      return formatDate(val as string);
+    case 'datetime':
+      return formatDateTime(val as string);
+    case 'month':
+      return formatMonth(val as string);
+    default:
+      return String(val);
+  }
 }
 
 /** Текст для заголовка карточки: примитив как есть, объект — по имени/названию */
@@ -128,7 +145,10 @@ export interface DataJournalProps<T extends Record<string, any>> {
   customRowActions?: (row: T) => React.ReactNode;
   createTooltip?: string;
   onRowClick?: (row: T) => void;
-  onStatusChange?: (row: T, newStatus: string) => void;
+  /** Смена статуса: вернуть false, чтобы не показывать тост (например, открыт диалог причины) */
+  onStatusChange?: (row: T, newStatus: string) => void | boolean | Promise<void | boolean>;
+  /** Статусы, доступные для этой строки (пусто/null — только бейдж без смены) */
+  getStatusOptions?: (row: T) => StatusOption[] | null | undefined;
   onAssignedChange?: (row: T, newAssigned: string | null) => void;
   onContextMenuOpen?: (row: T) => void;
   onCreateClick?: () => void;
@@ -242,7 +262,7 @@ export function getColumnFilterOptions<T extends Record<string, any>>(
   if (counts.size > 0 && counts.size <= 35) {
     return Array.from(counts.entries()).map(([value, count]) => ({
       value,
-      label: value,
+      label: formatPlainValue(col, value),
       count,
     }));
   }
@@ -501,7 +521,10 @@ interface DataJournalTableRowProps<T extends Record<string, any>> {
   isSelected?: boolean;
   onToggleSelect?: (rowKey: string, checked: boolean) => void;
   onRowClick?: (row: T) => void;
-  onStatusChange?: (row: T, newStatus: string) => void;
+  /** Смена статуса: вернуть false, чтобы не показывать тост (например, открыт диалог причины) */
+  onStatusChange?: (row: T, newStatus: string) => void | boolean | Promise<void | boolean>;
+  /** Статусы, доступные для этой строки (пусто/null — только бейдж без смены) */
+  getStatusOptions?: (row: T) => StatusOption[] | null | undefined;
   onAssignedChange?: (row: T, newAssigned: string | null) => void;
   customRowActions?: (row: T) => React.ReactNode;
   handleCopy: (text: string, rowKey: string) => void;
@@ -523,6 +546,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   onToggleSelect,
   onRowClick,
   onStatusChange,
+  getStatusOptions,
   onAssignedChange,
   customRowActions,
   handleCopy,
@@ -612,7 +636,12 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
               colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
             };
 
-          if (!onStatusChange) {
+          // Доступные переходы для этой строки (по ролям); без них — только бейдж
+          const rowStatusOptions: StatusOption[] = getStatusOptions
+            ? getStatusOptions(row) || []
+            : col.statusOptions || PIPELINE_STATUS_OPTIONS;
+
+          if (!onStatusChange || rowStatusOptions.length === 0) {
             return (
               <td key={col.key} className={`px-4 py-3 ${stickyFirstColClass}`}>
                 <span
@@ -623,6 +652,15 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
               </td>
             );
           }
+
+          const applyStatusChange = async (value: string, label: string) => {
+            try {
+              const result = await onStatusChange(row, value);
+              if (result !== false) showToast(`Статус изменен на «${label}»`, 'success');
+            } catch (err: any) {
+              showToast(err?.message || 'Не удалось изменить статус', 'error');
+            }
+          };
 
           const isDropdownOpen =
             activeStatusDropdownRowKey === `${rowKey}_${col.key}`;
@@ -638,8 +676,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
                       setActiveStatusDropdownRowKey(null);
                     } else {
                       const rect = e.currentTarget.getBoundingClientRect();
-                      const popoverH =
-                        (col.statusOptions || PIPELINE_STATUS_OPTIONS).length * 36 + 20;
+                      const popoverH = rowStatusOptions.length * 36 + 20;
                       const fitsBelow = rect.bottom + popoverH <= window.innerHeight;
                       const top = fitsBelow
                         ? rect.bottom + 4
@@ -670,20 +707,19 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
                         position: 'fixed',
                         top: `${dropdownCoords.top}px`,
                         left: `${dropdownCoords.left}px`,
-                        zIndex: 9999,
+                        zIndex: 1200,
                       }}
                       onClick={(e) => e.stopPropagation()}
                       className="min-w-[150px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
                     >
-                      {(col.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
+                      {rowStatusOptions.map((opt) => (
                         <button
                           key={opt.value}
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveStatusDropdownRowKey(null);
-                            onStatusChange && onStatusChange(row, opt.value);
-                            showToast(`Статус изменен на «${opt.label}»`, 'success');
+                            void applyStatusChange(opt.value, opt.label);
                           }}
                           className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
                             opt.value === val
@@ -757,7 +793,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
             onClick={() => onRowClick && onRowClick(row)}
             className={`px-4 py-3 truncate cursor-pointer max-w-xs ${stickyFirstColClass}`}
           >
-            {String(val ?? '—')}
+            {formatPlainValue(col, val)}
           </td>
         );
       })}
@@ -776,6 +812,7 @@ function areRowPropsEqual<T extends Record<string, any>>(
   if (prevProps.rowKey !== nextProps.rowKey) return false;
   if (prevProps.isSelected !== nextProps.isSelected) return false;
   if (prevProps.enableSelection !== nextProps.enableSelection) return false;
+  if (prevProps.getStatusOptions !== nextProps.getStatusOptions) return false;
 
   const prev = prevProps.row;
   const next = nextProps.row;
@@ -846,7 +883,10 @@ interface DataJournalCardProps<T extends Record<string, any>> {
   orderedColumns: ColumnDef<T>[];
   initialColumns: ColumnDef<T>[];
   onRowClick?: (row: T) => void;
-  onStatusChange?: (row: T, newStatus: string) => void;
+  /** Смена статуса: вернуть false, чтобы не показывать тост (например, открыт диалог причины) */
+  onStatusChange?: (row: T, newStatus: string) => void | boolean | Promise<void | boolean>;
+  /** Статусы, доступные для этой строки (пусто/null — только бейдж без смены) */
+  getStatusOptions?: (row: T) => StatusOption[] | null | undefined;
   onAssignedChange?: (row: T, newAssigned: string | null) => void;
   customRowActions?: (row: T) => React.ReactNode;
   handleCopy: (text: string, rowKey: string) => void;
@@ -862,11 +902,20 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   initialColumns,
   onRowClick,
   onStatusChange,
+  getStatusOptions,
   onAssignedChange,
   customRowActions,
   showToast,
   onRowContextMenu,
 }: DataJournalCardProps<T>) => {
+  const applyStatusChange = async (value: string, label: string) => {
+    try {
+      const result = await onStatusChange?.(row, value);
+      if (result !== false) showToast(`Статус изменен на «${label}»`, 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Не удалось изменить статус', 'error');
+    }
+  };
   const phoneCol = initialColumns.find((c) => c.type === 'phone');
   const rawPhone = phoneCol?.phoneAccessor
     ? phoneCol.phoneAccessor(row)
@@ -941,7 +990,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
                     ? col.renderCell(row, val)
                     : col.type === 'currency'
                     ? `${Number(val || 0).toLocaleString('ru-RU')} сом`
-                    : String(val ?? '—')}
+                    : formatPlainValue(col, val)}
                 </span>
               </div>
             );
@@ -989,22 +1038,37 @@ const DataJournalCardInner = <T extends Record<string, any>>({
           {customRowActions && customRowActions(row)}
         </div>
 
-        {statusCol && onStatusChange && (
-          <select
-            value={String(statusVal || '')}
-            onChange={(e) => {
-              onStatusChange(row, e.target.value);
-              showToast(`Статус изменен на «${e.target.value}»`, 'success');
-            }}
-            className="h-8 px-2 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
-          >
-            {(statusCol.statusOptions || PIPELINE_STATUS_OPTIONS).map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        )}
+        {statusCol &&
+          onStatusChange &&
+          (() => {
+            const options: StatusOption[] = getStatusOptions
+              ? getStatusOptions(row) || []
+              : statusCol.statusOptions || PIPELINE_STATUS_OPTIONS;
+            if (options.length === 0) return null;
+            const currentValue = String(statusVal || '');
+            const hasCurrent = options.some((o) => o.value === currentValue);
+            return (
+              <select
+                value={currentValue}
+                onChange={(e) => {
+                  const opt = options.find((o) => o.value === e.target.value);
+                  if (opt) void applyStatusChange(opt.value, opt.label);
+                }}
+                className="h-8 px-2 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+              >
+                {!hasCurrent && (
+                  <option value={currentValue} disabled>
+                    {currentStatusOpt?.label || currentValue}
+                  </option>
+                )}
+                {options.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            );
+          })()}
       </div>
     </div>
   );
@@ -1015,6 +1079,7 @@ export function areCardPropsEqual<T extends Record<string, any>>(
   nextProps: DataJournalCardProps<T>
 ): boolean {
   if (prevProps.rowKey !== nextProps.rowKey) return false;
+  if (prevProps.getStatusOptions !== nextProps.getStatusOptions) return false;
 
   const prev = prevProps.row;
   const next = nextProps.row;
@@ -1153,7 +1218,7 @@ function DataJournalContextMenuInner<T extends Record<string, any>>({
         position: 'fixed',
         top: `${menu.y}px`,
         left: `${menu.x}px`,
-        zIndex: 9999,
+        zIndex: 1200,
       }}
       onClick={(e) => e.stopPropagation()}
       className="min-w-[190px] p-1.5 rounded-2xl backdrop-blur-2xl bg-white/95 dark:bg-zinc-900/95 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-1 animate-in fade-in zoom-in-95 duration-100"
@@ -1225,6 +1290,7 @@ export function DataJournal<T extends Record<string, any>>({
   createTooltip,
   onRowClick,
   onStatusChange,
+  getStatusOptions,
   onAssignedChange,
   onContextMenuOpen,
   onCreateClick,
@@ -1268,9 +1334,7 @@ export function DataJournal<T extends Record<string, any>>({
   );
 
   const onStatusChangeStable = React.useCallback(
-    (row: T, newStatus: string) => {
-      onStatusChange?.(row, newStatus);
-    },
+    (row: T, newStatus: string) => onStatusChange?.(row, newStatus),
     [onStatusChange]
   );
 
@@ -1784,7 +1848,7 @@ export function DataJournal<T extends Record<string, any>>({
       const rawVal = item[groupByField];
       const groupKey = String(rawVal ?? '');
       if (!groupsMap.has(groupKey)) {
-        let groupLabel = groupKey || '— Не указано —';
+        let groupLabel = groupKey ? (col ? formatPlainValue(col, groupKey) : groupKey) : '— Не указано —';
         if (col?.filterOptions) {
           const found = col.filterOptions.find((o) => o.value === groupKey);
           if (found) groupLabel = found.label;
@@ -2731,6 +2795,7 @@ export function DataJournal<T extends Record<string, any>>({
                           onToggleSelect={handleToggleSelectRow}
                           onRowClick={onRowClickStable}
                           onStatusChange={onStatusChangeStable}
+                          getStatusOptions={getStatusOptions}
                           onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
                           handleCopy={handleCopy}
@@ -2855,6 +2920,7 @@ export function DataJournal<T extends Record<string, any>>({
                           initialColumns={initialColumns}
                           onRowClick={onRowClickStable}
                           onStatusChange={onStatusChangeStable}
+                          getStatusOptions={getStatusOptions}
                           onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
                           handleCopy={handleCopy}
@@ -2942,6 +3008,7 @@ export function DataJournal<T extends Record<string, any>>({
                     initialColumns={initialColumns}
                     onRowClick={onRowClickStable}
                     onStatusChange={onStatusChangeStable}
+                    getStatusOptions={getStatusOptions}
                     onAssignedChange={onAssignedChangeStable}
                     customRowActions={customRowActions}
                     handleCopy={handleCopy}
@@ -3014,7 +3081,7 @@ export function DataJournal<T extends Record<string, any>>({
       {/* Плавающий стеклянный островок массовых действий (Apple Island Glassmorphism) */}
       {enableSelection && selectedIds && selectedIds.length > 0 && typeof document !== 'undefined' &&
         createPortal(
-          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[9990] flex items-center gap-3 px-5 py-3 rounded-2xl backdrop-blur-2xl bg-zinc-900/90 dark:bg-zinc-800/95 text-white border border-white/20 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-bulk flex items-center gap-3 px-5 py-3 rounded-2xl backdrop-blur-2xl bg-zinc-900/90 dark:bg-zinc-800/95 text-white border border-white/20 shadow-2xl animate-in slide-in-from-bottom-5 duration-200">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
               <span className="text-xs font-semibold whitespace-nowrap">

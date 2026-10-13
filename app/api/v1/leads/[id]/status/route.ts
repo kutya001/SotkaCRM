@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { CancelReasonSchema } from '@/lib/validations';
+import { canChangeLeadStatus, isCancelReasonDbError, isCancelStatus } from '@/lib/leads/status-rules';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import type { LeadStatus } from '@/types/database.types';
 
 export async function PATCH(
@@ -14,66 +18,64 @@ export async function PATCH(
 
     const { status, cancel_reason } = body as {
       status: LeadStatus;
-      cancel_reason?: string;
+      cancel_reason?: string | null;
     };
 
     if (!status) {
       return apiError('Статус обязателен для заполнения', 'MISSING_STATUS', 400);
     }
 
+    // Чтение клиентом пользователя: RLS скрывает чужие лиды консультанта
     const { data: targetLead } = await supabase
       .from('leads')
-      .select('created_by, assigned_to, status, comment')
+      .select('lead_id, created_by, assigned_to, status')
       .eq('lead_id', id)
-      .single();
+      .maybeSingle();
 
     if (!targetLead) {
       return apiError('Лид не найден в системе', 'NOT_FOUND', 404);
     }
 
-    if (profile.role === 'smm') {
-      if (
-        !['Открыт', 'Обработан'].includes(targetLead.status) ||
-        !['Открыт', 'Обработан'].includes(status)
-      ) {
-        return apiError(
-          'SMM-специалисту доступен перевод только между статусами «Открыт» и «Обработан»',
-          'FORBIDDEN',
-          403
-        );
-      }
-    } else if (profile.role === 'consultant') {
-      if (targetLead.assigned_to !== profile.user_id) {
-        return apiError('Лид назначен на другого консультанта', 'FORBIDDEN', 403);
-      }
-      if (!['Назначен', 'Подписан', 'Отмена'].includes(status)) {
-        return apiError(
-          'Консультант может переводить статус только в «Назначен», «Подписан» или «Отмена»',
-          'FORBIDDEN',
-          403
-        );
-      }
+    const check = canChangeLeadStatus(profile.role, targetLead, profile.user_id, status);
+    if (!check.ok) {
+      return apiError(check.reason, 'FORBIDDEN', 403);
     }
 
-    const updatePayload: Record<string, any> = {
+    const updatePayload: Record<string, unknown> = {
       status,
       updated_at: new Date().toISOString(),
     };
 
-    if (status === 'Отмена' && cancel_reason) {
-      const now = new Date().toLocaleDateString('ru-RU');
-      const note = `[Отмена (${now})]: ${cancel_reason.trim()}`;
-      updatePayload.comment = targetLead.comment ? `${targetLead.comment}\n${note}` : note;
+    if (isCancelStatus(status)) {
+      const parsedReason = CancelReasonSchema.safeParse(cancel_reason ?? '');
+      if (!parsedReason.success) {
+        return apiError(
+          parsedReason.error.issues[0]?.message || 'Укажите причину отмены лида',
+          'CANCEL_REASON_REQUIRED',
+          422
+        );
+      }
+      updatePayload.cancel_reason = parsedReason.data;
     }
 
-    const { error } = await supabase
+    // Запись сервисным клиентом: права уже проверены матрицей ролей выше,
+    // RLS остается страховкой для прямых запросов к БД
+    const { data: updated, error } = await createAdminClient()
       .from('leads')
       .update(updatePayload as any)
-      .eq('lead_id', id);
+      .eq('lead_id', id)
+      .select('lead_id, status, cancel_reason, cancelled_at, updated_at')
+      .single();
 
-    if (error) throw error;
+    if (error) {
+      if (isCancelReasonDbError(error)) {
+        return apiError('Для перевода лида в статус «Отмена» укажите причину', 'CANCEL_REASON_REQUIRED', 422);
+      }
+      throw error;
+    }
 
-    return apiSuccess({ id, status, updated_at: updatePayload.updated_at });
+    scheduleTelegramDispatch();
+    return apiSuccess({ id, ...updated });
   } catch (err) {
     return handleApiError(err);
   }

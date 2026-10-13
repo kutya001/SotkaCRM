@@ -4,10 +4,11 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
+import { setConnectionConfirmation } from '@/lib/services/connections';
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireAdmin();
+    const { supabase, profile } = await requireAdmin();
     const body = await req.json();
 
     const { action, connection_ids, payload } = body;
@@ -20,17 +21,36 @@ export async function POST(req: NextRequest) {
       return apiError('Список connection_ids не может быть пустым', 'EMPTY_CONNECTION_IDS', 400);
     }
 
+    // 0. Действие: Массовое подтверждение подключений (только pending; остальные пропускаются)
+    if (action === 'confirm_selected') {
+      let confirmed = 0;
+      const skipped: string[] = [];
+      for (const connectionId of connection_ids as string[]) {
+        const res = await setConnectionConfirmation({ connectionId, action: 'confirm', actor: profile });
+        if (res.success) confirmed++;
+        else skipped.push(`${connectionId}: ${res.error}`);
+      }
+      return apiSuccess({
+        success: true,
+        action,
+        confirmed_count: confirmed,
+        skipped_count: skipped.length,
+        skipped: skipped.length > 0 ? skipped : undefined,
+        message: `Подтверждено подключений: ${confirmed}${skipped.length > 0 ? `, пропущено: ${skipped.length}` : ''}`,
+      });
+    }
+
     // 1. Действие: Массовое изменение срока сопровождения
     if (action === 'update_maintenance_months') {
-      const monthsTotal = Math.max(1, Math.min(24, parseInt(payload?.months_total || payload?.monthsTotal || '2', 10)));
+      const rawMonths = payload?.months_total ?? payload?.maintenance_months_total ?? payload?.monthsTotal ?? 2;
+      const monthsTotal = Math.max(1, Math.min(24, parseInt(String(rawMonths), 10) || 2));
 
       const { data: updatedConns, error: updateErr } = await supabase
         .from('connections')
         .update({
           maintenance_months_total: monthsTotal,
           maintenance_months_limit: monthsTotal,
-          updated_at: new Date().toISOString(),
-        } as any)
+        })
         .in('connection_id', connection_ids)
         .select('connection_id');
 
@@ -96,9 +116,11 @@ export async function POST(req: NextRequest) {
           accrual_month,
           status,
           client_status,
+          confirmation_status,
           seller:sellers(is_active)
         `)
-        .in('connection_id', connection_ids);
+        .in('connection_id', connection_ids)
+        .eq('confirmation_status', 'confirmed');
 
       if (connsErr) throw connsErr;
 

@@ -8,17 +8,21 @@ export interface LeadLinkResult {
   error?: string;
   connectionId?: string;
   connectionFeeAmount?: number;
+  /** pending — подключение ждет подтверждения администратором */
+  confirmationStatus?: 'pending' | 'confirmed';
 }
 
-const PRIVILEGED_ROLES: UserRole[] = ['admin', 'supervisor'];
+/** Роли, которые привязывают лид с подтвержденным подключением (руководитель — только просмотр) */
+const PRIVILEGED_ROLES: UserRole[] = ['admin'];
 
 /**
  * Атомарное связывание лида с продавцом через RPC link_lead_to_seller.
  *
  * RPC доступна только service_role (миграция 029), поэтому права проверяются здесь:
- * - admin/supervisor могут указать любого куратора (managerId);
+ * - admin может указать любого куратора (managerId), подключение сразу подтверждено;
  * - consultant связывает только свои или неназначенные лиды, куратором становится лид-владелец
- *   или сам консультант — переданный managerId игнорируется.
+ *   или сам консультант — переданный managerId игнорируется; подключение ожидает
+ *   подтверждения администратором (начисление — после подтверждения, миграция 037).
  */
 export async function linkLeadToSellerAtomic(
   ctx: AuthContext,
@@ -49,14 +53,14 @@ export async function linkLeadToSellerAtomic(
     }
   }
 
-  // p_user_id однозначно выбирает 5-аргументную перегрузку (в БД есть и 4-аргументная,
-  // без p_user_id PostgREST не может выбрать между ними)
-  const { data, error } = await createAdminClient().rpc('link_lead_to_seller', {
+  // Единственная реализация RPC (миграция 037): все параметры передаются явно
+  const { data, error } = await (createAdminClient().rpc as any)('link_lead_to_seller', {
     p_lead_id: params.leadId,
-    p_user_id: profile.user_id,
     p_seller_phone: params.sellerPhone,
-    p_manager_id: (isPrivileged && params.managerId) || undefined,
+    p_user_id: profile.user_id,
+    p_manager_id: (isPrivileged && params.managerId) || null,
     p_assigned_by: profile.user_id,
+    p_confirmation_status: isPrivileged ? 'confirmed' : 'pending',
   });
 
   if (error) {
@@ -69,6 +73,7 @@ export async function linkLeadToSellerAtomic(
     error?: string;
     connection_id?: string;
     connection_fee_amount?: number;
+    confirmation_status?: 'pending' | 'confirmed';
   };
 
   if (!res.success) {
@@ -81,5 +86,6 @@ export async function linkLeadToSellerAtomic(
     success: true,
     connectionId: res.connection_id,
     connectionFeeAmount: res.connection_fee_amount,
+    confirmationStatus: res.confirmation_status,
   };
 }

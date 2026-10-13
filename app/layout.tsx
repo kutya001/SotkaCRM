@@ -36,6 +36,7 @@ export const viewport: Viewport = {
 };
 
 import { ToastProvider } from '@/components/ui/Toast';
+import { ConfirmProvider } from '@/components/ui/ConfirmDialog';
 import { AuthProvider } from '@/components/auth/AuthProvider';
 
 // Layout не читает cookies(): иначе все страницы становятся динамическими,
@@ -56,7 +57,9 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthProvider>
-            <ToastProvider>{children}</ToastProvider>
+            <ToastProvider>
+              <ConfirmProvider>{children}</ConfirmProvider>
+            </ToastProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

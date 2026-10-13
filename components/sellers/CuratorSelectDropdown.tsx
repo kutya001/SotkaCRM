@@ -197,7 +197,7 @@ export const CuratorSelectDropdown: React.FC<CuratorSelectDropdownProps> = ({
             left: position.left,
             width: position.width,
             transform: position.placement === 'top' ? 'translateY(-100%)' : undefined,
-            zIndex: 99999,
+            zIndex: 1200,
           }}
           className="bg-white/95 dark:bg-zinc-900/95 backdrop-blur-2xl border border-zinc-200/90 dark:border-zinc-800/90 shadow-2xl rounded-2xl p-1 text-zinc-900 dark:text-zinc-100 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}

@@ -7,6 +7,9 @@ import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } f
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
+import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
+import { Button } from '@/components/ui/Button';
+import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
 import { api } from '@/lib/api/client';
 import {
   getSellersStats,
@@ -34,6 +37,9 @@ import {
   Users,
   UserMinus,
   Receipt,
+  UserPlus,
+  Hourglass,
+  XCircle,
 } from 'lucide-react';
 import { SellerTransactionsTab } from '@/components/sellers/SellerTransactionsTab';
 import { createClient } from '@/lib/supabase/client';
@@ -75,10 +81,51 @@ const SELLER_MODERATION_OPTIONS: StatusOption[] = [
   },
 ];
 
+/** Бейдж статуса подтверждения подключения администратором (миграция 037) */
+function ConnectionConfirmationBadge({
+  status,
+  reason,
+  size = 'sm',
+}: {
+  status?: string | null;
+  reason?: string | null;
+  size?: 'xs' | 'sm';
+}) {
+  if (status === 'pending') {
+    return (
+      <span
+        className={`inline-flex items-center gap-1 rounded-md font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 ${
+          size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]'
+        }`}
+        title="Подключение ожидает подтверждения администратора"
+      >
+        <Hourglass className="w-3 h-3" strokeWidth={2} />
+        Ожидает подтверждения
+      </span>
+    );
+  }
+  if (status === 'rejected') {
+    return (
+      <span
+        className={`inline-flex items-center gap-1 rounded-md font-semibold bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 ${
+          size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]'
+        }`}
+        title={reason ? `Причина: ${reason}` : 'Подключение отклонено администратором'}
+      >
+        <XCircle className="w-3 h-3" strokeWidth={2} />
+        Отклонено
+      </span>
+    );
+  }
+  return null;
+}
+
 export default function SellersPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const user = useUser();
+  const currentUserId = user.profile?.user_id || '';
 
   const [sellers, setSellers] = React.useState<SellerItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
@@ -178,11 +225,7 @@ export default function SellersPage() {
   const [filterManager, setFilterManager] = React.useState<string>('all');
   const [hasAvailableLeads, setHasAvailableLeads] = React.useState<boolean>(false);
 
-  const formatPhone = (p?: string | null) => {
-    if (!p) return '—';
-    const trimmed = p.trim();
-    return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
-  };
+  const formatPhone = (p?: string | null) => formatPhoneDisplay(p);
 
   // Массовые действия для администратора
   const [selectedSellerIds, setSelectedSellerIds] = React.useState<string[]>([]);
@@ -262,9 +305,15 @@ export default function SellersPage() {
 
   const handleBatchDelete = async (clearSelection: () => void) => {
     if (selectedSellerIds.length === 0) return;
-    if (!window.confirm(`Вы уверены, что хотите удалить ${selectedSellerIds.length} выбранных продавцов?`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Удалить выбранных продавцов?',
+      subtitle: `Выбрано продавцов: ${selectedSellerIds.length}`,
+      description: 'Записи будут удалены из локальной базы SotkaCRM, привязанные лиды — отвязаны.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
     setIsBatchLoading(true);
     try {
       await api.sellers.batch({
@@ -347,6 +396,118 @@ export default function SellersPage() {
       showToast(err.message || 'Ошибка при назначении куратора', 'error');
     }
   };
+
+  // Консультант берет свободного одобренного продавца себе (подключение ждет подтверждения администратора)
+  const canTakeSeller = React.useCallback(
+    (seller: SellerItem) =>
+      currentUserRole === 'consultant' &&
+      !seller.manager_id &&
+      seller.moderation === 'approved' &&
+      !seller.is_deleted_from_source,
+    [currentUserRole]
+  );
+
+  const [takingPhone, setTakingPhone] = React.useState<string | null>(null);
+
+  const handleTakeSelf = React.useCallback(
+    async (seller: SellerItem) => {
+      if (!canTakeSeller(seller)) return;
+      const ok = await confirm({
+        title: 'Взять продавца себе?',
+        subtitle: `${seller.seller_name || seller.store} (${formatPhoneDisplay(seller.seller_phone)})`,
+        description:
+          'Вы станете куратором продавца. Бонус за подключение будет начислен после подтверждения администратором.',
+        tone: 'info',
+        icon: UserPlus,
+        confirmLabel: 'Взять себе',
+      });
+      if (!ok) return;
+
+      setTakingPhone(seller.seller_phone);
+      const previousSellers = sellers;
+      const me = managers.find((m) => m.user_id === currentUserId);
+      // Оптимистичное обновление: куратор — текущий консультант, подключение ожидает подтверждения
+      setSellers((prev) =>
+        prev.map((s) =>
+          s.seller_phone === seller.seller_phone
+            ? {
+                ...s,
+                manager_id: currentUserId,
+                manager_user: me
+                  ? { user_id: me.user_id, full_name: me.full_name, role: me.role, login: me.login, color: me.color }
+                  : { user_id: currentUserId, full_name: user.userName || 'Вы', role: 'consultant', login: user.userLogin || '' },
+                connection: { connection_id: s.connection?.connection_id || '', manager_id: currentUserId, confirmation_status: 'pending' },
+              }
+            : s
+        )
+      );
+
+      try {
+        const res = await api.sellers.takeSelf(seller.seller_phone);
+        showToast(res.message || 'Продавец закреплен за вами. Ожидает подтверждения администратора', 'info');
+        setModalState((prev) =>
+          prev.selectedSeller?.seller_phone === seller.seller_phone
+            ? {
+                ...prev,
+                selectedSeller: {
+                  ...prev.selectedSeller,
+                  manager_id: currentUserId,
+                  manager_user: me
+                    ? { user_id: me.user_id, full_name: me.full_name, role: me.role, login: me.login, color: me.color }
+                    : prev.selectedSeller.manager_user,
+                  connection: { connection_id: res.connection_id || '', manager_id: currentUserId, confirmation_status: 'pending' },
+                },
+              }
+            : prev
+        );
+        await fetchSellersData(1, searchQuery, true);
+      } catch (err: any) {
+        setSellers(previousSellers);
+        showToast(err.message || 'Не удалось взять продавца', 'error');
+        if (err.code === 'SELLER_ALREADY_TAKEN') await fetchSellersData(1, searchQuery, true);
+      } finally {
+        setTakingPhone(null);
+      }
+    },
+    [canTakeSeller, confirm, sellers, managers, currentUserId, user.userName, user.userLogin, showToast, fetchSellersData, searchQuery]
+  );
+
+  /** Куратор продавца в ячейке/карточке для не-администратора: бейдж, статус подтверждения, «Взять себе» */
+  const renderCuratorReadOnly = React.useCallback(
+    (seller: SellerItem, size: 'xs' | 'sm' = 'sm') => {
+      if (canTakeSeller(seller)) {
+        return (
+          <Button
+            variant="info"
+            size="xs"
+            loading={takingPhone === seller.seller_phone}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleTakeSelf(seller);
+            }}
+            leftIcon={<UserPlus className="w-3 h-3" strokeWidth={2} />}
+            title="Стать куратором этого продавца (подтверждает администратор)"
+          >
+            Взять себе
+          </Button>
+        );
+      }
+      if (!seller.manager_user) {
+        return <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>;
+      }
+      return (
+        <div className="flex flex-col items-start gap-1 min-w-0">
+          <EmployeeBadge name={seller.manager_user.full_name} color={seller.manager_user.color} size={size} />
+          <ConnectionConfirmationBadge
+            status={seller.connection?.confirmation_status}
+            reason={seller.connection?.rejection_reason}
+            size="xs"
+          />
+        </div>
+      );
+    },
+    [canTakeSeller, takingPhone, handleTakeSelf]
+  );
 
   // Конфигурация колонок DataJournal (мемоизирована для стабилизации виртуализатора)
   const columns: ColumnDef<SellerItem>[] = React.useMemo(
@@ -566,29 +727,25 @@ export default function SellersPage() {
         renderCell: (row: SellerItem) => {
           if (currentUserRole === 'admin') {
             return (
-              <CuratorSelectDropdown
-                value={row.manager_id}
-                managers={managers}
-                onChange={async (val) => {
-                  await handleAssignManager(row.seller_phone, val);
-                }}
-                size="sm"
-                className="w-[170px]"
-              />
+              <div className="flex flex-col gap-1">
+                <CuratorSelectDropdown
+                  value={row.manager_id}
+                  managers={managers}
+                  onChange={async (val) => {
+                    await handleAssignManager(row.seller_phone, val);
+                  }}
+                  size="sm"
+                  className="w-[170px]"
+                />
+                <ConnectionConfirmationBadge
+                  status={row.manager_id ? row.connection?.confirmation_status : null}
+                  reason={row.connection?.rejection_reason}
+                  size="xs"
+                />
+              </div>
             );
           }
-          if (!row.manager_user) {
-            return (
-              <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>
-            );
-          }
-          return (
-            <EmployeeBadge
-              name={row.manager_user.full_name}
-              color={row.manager_user.color}
-              size="sm"
-            />
-          );
+          return renderCuratorReadOnly(row, 'sm');
         },
       },
       {
@@ -642,7 +799,7 @@ export default function SellersPage() {
         },
       },
     ],
-    [currentUserRole, managers, handleAssignManager, hasAvailableLeads]
+    [currentUserRole, managers, handleAssignManager, hasAvailableLeads, renderCuratorReadOnly]
   );
 
   // Конфигурация полей для EntityModal
@@ -793,7 +950,7 @@ export default function SellersPage() {
       renderCustomView: (_val: any, data: SellerItem) => {
         if (currentUserRole === 'admin') {
           return (
-            <div className="w-full">
+            <div className="w-full space-y-1.5">
               <CuratorSelectDropdown
                 value={data?.manager_id}
                 managers={managers}
@@ -809,6 +966,9 @@ export default function SellersPage() {
                             manager_user: val
                               ? managers.find((m) => m.user_id === val) || null
                               : null,
+                            connection: val
+                              ? { connection_id: prev.selectedSeller.connection?.connection_id || '', manager_id: val, confirmation_status: 'confirmed' }
+                              : null,
                           },
                         }
                       : prev
@@ -817,14 +977,14 @@ export default function SellersPage() {
                 size="md"
                 className="w-full"
               />
+              <ConnectionConfirmationBadge
+                status={data?.manager_id ? data?.connection?.confirmation_status : null}
+                reason={data?.connection?.rejection_reason}
+              />
             </div>
           );
         }
-        return (
-          <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
-            {data?.manager_user?.full_name || 'Не назначен'}
-          </span>
-        );
+        return renderCuratorReadOnly(data, 'sm');
       },
     },
   ];
@@ -916,8 +1076,6 @@ export default function SellersPage() {
   // Кастомный рендеринг карточки продавца для мобильных устройств (Card View)
   const renderSellerCard = (seller: SellerItem) => {
     const bal = Number(seller.balance) || 0;
-    const currentMgr = managers.find((m) => m.user_id === seller.manager_id);
-    const isUnassignedMgr = !seller.manager_id;
     const cleanPhone = seller.seller_phone.replace(/\D/g, '');
     const modOpt = SELLER_MODERATION_OPTIONS.find((o) => o.value === seller.moderation) || {
       value: seller.moderation,
@@ -994,14 +1152,14 @@ export default function SellersPage() {
             {cleanPhone && (
               <>
                 <a
-                  href={`tel:+${cleanPhone}`}
+                  href={telHref(seller.seller_phone)}
                   className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 transition-colors"
                   title="Позвонить"
                 >
                   <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
                 </a>
                 <a
-                  href={`https://wa.me/${cleanPhone}`}
+                  href={waHref(seller.seller_phone)}
                   target="_blank"
                   rel="noreferrer"
                   className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-colors"
@@ -1050,7 +1208,7 @@ export default function SellersPage() {
               Куратор:
             </span>
             {currentUserRole === 'admin' ? (
-              <div className="flex items-center gap-1.5 flex-1 max-w-[210px] justify-end">
+              <div className="flex flex-col items-end gap-1 flex-1 max-w-[210px]">
                 <CuratorSelectDropdown
                   value={seller.manager_id}
                   managers={managers}
@@ -1060,19 +1218,14 @@ export default function SellersPage() {
                   size="sm"
                   className="w-full max-w-[190px]"
                 />
+                <ConnectionConfirmationBadge
+                  status={seller.manager_id ? seller.connection?.confirmation_status : null}
+                  reason={seller.connection?.rejection_reason}
+                  size="xs"
+                />
               </div>
             ) : (
-              <div>
-                {seller.manager_user ? (
-                  <EmployeeBadge
-                    name={seller.manager_user.full_name}
-                    color={seller.manager_user.color}
-                    size="xs"
-                  />
-                ) : (
-                  <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>
-                )}
-              </div>
+              <div>{renderCuratorReadOnly(seller, 'xs')}</div>
             )}
           </div>
 
@@ -1398,120 +1551,54 @@ export default function SellersPage() {
         )}
 
         {/* Диалог подтверждения отвязки лида от продавца */}
-        {sellerToUnlink && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-                  <RotateCcw className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Отвязать лид от продавца?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {sellerToUnlink.seller_name || sellerToUnlink.store} (+{sellerToUnlink.seller_phone})
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 space-y-1.5">
-                <p className="text-[11px] leading-relaxed">
-                  При отвязке связанный лид вернется в статус <b>«Назначен»</b>, а у данного продавца будет сброшен назначенный куратор.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isUnlinkingLead}
-                  onClick={() => setSellerToUnlink(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isUnlinkingLead}
-                  onClick={handleConfirmUnlinkLead}
-                  className="h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isUnlinkingLead ? (
-                    <span>Отвязка...</span>
-                  ) : (
-                    <>
-                      <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Подтвердить отвязку</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={sellerToUnlink !== null}
+          onClose={() => !isUnlinkingLead && setSellerToUnlink(null)}
+          onConfirm={handleConfirmUnlinkLead}
+          title="Отвязать лид от продавца?"
+          subtitle={
+            sellerToUnlink
+              ? `${sellerToUnlink.seller_name || sellerToUnlink.store} (${formatPhoneDisplay(sellerToUnlink.seller_phone)})`
+              : undefined
+          }
+          tone="warning"
+          icon={RotateCcw}
+          confirmLabel="Подтвердить отвязку"
+          level={2}
+          description={
+            <>
+              При отвязке связанный лид вернется в статус <b>«Назначен»</b>, а у данного продавца будет сброшен назначенный куратор.
+            </>
+          }
+        />
 
         {/* Диалог подтверждения безвозвратного удаления продавца */}
-        {sellerToDelete && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Удалить продавца навсегда?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {sellerToDelete.seller_name || sellerToDelete.store} (+{sellerToDelete.seller_phone})
-                  </p>
-                </div>
+        <ConfirmDialog
+          open={sellerToDelete !== null}
+          onClose={() => !isDeletingSeller && setSellerToDelete(null)}
+          onConfirm={handleConfirmDeleteSeller}
+          title="Удалить продавца навсегда?"
+          subtitle={
+            sellerToDelete
+              ? `${sellerToDelete.seller_name || sellerToDelete.store} (${formatPhoneDisplay(sellerToDelete.seller_phone)})`
+              : undefined
+          }
+          tone="danger"
+          icon={Trash2}
+          confirmLabel="Удалить навсегда"
+          level={2}
+          description={
+            <div className="space-y-1.5">
+              <div className="font-semibold flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                <span>Внимание: действие необратимо</span>
               </div>
-
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300 space-y-1.5">
-                <div className="font-semibold flex items-center gap-1.5">
-                  <ShieldAlert className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-                  <span>Внимание: действие необратимо</span>
-                </div>
-                <p className="text-[11px] leading-relaxed">
-                  Запись продавца будет физически удалена из локальной базы данных SotkaCRM. Все привязанные лиды будут автоматически отвязаны.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isDeletingSeller}
-                  onClick={() => setSellerToDelete(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeletingSeller}
-                  onClick={handleConfirmDeleteSeller}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isDeletingSeller ? (
-                    <span>Удаление...</span>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Удалить навсегда</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <p className="text-[11px] leading-relaxed">
+                Запись продавца будет физически удалена из локальной базы данных SotkaCRM. Все привязанные лиды будут автоматически отвязаны.
+              </p>
             </div>
-          </div>
-        )}
+          }
+        />
       </div>
     </AppLayout>
   );

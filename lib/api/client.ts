@@ -298,6 +298,7 @@ export const api = {
       lead_ids: string[];
       action: 'change_status' | 'change_assigned' | 'delete';
       status?: string;
+      cancel_reason?: string;
       assigned_to?: string | null;
     }) => {
       const res = await request<any>('/api/v1/leads/batch', {
@@ -381,6 +382,21 @@ export const api = {
       invalidateNamespaces('sellers', 'connections', 'dashboard', 'analytics');
       return res;
     },
+    /** Консультант берет свободного одобренного продавца себе (подключение ждет подтверждения) */
+    takeSelf: async (sellerPhoneOrId: string) => {
+      const res = await request<{
+        success: boolean;
+        seller_phone: string;
+        manager_id: string;
+        connection_id?: string;
+        confirmation_status?: 'pending' | 'confirmed';
+        message?: string;
+      }>(`/api/v1/sellers/${encodeURIComponent(sellerPhoneOrId)}/take`, {
+        method: 'POST',
+      });
+      invalidateNamespaces('sellers', 'connections', 'dashboard', 'analytics');
+      return res;
+    },
     checkAvailableLeads: (options?: { bypassCache?: boolean }) =>
       request<{ has_available_leads: boolean; available_count: number }>(
         '/api/v1/sellers/available-leads-check',
@@ -449,6 +465,8 @@ export const api = {
       search?: string;
       accrualMonth?: string;
       clientStatus?: string;
+      /** pending | confirmed | rejected | all */
+      confirmation?: string;
       managerId?: string;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
@@ -458,6 +476,21 @@ export const api = {
         method: 'GET',
         bypassCache: params?.bypassCache,
       }),
+    /** Подтверждение / отклонение подключения администратором (причина обязательна при reject) */
+    setConfirmation: async (id: string, action: 'confirm' | 'reject', reason?: string) => {
+      const res = await request<{
+        success: boolean;
+        connection_id: string;
+        confirmation_status: 'confirmed' | 'rejected';
+        seller_phone: string;
+        message?: string;
+      }>(`/api/v1/connections/${encodeURIComponent(id)}/confirmation`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action, reason }),
+      });
+      invalidateNamespaces('connections', 'sellers', 'leads', 'payouts', 'profile', 'dashboard', 'analytics');
+      return res;
+    },
     create: async (data: any) => {
       const res = await request<any>('/api/v1/connections', {
         method: 'POST',
@@ -555,7 +588,7 @@ export const api = {
       return res;
     },
     batch: async (data: {
-      action: 'update_maintenance_months' | 'accrue_selected';
+      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected';
       connection_ids: string[];
       payload?: {
         months_total?: number;

@@ -18,6 +18,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { api } from '@/lib/api/client';
 import {
   getAvailableSellersForMapping,
@@ -117,17 +118,25 @@ export function LeadSellerMappingModal({
 
     setIsSubmitting(true);
     try {
-      await api.leads.linkSeller(
+      const res = await api.leads.linkSeller(
         lead.lead_id,
         selectedSeller.seller_phone,
         selectedManagerId || lead.assigned_to || currentUserId
       );
 
       if ('vibrate' in navigator) navigator.vibrate([40, 60, 40]);
-      showToast(
-        `Сделка закрыта! Лид привязан к продавцу +${selectedSeller.seller_phone}. Начислено ${commissionAmount.toLocaleString('ru-RU')} KGS.`,
-        'success'
-      );
+      const phoneLabel = formatPhoneDisplay(selectedSeller.seller_phone);
+      if (res?.confirmation_status === 'pending') {
+        showToast(
+          `Лид привязан к продавцу ${phoneLabel}. Бонус ${commissionAmount.toLocaleString('ru-RU')} KGS будет начислен после подтверждения администратором.`,
+          'info'
+        );
+      } else {
+        showToast(
+          `Сделка закрыта! Лид привязан к продавцу ${phoneLabel}. Начислено ${commissionAmount.toLocaleString('ru-RU')} KGS.`,
+          'success'
+        );
+      }
       onSuccess();
       onClose();
     } catch (err: any) {

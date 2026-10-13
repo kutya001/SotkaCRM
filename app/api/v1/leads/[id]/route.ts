@@ -3,6 +3,14 @@ import { requireAuth } from '@/lib/auth/check-role';
 import { LeadUpdateSchema, normalizeNullableUuid } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { canEditLeadFields, implicitStatusForAssignment } from '@/lib/leads/status-rules';
+import { DEFAULT_COUNTRY_CODE, digitsOnly, normalizeNational } from '@/lib/utils/phone';
+
+const LEAD_SELECT = `
+  *,
+  assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
+  created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
+`;
 
 export async function GET(
   req: NextRequest,
@@ -12,19 +20,12 @@ export async function GET(
     const { id } = await params;
     const { supabase, profile } = await requireAuth();
 
-    let query = supabase
+    const { data: lead, error } = await supabase
       .from('leads')
-      .select(
-        `
-          *,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
-        `
-      )
+      .select(LEAD_SELECT)
       .eq('lead_id', id)
       .single();
 
-    const { data: lead, error } = await query;
     if (error || !lead) {
       return apiError('Лид не найден в системе', 'NOT_FOUND', 404);
     }
@@ -39,6 +40,14 @@ export async function GET(
   }
 }
 
+/** Пустая строка → null, остальное — обрезанная строка; undefined не трогаем (поле не прислано) */
+function optionalText(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -50,40 +59,45 @@ export async function PATCH(
 
     const { data: existingLead } = await supabase
       .from('leads')
-      .select('*')
+      .select('lead_id, created_by, assigned_to, status, country_code')
       .eq('lead_id', id)
-      .single();
+      .maybeSingle();
 
     if (!existingLead) {
       return apiError('Лид не найден', 'NOT_FOUND', 404);
     }
 
-    if (profile.role === 'smm') {
-      if (!['Открыт', 'Обработан'].includes(existingLead.status)) {
-        return apiError(
-          'SMM-специалисту запрещено редактировать лиды со статусом «Назначен», «Подписан» или «Отмена»',
-          'FORBIDDEN',
-          403
-        );
-      }
-      if (body.assigned_to !== undefined && body.assigned_to !== existingLead.assigned_to) {
-        return apiError('Роль SMM не имеет прав на назначение ответственного', 'FORBIDDEN', 403);
-      }
-    } else if (profile.role === 'consultant') {
-      if (existingLead.assigned_to !== profile.user_id) {
-        return apiError('Консультант может изменять только свои лиды', 'FORBIDDEN', 403);
-      }
-      if (body.assigned_to !== undefined && body.assigned_to !== existingLead.assigned_to) {
-        return apiError('Консультанты не имеют прав на переназначение лидов', 'FORBIDDEN', 403);
-      }
+    // Единая матрица ролей: supervisor — только просмотр, smm — свои в Открыт/Обработан,
+    // consultant — свои в Назначен/Подписан, admin — всё
+    if (!canEditLeadFields(profile.role, existingLead, profile.user_id)) {
+      const reason =
+        profile.role === 'supervisor'
+          ? 'Руководитель может только просматривать лиды'
+          : profile.role === 'smm'
+          ? 'SMM-специалист редактирует только свои лиды в статусах «Открыт» и «Обработан»'
+          : profile.role === 'consultant'
+          ? 'Консультант редактирует только свои лиды в статусах «Назначен» и «Подписан»'
+          : 'Недостаточно прав для редактирования лида';
+      return apiError(reason, 'FORBIDDEN', 403);
     }
 
+    const wantsReassign = body.assigned_to !== undefined
+      && normalizeNullableUuid(body.assigned_to) !== (existingLead.assigned_to ?? null);
+    if (wantsReassign && profile.role !== 'admin') {
+      return apiError('Назначать ответственного может только администратор', 'FORBIDDEN', 403);
+    }
+
+    // Статус через этот маршрут не меняется (см. /status: причина отмены, матрица переходов)
     const sanitizedInput = {
-      ...body,
-      assigned_to: normalizeNullableUuid(body.assigned_to),
-      country_code: body.country_code ? body.country_code.trim() : undefined,
-      instagram: body.instagram && body.instagram.trim() !== '' ? body.instagram.trim() : null,
-      comment: body.comment && body.comment.trim() !== '' ? body.comment.trim() : null,
+      client_name: body.client_name,
+      phone: body.phone !== undefined ? String(body.phone) : undefined,
+      country_code:
+        body.country_code !== undefined && body.country_code !== null && String(body.country_code).trim() !== ''
+          ? digitsOnly(body.country_code)
+          : existingLead.country_code || DEFAULT_COUNTRY_CODE,
+      instagram: optionalText(body.instagram),
+      comment: optionalText(body.comment),
+      assigned_to: body.assigned_to !== undefined ? normalizeNullableUuid(body.assigned_to) : undefined,
     };
 
     const parsed = LeadUpdateSchema.safeParse(sanitizedInput);
@@ -97,38 +111,38 @@ export async function PATCH(
     }
 
     const valid = parsed.data;
-    const updatePayload: Record<string, any> = {
+    const updatePayload: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     };
 
-    if (valid.client_name !== undefined) updatePayload.client_name = valid.client_name.trim();
-    if (valid.country_code !== undefined) updatePayload.country_code = valid.country_code;
-    if (valid.instagram !== undefined) updatePayload.instagram = valid.instagram;
-    if (valid.comment !== undefined) updatePayload.comment = valid.comment;
-    if (valid.assigned_to !== undefined && profile.role === 'admin') {
-      updatePayload.assigned_to = valid.assigned_to;
-    }
+    // Консультант меняет только комментарий
+    if (profile.role === 'consultant') {
+      if (valid.comment !== undefined) updatePayload.comment = valid.comment;
+    } else {
+      if (valid.client_name !== undefined) updatePayload.client_name = valid.client_name.trim();
+      if (valid.instagram !== undefined) updatePayload.instagram = valid.instagram;
+      if (valid.comment !== undefined) updatePayload.comment = valid.comment;
 
-    if (valid.phone) {
-      const cleanPhone = valid.phone.replace(/\D/g, '');
-      const phoneWithoutCode =
-        cleanPhone.startsWith('996') && cleanPhone.length > 9
-          ? cleanPhone.substring(3)
-          : cleanPhone;
-      updatePayload.phone = phoneWithoutCode;
+      if (valid.phone !== undefined || body.country_code !== undefined) {
+        const countryCode = digitsOnly(valid.country_code) || DEFAULT_COUNTRY_CODE;
+        updatePayload.country_code = countryCode;
+        if (valid.phone !== undefined) {
+          updatePayload.phone = normalizeNational(valid.phone, countryCode);
+        }
+      }
+
+      if (wantsReassign && valid.assigned_to !== undefined) {
+        updatePayload.assigned_to = valid.assigned_to;
+        const implicit = implicitStatusForAssignment(existingLead.status, valid.assigned_to);
+        if (implicit) updatePayload.status = implicit;
+      }
     }
 
     const { data: updated, error } = await supabase
       .from('leads')
       .update(updatePayload as any)
       .eq('lead_id', id)
-      .select(
-        `
-          *,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
-        `
-      )
+      .select(LEAD_SELECT)
       .single();
 
     if (error) throw error;

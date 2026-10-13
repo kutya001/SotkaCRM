@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Input } from '@/components/ui/Field';
 
 const MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -61,7 +62,7 @@ export function MonthInput({ value, onChange, required, disabled, id, className 
       >
         <ChevronLeft className="w-3.5 h-3.5" strokeWidth={2} />
       </button>
-      <input
+      <Input
         id={id}
         type="text"
         inputMode="numeric"
@@ -74,10 +75,10 @@ export function MonthInput({ value, onChange, required, disabled, id, className 
         disabled={disabled}
         value={value}
         aria-invalid={isInvalid}
+        invalid={isInvalid}
+        mono
         onChange={(e) => onChange(applyMonthMask(e.target.value))}
-        className={`min-w-0 flex-1 px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-center disabled:opacity-50 ${
-          isInvalid ? 'border-rose-500' : 'border-zinc-200 dark:border-zinc-700'
-        }`}
+        className="min-w-0 flex-1 text-center"
       />
       <button
         type="button"

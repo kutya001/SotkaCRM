@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
 
     let leadsQuery = supabase
       .from('leads')
-      .select('lead_id, client_name, phone, status, created_at, updated_at')
+      .select('lead_id, client_name, phone, country_code, status, created_at, updated_at')
       .order('created_at', { ascending: false })
       .limit(10);
 

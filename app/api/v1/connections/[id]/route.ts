@@ -48,8 +48,19 @@ export async function GET(
       manager = m;
     }
 
+    let confirmedUser = null;
+    if (conn.confirmed_by) {
+      const { data: cu } = await supabase
+        .from('users')
+        .select('user_id, full_name, role, color')
+        .eq('user_id', conn.confirmed_by)
+        .maybeSingle();
+      confirmedUser = cu;
+    }
+
     const result = {
       ...conn,
+      confirmed_user: confirmedUser,
       bonus_connection: Number(conn.bonus_connection_accrued || 0),
       bonus_maintenance: Number(conn.bonus_maintenance_accrued || 0),
       total_bonuses: Number(conn.total_bonuses_accrued || 0),

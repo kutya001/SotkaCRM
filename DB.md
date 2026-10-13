@@ -2882,3 +2882,32 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
   * Итоговый остаток к выплате (`closing_balance`): `opening_balance + total_accrued - total_deductions - total_paid`.
   * Возвращает полный структурированный JSONB с объектами: `employee`, `employee_id`, `month`, `settlement_month`, `period`, `opening_balance`, `total_accrued`, `total_deductions`, `total_paid`, `closing_balance`, `accruals`, `deductions`, `deductions_and_advances`, `payouts`, `operations`.
 
+
+---
+
+## 27. Спецификация Миграции 037 (`037_lead_cancel_reason_and_connection_confirmation.sql`)
+
+### 27.1. Лиды: обязательная причина отмены и матрица статусов по ролям
+* Колонки `leads.cancel_reason TEXT` и `leads.cancelled_at TIMESTAMPTZ`.
+* Триггер `trg_leads_cancel_reason` (BEFORE INSERT OR UPDATE OF status, cancel_reason → `leads_enforce_cancel_reason()`): перевод в «Отмена» без непустой причины завершается ошибкой `P0001` с `HINT = 'cancel_reason_required'`; при переводе проставляется `cancelled_at = now()`; выход из «Отмена» очищает оба поля.
+* Политика `leads_update_policy` (USING / WITH CHECK): `admin` — любые лиды и статусы; `smm` — свои (`created_by`) лиды в «Открыт»/«Обработан», целевые статусы «Открыт»/«Обработан»/«Отмена»; `consultant` — свои (`assigned_to`) лиды в «Назначен»/«Подписан»/«Отмена»; `supervisor` — только просмотр (прав на UPDATE нет).
+* Правила переходов в приложении (`lib/leads/status-rules.ts`) совпадают с политикой: smm `Открыт ↔ Обработан → Отмена`, consultant `Назначен → Подписан | Отмена`, возврат из «Отмена» — только администратор.
+
+### 27.2. Подключения: подтверждение администратором
+* Колонки `connections.confirmation_status VARCHAR(10) NOT NULL DEFAULT 'confirmed'` (CHECK `pending | confirmed | rejected`), `confirmed_by UUID → users`, `confirmed_at TIMESTAMPTZ`, `rejection_reason TEXT`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()` (триггер `trg_connections_touch_updated_at`).
+* Частичный индекс `idx_connections_confirmation_pending` по `confirmation_status <> 'confirmed'`.
+* Backfill: существующие подключения — `confirmed`, `confirmed_at = assigned_at`, `confirmed_by = assigned_by`.
+* Представление `connections_with_accruals` пересоздано тем же списком колонок с добавлением в конец: `confirmation_status, confirmed_by, confirmed_at, rejection_reason, updated_at, seller_id`.
+* Сценарий «Взять себе»: консультант назначает себя куратором продавца без куратора (`sellers.manager_id = self`, подключение `pending`); начисление за подключение возникает только после подтверждения администратором.
+
+### 27.3. Начисления только по подтвержденным подключениям
+* `fn_connection_auto_accrual()` (триггер `trg_connection_auto_accrual`, теперь `AFTER INSERT OR UPDATE OF manager_id, status, confirmation_status`): выходит, если `confirmation_status <> 'confirmed'`; при переходе `pending → confirmed` создает ровно одно начисление `accrual_connection` в `employee_payouts` и строку в `connection_accruals` (защита от дублей сохранена).
+* `accrue_connection_bonuses_v2`, `accrue_selected_connections`, `run_maintenance_billing` фильтруют `c.confirmation_status = 'confirmed'`.
+
+### 27.4. `link_lead_to_seller` — единая сигнатура
+* Старые перегрузки (4 и 5 аргументов) переименованы в `link_lead_to_seller_legacy_4args` / `link_lead_to_seller_legacy_5args` и лишены прав вызова (`REVOKE ... FROM PUBLIC, anon, authenticated`); актуальная: `public.link_lead_to_seller(p_lead_id UUID, p_seller_phone VARCHAR, p_user_id UUID DEFAULT NULL, p_manager_id UUID DEFAULT NULL, p_assigned_by UUID DEFAULT NULL, p_confirmation_status TEXT DEFAULT 'confirmed')`.
+* Создает/обновляет подключение с `confirmation_status/confirmed_by/confirmed_at`; при `pending` отказывает, если у продавца уже другой куратор. Начисление делает триггер 035 (прямых вставок в `employee_payouts` нет). Возвращает `confirmation_status` в JSONB.
+* Права: только `service_role` (вызов из серверного кода после проверки роли).
+
+### 27.5. Telegram
+* `trg_telegram_on_connection` (`AFTER INSERT OR UPDATE OF manager_id, confirmation_status`): `pending` → всем активным администраторам с привязанным чатом «Подключение ожидает подтверждения»; `pending → confirmed` → консультанту «Подключение подтверждено»; `→ rejected` → консультанту «Подключение отклонено» с причиной; подтвержденные вставки/передача куратору — как в 036.

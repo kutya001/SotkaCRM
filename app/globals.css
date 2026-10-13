@@ -28,6 +28,71 @@
     overflow-x: hidden;
     max-width: 100vw;
   }
+
+  /* Постоянная оболочка (AppShell): ширины сайдбара и контента задаются атрибутами <html>,
+     которые инлайн-скрипт выставляет до первой отрисовки — без мерцания при переходах */
+  :root {
+    --sidebar-w: 16rem;   /* w-64 */
+    --shell-left: 18rem;  /* pl-72 */
+    --content-max: 1920px;
+  }
+
+  html[data-sidebar="collapsed"] {
+    --sidebar-w: 72px;
+    --shell-left: 6rem;   /* pl-24 */
+  }
+
+  html[data-layout="compact"] {
+    --content-max: 80rem; /* max-w-7xl */
+  }
+}
+
+@layer components {
+  .app-sidebar {
+    width: var(--sidebar-w);
+  }
+
+  @media (min-width: 1024px) {
+    .app-header {
+      left: var(--shell-left);
+    }
+
+    .app-main {
+      padding-left: var(--shell-left);
+    }
+  }
+
+  .app-content {
+    max-width: var(--content-max);
+  }
+
+  html[data-layout="compact"] .app-content {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  /* Содержимое сайдбара для раскрытого / свернутого состояния */
+  html[data-sidebar="collapsed"] .sidebar-expanded-only {
+    display: none !important;
+  }
+
+  html:not([data-sidebar="collapsed"]) .sidebar-collapsed-only {
+    display: none !important;
+  }
+
+  html[data-sidebar="collapsed"] .app-nav-link {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  /* Переходы включаются только после монтирования оболочки (первая отрисовка — без анимации) */
+  html[data-shell-ready] .app-sidebar,
+  html[data-shell-ready] .app-header,
+  html[data-shell-ready] .app-main,
+  html[data-shell-ready] .app-content {
+    transition: width 0.3s ease, left 0.3s ease, padding-left 0.3s ease, max-width 0.3s ease;
+  }
 }
 
 @layer utilities {

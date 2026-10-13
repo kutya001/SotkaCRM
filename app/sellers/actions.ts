@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireAdmin, requireAuth, requireRoles } from '@/lib/auth/check-role';
-import type { Database, UserRole, SellerModerationStatus } from '@/types/database.types';
+import type { Database, UserRole, SellerModerationStatus, ConnectionConfirmationStatus } from '@/types/database.types';
 import {
   authenticateSotkaAdmin,
   fetchSellersOverview,
@@ -11,6 +11,7 @@ import {
   logoutSotkaSession,
 } from '@/lib/services/sotka-api';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
+import { assignSellerToManager } from '@/lib/services/connections';
 import { applySellersOrder, findSellerByKey } from '@/lib/services/sellers';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import {
@@ -64,6 +65,13 @@ export interface SellerItem {
     color?: string;
   } | null;
   linked_lead?: LinkedLeadInfo | null;
+  /** Текущее подключение продавца (статус подтверждения администратором, миграция 037) */
+  connection?: {
+    connection_id: string;
+    manager_id: string;
+    confirmation_status: ConnectionConfirmationStatus;
+    rejection_reason?: string | null;
+  } | null;
 }
 
 export interface GetSellersParams {
@@ -234,7 +242,7 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
   );
   const sellerPhones = (sellersData || []).map((s) => s.seller_phone);
 
-  const [managersResult, leadsResult] = await Promise.all([
+  const [managersResult, leadsResult, connectionsResult] = await Promise.all([
     managerIds.length > 0
       ? supabase
           .from('users')
@@ -247,7 +255,29 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
           .select('lead_id, client_name, status, created_at, seller_phone')
           .in('seller_phone', sellerPhones)
       : Promise.resolve({ data: null }),
+    sellerPhones.length > 0
+      ? supabase
+          .from('connections')
+          .select('connection_id, seller_phone, manager_id, confirmation_status, rejection_reason, assigned_at')
+          .in('seller_phone', sellerPhones)
+          .order('assigned_at', { ascending: false })
+      : Promise.resolve({ data: null }),
   ]);
+
+  // Текущее подключение продавца — статус подтверждения администратором (037)
+  const connectionsMap = new Map<string, NonNullable<SellerItem['connection']>>();
+  if (connectionsResult.data) {
+    for (const c of connectionsResult.data) {
+      if (!connectionsMap.has(c.seller_phone)) {
+        connectionsMap.set(c.seller_phone, {
+          connection_id: c.connection_id,
+          manager_id: c.manager_id,
+          confirmation_status: c.confirmation_status,
+          rejection_reason: c.rejection_reason,
+        });
+      }
+    }
+  }
 
   const managersMap = new Map<string, { user_id: string; full_name: string; role: string; login: string; color?: string }>();
   if (managersResult.data) {
@@ -272,6 +302,7 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     ...seller,
     manager_user: seller.manager_id ? managersMap.get(seller.manager_id) || null : null,
     linked_lead: leadsMap.get(seller.seller_phone) || null,
+    connection: connectionsMap.get(seller.seller_phone) || null,
   }));
 
   return {
@@ -421,111 +452,23 @@ export async function assignSellerManager(
   managerId: string | null
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { profile } = await requireAdmin();
 
     if (!sellerPhone) {
       return { success: false, error: 'Не указан номер телефона продавца' };
     }
 
-    // 1. Обновляем куратора в таблице sellers
-    const { data: updatedSeller, error: updateSellerError } = await supabase
-      .from('sellers')
-      .update({ manager_id: managerId })
-      .eq('seller_phone', sellerPhone)
-      .select('seller_phone, seller_name, store, plan_id')
-      .single();
-
-    if (updateSellerError || !updatedSeller) {
-      return { success: false, error: updateSellerError?.message || 'Продавец не найден' };
-    }
-
-    // Если куратор сброшен (null)
-    if (!managerId) {
-      await supabase
-        .from('connections')
-        .delete()
-        .eq('seller_phone', sellerPhone);
-
-      revalidatePath('/sellers');
-      revalidatePath('/connections');
-      revalidatePath('/payouts');
-      revalidatePath('/analytics');
-      revalidatePath('/');
-      return { success: true };
-    }
-
-    // 2. Если куратор назначен, определяем тариф и ставку на дату
-    let planPrice = 2500;
-    const today = new Date().toISOString().substring(0, 10);
-    if (updatedSeller.plan_id) {
-      const { data: priceData } = await supabase.rpc('get_plan_price_on_date', {
-        p_plan_id: updatedSeller.plan_id,
-        p_date: today,
-      });
-      if (priceData && Number(priceData) > 0) {
-        planPrice = Number(priceData);
-      } else {
-        const { data: planData } = await supabase
-          .from('plans')
-          .select('price')
-          .eq('plan_id', updatedSeller.plan_id)
-          .maybeSingle();
-        if (planData) planPrice = Number(planData.price);
-      }
-    }
-
-    // Получаем ставку консультанта на текущий месяц из RPC get_employee_rate_on_month
-    const currentMonth = new Date().toISOString().substring(0, 7);
-    let connectionPercent = 30;
-    const { data: rpcRate } = await supabase.rpc('get_employee_rate_on_month', {
-      p_user_id: managerId,
-      p_month: currentMonth,
+    // Назначение администратором — подключение сразу подтверждено (миграция 037)
+    const res = await assignSellerToManager({
+      sellerPhone,
+      managerId,
+      actor: profile,
+      confirmation: 'confirmed',
     });
-
-    if (rpcRate && typeof rpcRate === 'object' && 'connection_percent' in (rpcRate as any)) {
-      connectionPercent = Number((rpcRate as any).connection_percent) || 30;
+    if (!res.success) {
+      return { success: false, error: res.error };
     }
 
-    const connectionFeeAmount = Math.round(((planPrice * connectionPercent) / 100) * 100) / 100;
-    const nowIso = new Date().toISOString();
-
-    // Проверяем, существует ли уже запись в connections для данного продавца
-    const { data: existingConnection } = await supabase
-      .from('connections')
-      .select('connection_id')
-      .eq('seller_phone', sellerPhone)
-      .maybeSingle();
-
-    if (existingConnection) {
-      await supabase
-        .from('connections')
-        .update({
-          manager_id: managerId,
-          connection_fee_percent: connectionPercent,
-          connection_fee_amount: connectionFeeAmount,
-          plan_price: planPrice,
-        })
-        .eq('connection_id', existingConnection.connection_id);
-    } else {
-      await supabase.from('connections').insert({
-        seller_phone: sellerPhone,
-        seller_name: updatedSeller.seller_name,
-        store: updatedSeller.store || 'Без названия',
-        manager_id: managerId,
-        assigned_by: profile.user_id,
-        assigned_at: nowIso,
-        status: 'подключен',
-        plan_id: updatedSeller.plan_id,
-        plan_price: planPrice,
-        connection_fee_percent: connectionPercent,
-        connection_fee_amount: connectionFeeAmount,
-        accrual_month: currentMonth,
-        client_status: 'новый',
-        maintenance_months_limit: 3,
-      });
-    }
-
-    scheduleTelegramDispatch();
     revalidatePath('/sellers');
     revalidatePath('/connections');
     revalidatePath('/payouts');
@@ -548,6 +491,7 @@ export async function getAvailableLeadsForSellerLinking(
     lead_id: string;
     client_name: string;
     phone: string;
+    country_code?: string | null;
     status: string;
     assigned_to: string | null;
     assigned_user?: {
@@ -568,6 +512,7 @@ export async function getAvailableLeadsForSellerLinking(
         lead_id,
         client_name,
         phone,
+        country_code,
         status,
         assigned_to,
         created_at,
@@ -613,7 +558,8 @@ export async function linkSellerToLeadAction(
   leadId: string
 ): Promise<{ success: boolean; error?: string; connectionFeeAmount?: number }> {
   try {
-    const ctx = await requireRoles(['admin', 'supervisor', 'consultant']);
+    // Руководитель — только просмотр (решение по матрице ролей)
+    const ctx = await requireRoles(['admin', 'consultant']);
     const { supabase } = ctx;
 
     if (!sellerPhone || !leadId) {

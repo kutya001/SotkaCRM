@@ -5,7 +5,15 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Maximize2, Minimize2, RefreshCw, Search, X } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { formatDateTime } from '@/lib/utils/format';
 import type { UserRole } from '@/types/database.types';
+
+/** Отметка синхронизации: ISO → «ДД.ММ.ГГГГ - чч:мм:сс»; старое значение «чч:мм» показывается как есть */
+function formatSyncLabel(value: string | null | undefined): string {
+  if (!value) return '';
+  const formatted = formatDateTime(value);
+  return formatted === '—' ? value : formatted;
+}
 
 interface TopHeaderProps {
   collapsed: boolean;
@@ -61,12 +69,12 @@ export function TopHeader({
 }: TopHeaderProps) {
   const pathname = usePathname();
   const currentTitle = MODULE_TITLES[pathname] || 'SotkaCRM';
+  const lastSyncLabel = formatSyncLabel(lastSyncedAt);
 
   return (
     <header
-      className={`hidden lg:flex items-center justify-between fixed top-4 right-4 z-40 h-16 rounded-2xl island-glass px-5 transition-all duration-300 gap-4 ${
-        collapsed ? 'left-24' : 'left-72'
-      }`}
+      data-collapsed={collapsed ? '' : undefined}
+      className="app-header hidden lg:flex items-center justify-between fixed top-4 left-72 right-4 z-40 h-16 rounded-2xl island-glass px-5 gap-4"
     >
       {/* 1. Левая часть: Название раздела */}
       <div className="flex items-center gap-3 flex-shrink-0">
@@ -119,7 +127,7 @@ export function TopHeader({
                 ? 'bg-blue-500/10 text-blue-600 border-blue-500/30 cursor-wait'
                 : 'bg-zinc-200/50 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50'
             }`}
-            title={lastSyncedAt ? `Последняя синхронизация: ${lastSyncedAt}` : 'Запустить синхронизацию с платформой Sotka'}
+            title={lastSyncedAt ? `Последняя синхронизация: ${lastSyncLabel}` : 'Запустить синхронизацию с платформой Sotka'}
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
@@ -128,7 +136,7 @@ export function TopHeader({
             <span className="hidden xl:inline">{isSyncing ? 'Синхронизация...' : 'Синхронизация API'}</span>
             {lastSyncedAt && !isSyncing && (
               <span suppressHydrationWarning className="text-[10px] text-zinc-400 font-mono hidden 2xl:inline">
-                ({lastSyncedAt})
+                ({lastSyncLabel})
               </span>
             )}
           </button>

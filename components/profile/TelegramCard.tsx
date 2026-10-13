@@ -4,6 +4,8 @@ import * as React from 'react';
 import { Send, Link2, Unlink, Copy, Check, Loader2, BellRing, ExternalLink, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useToast } from '@/components/ui/Toast';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { formatDateTime } from '@/lib/utils/format';
 
 type TelegramStatus = Awaited<ReturnType<typeof api.telegram.status>>;
 type PrefKey = keyof TelegramStatus['prefs'];
@@ -21,6 +23,7 @@ const POLL_MAX_MS = 5 * 60 * 1000;
 /** Подключение Telegram-уведомлений для текущего сотрудника */
 export function TelegramCard() {
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [status, setStatus] = React.useState<TelegramStatus | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isWorking, setIsWorking] = React.useState(false);
@@ -91,7 +94,14 @@ export function TelegramCard() {
   };
 
   const handleUnlink = async () => {
-    if (!window.confirm('Отключить Telegram-уведомления?')) return;
+    const ok = await confirm({
+      title: 'Отключить Telegram-уведомления?',
+      description: 'Уведомления о начислениях, подключениях и лидах перестанут приходить в Telegram. Подключить заново можно в любой момент.',
+      tone: 'warning',
+      icon: Unlink,
+      confirmLabel: 'Отключить',
+    });
+    if (!ok) return;
     setIsWorking(true);
     try {
       await api.telegram.unlink();
@@ -157,7 +167,7 @@ export function TelegramCard() {
                 ? 'Бот не настроен администратором'
                 : status.linked
                 ? `Подключено${status.username ? `: @${status.username}` : ''}${
-                    status.linked_at ? ` · с ${new Date(status.linked_at).toLocaleDateString('ru-RU')}` : ''
+                    status.linked_at ? ` · с ${formatDateTime(status.linked_at)}` : ''
                   }`
                 : 'Начисления, подключения и назначенные лиды — прямо в Telegram'}
             </p>
@@ -245,7 +255,7 @@ export function TelegramCard() {
             </button>
           </div>
           <p className="text-[10px] text-sky-700/80 dark:text-sky-300/70">
-            Код действует до {new Date(status.pending.expires_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.
+            Код действует до {formatDateTime(status.pending.expires_at)}.
           </p>
         </div>
       )}

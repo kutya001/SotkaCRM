@@ -20,7 +20,8 @@ export async function POST(
 async function handleUnlink(paramsPromise: Promise<{ id: string }>) {
   try {
     const { id } = await paramsPromise;
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    // Руководитель — только просмотр (решение по матрице ролей)
+    const { supabase } = await requireRoles(['admin']);
 
     // 1. Попытка вызова атомарной процедуры в СУБД (RPC доступна только service_role)
     const { data: rpcData, error: rpcErr } = await (createAdminClient().rpc as any)('unlink_lead_and_seller', {

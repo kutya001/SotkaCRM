@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api/client';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { formatMonth } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { useToast } from '@/components/ui/Toast';
 import {
   Calendar,
@@ -272,7 +274,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                       1. Начисления комиссий куратора
                     </h4>
                     <p className="text-[11px] text-zinc-400">
-                      Подключения и ежемесячное сопровождение за {data.month}
+                      Подключения и ежемесячное сопровождение за {formatMonth(data.month)}
                     </p>
                   </div>
                 </div>
@@ -306,7 +308,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                             <div className="text-[10px] text-zinc-400">{a.store}</div>
                           </td>
                           <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-                            +{a.seller_phone}
+                            {formatPhoneDisplay(a.seller_phone)}
                           </td>
                           <td className="py-2.5 px-3">
                             <span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
@@ -356,7 +358,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                       2. Удержания и штрафы
                     </h4>
                     <p className="text-[11px] text-zinc-400">
-                      Вычеты из баланса куратора за {data.month}
+                      Вычеты из баланса куратора за {formatMonth(data.month)}
                     </p>
                   </div>
                 </div>
@@ -384,7 +386,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                       {data.deductions.map((d: any) => (
                         <tr key={d.payout_id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30 transition-colors">
                           <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-                            <FormattedDate date={d.payout_date} type="date" />
+                            <FormattedDate date={d.payout_date} type="dateOnly" />
                           </td>
                           <td className="py-2.5 px-3 font-medium text-zinc-800 dark:text-zinc-200">
                             {d.description || 'Удержание'}
@@ -415,7 +417,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                       3. Выплаты (ЗП и авансы)
                     </h4>
                     <p className="text-[11px] text-zinc-400">
-                      Перечисления средств на счета куратора за {data.month}
+                      Перечисления средств на счета куратора за {formatMonth(data.month)}
                     </p>
                   </div>
                 </div>
@@ -464,7 +466,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                         return (
                           <tr key={p.payout_id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30 transition-colors">
                             <td className="py-2.5 px-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-                              <FormattedDate date={p.payout_date} type="date" />
+                              <FormattedDate date={p.payout_date} type="dateOnly" />
                             </td>
                             <td className="py-2.5 px-3">
                               <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold ${badgeColor}`}>

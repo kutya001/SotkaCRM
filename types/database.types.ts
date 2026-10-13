@@ -201,6 +201,12 @@ export type Database = {
           seller_phone: string
           status: string
           store: string
+          seller_id: string | null
+          confirmation_status: Database["public"]["Enums"]["connection_confirmation_status"]
+          confirmed_by: string | null
+          confirmed_at: string | null
+          rejection_reason: string | null
+          updated_at: string
         }
         Insert: {
           accrual_month: string
@@ -223,6 +229,12 @@ export type Database = {
           seller_phone: string
           status?: string
           store: string
+          seller_id?: string | null
+          confirmation_status?: Database["public"]["Enums"]["connection_confirmation_status"]
+          confirmed_by?: string | null
+          confirmed_at?: string | null
+          rejection_reason?: string | null
+          updated_at?: string
         }
         Update: {
           accrual_month?: string
@@ -245,6 +257,12 @@ export type Database = {
           seller_phone?: string
           status?: string
           store?: string
+          seller_id?: string | null
+          confirmation_status?: Database["public"]["Enums"]["connection_confirmation_status"]
+          confirmed_by?: string | null
+          confirmed_at?: string | null
+          rejection_reason?: string | null
+          updated_at?: string
         }
         Relationships: [
           {
@@ -488,6 +506,8 @@ export type Database = {
           seller_phone: string | null
           status: Database["public"]["Enums"]["lead_status"]
           updated_at: string
+          cancel_reason: string | null
+          cancelled_at: string | null
         }
         Insert: {
           assigned_to?: string | null
@@ -504,6 +524,8 @@ export type Database = {
           seller_phone?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           updated_at?: string
+          cancel_reason?: string | null
+          cancelled_at?: string | null
         }
         Update: {
           assigned_to?: string | null
@@ -520,6 +542,8 @@ export type Database = {
           seller_phone?: string | null
           status?: Database["public"]["Enums"]["lead_status"]
           updated_at?: string
+          cancel_reason?: string | null
+          cancelled_at?: string | null
         }
         Relationships: [
           {
@@ -1026,11 +1050,12 @@ export type Database = {
       get_synthetic_email: { Args: { p_login: string }; Returns: string }
       link_lead_to_seller: {
         Args: {
-          p_assigned_by?: string
+          p_assigned_by?: string | null
           p_lead_id: string
-          p_manager_id?: string
+          p_manager_id?: string | null
           p_seller_phone: string
-          p_user_id?: string
+          p_user_id?: string | null
+          p_confirmation_status?: "pending" | "confirmed"
         }
         Returns: Json
       }
@@ -1076,6 +1101,8 @@ export type Database = {
         | "готов"
         | "отменен"
       lead_status: "Открыт" | "Обработан" | "Назначен" | "Подписан" | "Отмена"
+      /** Подтверждение подключения администратором (миграция 037; VARCHAR с CHECK) */
+      connection_confirmation_status: "pending" | "confirmed" | "rejected"
       maintenance_status: "начислено" | "выплачено" | "отменено"
       payout_category_type:
         | "аванс"
@@ -1237,6 +1264,7 @@ export const Constants = {
 export type UserRole = Database['public']['Enums']['user_role'];
 export type LeadStatus = Database['public']['Enums']['lead_status'];
 export type ClientLifecycleStatus = Database['public']['Enums']['client_lifecycle_status'];
+export type ConnectionConfirmationStatus = Database['public']['Enums']['connection_confirmation_status'];
 export type MaintenanceStatus = Database['public']['Enums']['maintenance_status'];
 export type PayoutCategoryType = Database['public']['Enums']['payout_category_type'];
 export type SellerModerationStatus = Database['public']['Enums']['seller_moderation_status'];

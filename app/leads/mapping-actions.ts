@@ -23,6 +23,8 @@ export interface LinkLeadResult {
   success: boolean;
   connectionId?: string;
   connectionFeeAmount?: number;
+  /** pending — подключение ждет подтверждения администратором */
+  confirmationStatus?: 'pending' | 'confirmed';
   error?: string;
 }
 
@@ -160,8 +162,8 @@ export async function linkLeadToSeller(params: {
   try {
     const ctx = await requireAuth();
 
-    if (ctx.profile.role === 'smm') {
-      return { success: false, error: 'Роль SMM не имеет прав на связывание лида с продавцом' };
+    if (ctx.profile.role === 'smm' || ctx.profile.role === 'supervisor') {
+      return { success: false, error: 'Связывать лид с продавцом может администратор или консультант' };
     }
 
     const result = await linkLeadToSellerAtomic(ctx, params);
@@ -178,6 +180,7 @@ export async function linkLeadToSeller(params: {
       success: true,
       connectionId: result.connectionId,
       connectionFeeAmount: result.connectionFeeAmount,
+      confirmationStatus: result.confirmationStatus,
     };
   } catch (err: any) {
     return { success: false, error: err.message || 'Ошибка связывания лида с продавцом' };

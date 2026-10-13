@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { formatMonth } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { useToast } from '@/components/ui/Toast';
 import { api } from '@/lib/api/client';
 import {
@@ -20,7 +22,6 @@ import {
   Calendar,
   RotateCcw,
   Layers,
-  X,
   TrendingDown,
   TrendingUp,
   Receipt,
@@ -33,6 +34,10 @@ import {
   ExternalLink,
   Pencil,
 } from 'lucide-react';
+import { Modal } from '@/components/ui/Modal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Button } from '@/components/ui/Button';
+import { FormField, Input, Select, Textarea } from '@/components/ui/Field';
 import { useUser } from '@/components/auth/AuthProvider';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { PayrollSheetModal } from '@/components/payouts/PayrollSheetModal';
@@ -49,6 +54,9 @@ import {
 } from '@/lib/validations';
 import type { UserRole } from '@/types/database.types';
 
+const CREATE_FORM_ID = 'payout-create-form';
+const BULK_EDIT_FORM_ID = 'payout-bulk-edit-form';
+
 /** Поле массового изменения: применяется только если отмечено */
 function BulkField({
   label,
@@ -64,19 +72,22 @@ function BulkField({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <label className="flex items-center gap-2 font-semibold text-zinc-700 dark:text-zinc-300 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onToggle(e.target.checked)}
-          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500"
-        />
-        <span>{label}</span>
-      </label>
+    <FormField
+      hint={hint}
+      label={
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => onToggle(e.target.checked)}
+            className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 text-blue-600 focus:ring-blue-500"
+          />
+          <span>{label}</span>
+        </label>
+      }
+    >
       {children}
-      {hint && <p className="text-[10px] text-zinc-400">{hint}</p>}
-    </div>
+    </FormField>
   );
 }
 
@@ -566,7 +577,7 @@ export default function PayoutsPage() {
         filterable: true,
         renderCell: (row) => (
           <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-            <FormattedDate date={row.actual_date} type="date" />
+            <FormattedDate date={row.actual_date} type="dateOnly" />
           </span>
         ),
       },
@@ -579,7 +590,7 @@ export default function PayoutsPage() {
         filterable: true,
         renderCell: (row) => (
           <span className="px-2 py-0.5 rounded-md font-mono text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50">
-            {row.settlement_month}
+            {formatMonth(row.settlement_month)}
           </span>
         ),
       },
@@ -660,7 +671,7 @@ export default function PayoutsPage() {
                   className="font-mono text-[10px] text-zinc-400 hover:text-blue-500 transition-colors"
                   title="Перейти к продавцу"
                 >
-                  +{row.seller_phone}
+                  {formatPhoneDisplay(row.seller_phone)}
                 </Link>
               )}
             </div>
@@ -952,35 +963,44 @@ export default function PayoutsPage() {
 
         {/* Модальное окно просмотра деталей операции */}
         {selectedPayout && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                    <Receipt className="w-5 h-5" strokeWidth={2} />
+          <Modal
+            open
+            onClose={() => setSelectedPayout(null)}
+            title={selectedPayout.recipient?.full_name || 'Операция по ЗП'}
+            subtitle={`@${selectedPayout.recipient?.login || '—'} • #${selectedPayout.payout_id.slice(0, 8)}`}
+            icon={Receipt}
+            tone="success"
+            size="md"
+            footerClassName="justify-between"
+            footer={
+              <>
+                {isAdmin ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => openBulkEdit([selectedPayout.payout_id])}
+                      leftIcon={<Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                    >
+                      Изменить
+                    </Button>
+                    <Button
+                      variant="dangerSoft"
+                      onClick={() => setPayoutToDelete(selectedPayout)}
+                      leftIcon={<Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                    >
+                      Удалить
+                    </Button>
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      {selectedPayout.recipient?.full_name}
-                    </h3>
-                    <p className="text-xs text-zinc-400">
-                      @{selectedPayout.recipient?.login} • #{selectedPayout.payout_id.slice(0, 8)}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPayout(null)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
-                >
-                  <X className="w-4 h-4" strokeWidth={2} />
-                </button>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-2.5 text-xs">
+                ) : (
+                  <span />
+                )}
+                <Button variant="outline" onClick={() => setSelectedPayout(null)}>
+                  Закрыть
+                </Button>
+              </>
+            }
+          >
+            <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-2.5 text-xs">
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Вид операции:</span>
                   <span className="font-semibold text-zinc-900 dark:text-zinc-100">
@@ -1011,13 +1031,13 @@ export default function PayoutsPage() {
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Расчетный месяц:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    {selectedPayout.settlement_month}
+                    {formatMonth(selectedPayout.settlement_month)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-400">Дата операции:</span>
                   <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                    <FormattedDate date={selectedPayout.actual_date} type="date" />
+                    <FormattedDate date={selectedPayout.actual_date} type="dateOnly" />
                   </span>
                 </div>
                 {selectedPayout.connection_id && (
@@ -1042,7 +1062,7 @@ export default function PayoutsPage() {
                       title="Открыть карточку продавца"
                     >
                       <ExternalLink className="w-3 h-3" />
-                      <span>+{selectedPayout.seller_phone}</span>
+                      <span>{formatPhoneDisplay(selectedPayout.seller_phone)}</span>
                     </Link>
                   </div>
                 )}
@@ -1054,83 +1074,41 @@ export default function PayoutsPage() {
                     </p>
                   </div>
                 )}
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                {isAdmin ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openBulkEdit([selectedPayout.payout_id])}
-                      className="h-9 px-3.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Изменить</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPayoutToDelete(selectedPayout)}
-                      className="h-9 px-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Удалить</span>
-                    </button>
-                  </div>
-                ) : <div />}
-                <button
-                  type="button"
-                  onClick={() => setSelectedPayout(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                >
-                  Закрыть
-                </button>
-              </div>
             </div>
-          </div>
+          </Modal>
         )}
 
         {/* Модальное окно создания операции (Admin Only) */}
-        {isCreateOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <form
-              onSubmit={handleCreateSubmit}
-              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                    <Plus className="w-5 h-5" strokeWidth={2.5} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      Новая операция по ЗП
-                    </h3>
-                    <p className="text-xs text-zinc-400">
-                      Регистрация начисления, удержания или выплаты сотруднику
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
-                >
-                  <X className="w-4 h-4" strokeWidth={2} />
-                </button>
-              </div>
-
-              <div className="space-y-3 text-xs">
+        <Modal
+          open={isCreateOpen}
+          onClose={() => setIsCreateOpen(false)}
+          title="Новая операция по ЗП"
+          subtitle="Регистрация начисления, удержания или выплаты сотруднику"
+          icon={Plus}
+          tone="success"
+          size="lg"
+          busy={isSubmitting}
+          formId={CREATE_FORM_ID}
+          onSubmit={handleCreateSubmit}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isSubmitting}>
+                Отмена
+              </Button>
+              <Button type="submit" form={CREATE_FORM_ID} variant="success" loading={isSubmitting}>
+                {isSubmitting ? 'Проведение...' : 'Подтвердить операцию'}
+              </Button>
+            </>
+          }
+        >
+              <div className="space-y-4">
                 {/* Выбор сотрудника */}
-                <div className="space-y-1">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Сотрудник *
-                  </label>
-                  <select
+                <FormField label="Сотрудник" required htmlFor="payout-create-user">
+                  <Select
+                    id="payout-create-user"
                     value={formData.user_id}
                     onChange={(e) => setFormData((p) => ({ ...p, user_id: e.target.value }))}
                     required
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <option value="">— Выберите сотрудника —</option>
                     {employees.map((emp) => (
@@ -1138,8 +1116,8 @@ export default function PayoutsPage() {
                         {emp.full_name} ({emp.role} • @{emp.login})
                       </option>
                     ))}
-                  </select>
-                </div>
+                  </Select>
+                </FormField>
 
                 {/* Балансовая сводка выбранного сотрудника */}
                 {formData.user_id && (
@@ -1147,7 +1125,7 @@ export default function PayoutsPage() {
                     <div className="flex items-center justify-between text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                       <div className="flex items-center gap-1.5">
                         <FileSpreadsheet className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
-                        <span>Текущий расчетный лист ({formData.settlement_month})</span>
+                        <span>Текущий расчетный лист ({formatMonth(formData.settlement_month)})</span>
                       </div>
                       {isLoadingPreview && (
                         <span className="text-[11px] text-zinc-400 font-normal">Загрузка сальдо...</span>
@@ -1193,11 +1171,9 @@ export default function PayoutsPage() {
                 )}
 
                 {/* Вид операции */}
-                <div className="space-y-1">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Вид операции *
-                  </label>
-                  <select
+                <FormField label="Вид операции" required htmlFor="payout-create-type">
+                  <Select
+                    id="payout-create-type"
                     value={formData.operation_type}
                     onChange={(e) =>
                       setFormData((p) => ({
@@ -1205,7 +1181,6 @@ export default function PayoutsPage() {
                         operation_type: e.target.value as SalaryOperationType,
                       }))
                     }
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     <optgroup label="Начисление (+)">
                       <option value="salary_base">Оклад</option>
@@ -1219,296 +1194,211 @@ export default function PayoutsPage() {
                       <option value="payout">Выплата ЗП</option>
                       <option value="advance">Аванс</option>
                     </optgroup>
-                  </select>
-                </div>
+                  </Select>
+                </FormField>
 
                 <div className="grid grid-cols-2 gap-3">
                   {/* Сумма */}
-                  <div className="space-y-1">
-                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Сумма (сом) *
-                    </label>
-                    <input
+                  <FormField label="Сумма (сом)" required htmlFor="payout-create-amount">
+                    <Input
+                      id="payout-create-amount"
                       type="number"
                       step="0.01"
                       min="1"
                       required
                       value={formData.amount || ''}
-                      onChange={(e) =>
-                        setFormData((p) => ({ ...p, amount: parseFloat(e.target.value) || 0 }))
-                      }
+                      onChange={(e) => setFormData((p) => ({ ...p, amount: parseFloat(e.target.value) || 0 }))}
                       placeholder="5000"
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                      mono
                     />
-                  </div>
+                  </FormField>
 
                   {/* Расчетный месяц */}
-                  <div className="space-y-1">
-                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Расчетный месяц *
-                    </label>
+                  <FormField label="Расчетный месяц" required>
                     <MonthInput
                       required
                       value={formData.settlement_month}
                       onChange={(value) => setFormData((p) => ({ ...p, settlement_month: value }))}
                     />
-                  </div>
+                  </FormField>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   {/* Дата операции */}
-                  <div className="space-y-1">
-                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Дата операции *
-                    </label>
-                    <input
+                  <FormField label="Дата операции" required htmlFor="payout-create-date">
+                    <Input
+                      id="payout-create-date"
                       type="date"
                       required
                       value={formData.actual_date}
                       onChange={(e) => setFormData((p) => ({ ...p, actual_date: e.target.value }))}
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                      mono
                     />
-                  </div>
+                  </FormField>
 
                   {/* Кошелек (только если выплата или аванс) */}
-                  <div className="space-y-1">
-                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                      Кошелек {OPERATION_TYPES_BY_KIND.payout.includes(formData.operation_type) ? '*' : '(не требуется)'}
-                    </label>
-                    <select
+                  <FormField
+                    label="Кошелек"
+                    required={OPERATION_TYPES_BY_KIND.payout.includes(formData.operation_type)}
+                    hint={OPERATION_TYPES_BY_KIND.payout.includes(formData.operation_type) ? undefined : 'Не требуется для этого вида операции'}
+                    htmlFor="payout-create-method"
+                  >
+                    <Select
+                      id="payout-create-method"
                       value={formData.payment_method}
                       onChange={(e) => setFormData((p) => ({ ...p, payment_method: e.target.value }))}
                       disabled={!OPERATION_TYPES_BY_KIND.payout.includes(formData.operation_type)}
-                      className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
                     >
                       <option value="mbank">МБанк</option>
                       <option value="odengi">О!Деньги</option>
                       <option value="bakai">Бакай Банк</option>
                       <option value="abank">АБанк (Айыл Банк)</option>
                       <option value="cash">Наличка</option>
-                    </select>
-                  </div>
+                    </Select>
+                  </FormField>
                 </div>
 
                 {/* Примечание */}
-                <div className="space-y-1">
-                  <label className="font-semibold text-zinc-700 dark:text-zinc-300">
-                    Примечание
-                  </label>
-                  <textarea
+                <FormField label="Примечание" htmlFor="payout-create-note">
+                  <Textarea
+                    id="payout-create-note"
                     rows={2}
                     value={formData.note}
                     onChange={(e) => setFormData((p) => ({ ...p, note: e.target.value }))}
                     placeholder="Например: Премия за перевыполнение плана..."
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
-                </div>
+                </FormField>
               </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="h-9 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Проведение...' : 'Подтвердить операцию'}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
+        </Modal>
 
         {/* Массовое изменение операций (Admin Only) */}
-        {bulkEditIds && (
-          <div className="fixed inset-0 z-[9995] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-            <form
-              onSubmit={handleBulkEditSubmit}
-              className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
+        <Modal
+          open={bulkEditIds !== null}
+          onClose={() => setBulkEditIds(null)}
+          title={
+            bulkEditIds && bulkEditIds.length === 1
+              ? 'Изменение операции'
+              : `Массовое изменение: ${bulkEditIds?.length ?? 0} операций`
+          }
+          subtitle="Отметьте поля, которые нужно изменить"
+          icon={Pencil}
+          tone="info"
+          size="lg"
+          busy={isBulkSubmitting}
+          formId={BULK_EDIT_FORM_ID}
+          onSubmit={handleBulkEditSubmit}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setBulkEditIds(null)} disabled={isBulkSubmitting}>
+                Отмена
+              </Button>
+              <Button type="submit" form={BULK_EDIT_FORM_ID} variant="info" loading={isBulkSubmitting}>
+                {isBulkSubmitting ? 'Сохранение...' : 'Применить'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <BulkField
+              label="Расчетный месяц"
+              checked={bulkForm.changeMonth}
+              onToggle={(v) => setBulkForm((f) => ({ ...f, changeMonth: v }))}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                    <Pencil className="w-5 h-5" strokeWidth={2} />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      {bulkEditIds.length === 1 ? 'Изменение операции' : `Массовое изменение: ${bulkEditIds.length} операций`}
-                    </h3>
-                    <p className="text-xs text-zinc-400">Отметьте поля, которые нужно изменить</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setBulkEditIds(null)}
-                  className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
-                >
-                  <X className="w-4 h-4" strokeWidth={2} />
-                </button>
-              </div>
+              <MonthInput
+                disabled={!bulkForm.changeMonth}
+                value={bulkForm.settlement_month}
+                onChange={(value) => setBulkForm((f) => ({ ...f, settlement_month: value }))}
+              />
+            </BulkField>
 
-              <div className="space-y-3 text-xs">
-                <BulkField
-                  label="Расчетный месяц"
-                  checked={bulkForm.changeMonth}
-                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeMonth: v }))}
-                >
-                  <MonthInput
-                    disabled={!bulkForm.changeMonth}
-                    value={bulkForm.settlement_month}
-                    onChange={(value) => setBulkForm((f) => ({ ...f, settlement_month: value }))}
-                  />
-                </BulkField>
+            <BulkField
+              label="Дата операции"
+              checked={bulkForm.changeDate}
+              onToggle={(v) => setBulkForm((f) => ({ ...f, changeDate: v }))}
+            >
+              <Input
+                type="date"
+                mono
+                disabled={!bulkForm.changeDate}
+                value={bulkForm.actual_date}
+                onChange={(e) => setBulkForm((f) => ({ ...f, actual_date: e.target.value }))}
+              />
+            </BulkField>
 
-                <BulkField
-                  label="Дата операции"
-                  checked={bulkForm.changeDate}
-                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeDate: v }))}
-                >
-                  <input
-                    type="date"
-                    disabled={!bulkForm.changeDate}
-                    value={bulkForm.actual_date}
-                    onChange={(e) => setBulkForm((f) => ({ ...f, actual_date: e.target.value }))}
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 font-mono disabled:opacity-50"
-                  />
-                </BulkField>
+            <BulkField
+              label="Вид операции"
+              hint="Бонусы по подключениям и сопровождению меняются только в модуле «Подключения»"
+              checked={bulkForm.changeType}
+              onToggle={(v) => setBulkForm((f) => ({ ...f, changeType: v }))}
+            >
+              <Select
+                disabled={!bulkForm.changeType}
+                value={bulkForm.operation_type}
+                onChange={(e) => setBulkForm((f) => ({ ...f, operation_type: e.target.value as SalaryOperationType }))}
+              >
+                <optgroup label="Начисление (+)">
+                  <option value="salary_base">Оклад</option>
+                  <option value="bonus_other">Прочая надбавка / Премия</option>
+                </optgroup>
+                <optgroup label="Удержание (−)">
+                  <option value="deduction">Удержание</option>
+                  <option value="fine">Штраф</option>
+                </optgroup>
+                <optgroup label="Выплата (−)">
+                  <option value="payout">Выплата ЗП</option>
+                  <option value="advance">Аванс</option>
+                </optgroup>
+              </Select>
+            </BulkField>
 
-                <BulkField
-                  label="Вид операции"
-                  hint="Бонусы по подключениям и сопровождению меняются только в модуле «Подключения»"
-                  checked={bulkForm.changeType}
-                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeType: v }))}
-                >
-                  <select
-                    disabled={!bulkForm.changeType}
-                    value={bulkForm.operation_type}
-                    onChange={(e) => setBulkForm((f) => ({ ...f, operation_type: e.target.value as SalaryOperationType }))}
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 disabled:opacity-50"
-                  >
-                    <optgroup label="Начисление (+)">
-                      <option value="salary_base">Оклад</option>
-                      <option value="bonus_other">Прочая надбавка / Премия</option>
-                    </optgroup>
-                    <optgroup label="Удержание (−)">
-                      <option value="deduction">Удержание</option>
-                      <option value="fine">Штраф</option>
-                    </optgroup>
-                    <optgroup label="Выплата (−)">
-                      <option value="payout">Выплата ЗП</option>
-                      <option value="advance">Аванс</option>
-                    </optgroup>
-                  </select>
-                </BulkField>
+            <BulkField
+              label="Кошелек"
+              hint="Применяется только к выплатам и авансам"
+              checked={bulkForm.changeMethod}
+              onToggle={(v) => setBulkForm((f) => ({ ...f, changeMethod: v }))}
+            >
+              <Select
+                disabled={!bulkForm.changeMethod}
+                value={bulkForm.payment_method}
+                onChange={(e) => setBulkForm((f) => ({ ...f, payment_method: e.target.value }))}
+              >
+                <option value="mbank">МБанк</option>
+                <option value="odengi">О!Деньги</option>
+                <option value="bakai">Бакай Банк</option>
+                <option value="abank">АБанк (Айыл Банк)</option>
+                <option value="cash">Наличка</option>
+              </Select>
+            </BulkField>
 
-                <BulkField
-                  label="Кошелек"
-                  hint="Применяется только к выплатам и авансам"
-                  checked={bulkForm.changeMethod}
-                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeMethod: v }))}
-                >
-                  <select
-                    disabled={!bulkForm.changeMethod}
-                    value={bulkForm.payment_method}
-                    onChange={(e) => setBulkForm((f) => ({ ...f, payment_method: e.target.value }))}
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 disabled:opacity-50"
-                  >
-                    <option value="mbank">МБанк</option>
-                    <option value="odengi">О!Деньги</option>
-                    <option value="bakai">Бакай Банк</option>
-                    <option value="abank">АБанк (Айыл Банк)</option>
-                    <option value="cash">Наличка</option>
-                  </select>
-                </BulkField>
-
-                <BulkField
-                  label="Примечание"
-                  checked={bulkForm.changeNote}
-                  onToggle={(v) => setBulkForm((f) => ({ ...f, changeNote: v }))}
-                >
-                  <textarea
-                    rows={2}
-                    disabled={!bulkForm.changeNote}
-                    value={bulkForm.note}
-                    onChange={(e) => setBulkForm((f) => ({ ...f, note: e.target.value }))}
-                    placeholder="Пусто — очистить примечание"
-                    className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 disabled:opacity-50"
-                  />
-                </BulkField>
-              </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setBulkEditIds(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isBulkSubmitting}
-                  className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isBulkSubmitting ? 'Сохранение...' : 'Применить'}
-                </button>
-              </div>
-            </form>
+            <BulkField
+              label="Примечание"
+              checked={bulkForm.changeNote}
+              onToggle={(v) => setBulkForm((f) => ({ ...f, changeNote: v }))}
+            >
+              <Textarea
+                rows={2}
+                disabled={!bulkForm.changeNote}
+                value={bulkForm.note}
+                onChange={(e) => setBulkForm((f) => ({ ...f, note: e.target.value }))}
+                placeholder="Пусто — очистить примечание"
+              />
+            </BulkField>
           </div>
-        )}
+        </Modal>
 
         {/* Подтверждение массового удаления (Admin Only) */}
-        {bulkDeleteIds && (
-          <div className="fixed inset-0 z-[9995] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Удалить {bulkDeleteIds.length} операций по ЗП?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Итоги и остатки сотрудников будут пересчитаны
-                  </p>
-                </div>
-              </div>
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-                Записи будут безвозвратно удалены. Начисления подключений, закрытые этими выплатами, снова станут неоплаченными.
-              </div>
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isBulkSubmitting}
-                  onClick={() => setBulkDeleteIds(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isBulkSubmitting}
-                  onClick={handleBulkDelete}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span>{isBulkSubmitting ? 'Удаление...' : 'Удалить'}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={bulkDeleteIds !== null}
+          onClose={() => !isBulkSubmitting && setBulkDeleteIds(null)}
+          onConfirm={handleBulkDelete}
+          title={`Удалить ${bulkDeleteIds?.length ?? 0} операций по ЗП?`}
+          subtitle="Итоги и остатки сотрудников будут пересчитаны"
+          tone="danger"
+          icon={Trash2}
+          confirmLabel="Удалить"
+          level={2}
+          description="Записи будут безвозвратно удалены. Начисления подключений, закрытые этими выплатами, снова станут неоплаченными."
+        />
 
         {/* Модальное окно «Расчётный лист» */}
         <PayrollSheetModal
@@ -1521,60 +1411,22 @@ export default function PayoutsPage() {
         />
 
         {/* Диалог подтверждения удаления операции (Admin Only) */}
-        {payoutToDelete && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
-            <div
-              className="w-full max-w-md p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-                  <Trash2 className="w-5 h-5" strokeWidth={1.75} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                    Удалить операцию по ЗП?
-                  </h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {payoutToDelete.recipient?.full_name} • {payoutToDelete.operation_sign}{Number(payoutToDelete.amount).toLocaleString('ru-RU')} сом
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
-                <p className="text-[11px] leading-relaxed">
-                  Запись будет безвозвратно удалена из регистра операций по ЗП. Если операция была привязана к начислениям подключений, они будут разблокированы.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isDeletingPayout}
-                  onClick={() => setPayoutToDelete(null)}
-                  className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeletingPayout}
-                  onClick={() => handleDeletePayout(payoutToDelete)}
-                  className="h-9 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {isDeletingPayout ? (
-                    <span>Удаление...</span>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                      <span>Удалить операцию</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={payoutToDelete !== null}
+          onClose={() => !isDeletingPayout && setPayoutToDelete(null)}
+          onConfirm={() => (payoutToDelete ? handleDeletePayout(payoutToDelete) : undefined)}
+          title="Удалить операцию по ЗП?"
+          subtitle={
+            payoutToDelete
+              ? `${payoutToDelete.recipient?.full_name || ''} • ${payoutToDelete.operation_sign}${Number(payoutToDelete.amount).toLocaleString('ru-RU')} сом`
+              : undefined
+          }
+          tone="danger"
+          icon={Trash2}
+          confirmLabel="Удалить операцию"
+          level={2}
+          description="Запись будет безвозвратно удалена из регистра операций по ЗП. Если операция была привязана к начислениям подключений, они будут разблокированы."
+        />
       </div>
     </AppLayout>
   );

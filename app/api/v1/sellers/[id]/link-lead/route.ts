@@ -10,7 +10,8 @@ export async function POST(
   try {
     const { id } = await params;
     const sellerPhone = decodeURIComponent(id);
-    const ctx = await requireRoles(['admin', 'supervisor', 'consultant']);
+    // Руководитель — только просмотр (решение по матрице ролей)
+    const ctx = await requireRoles(['admin', 'consultant']);
     const { supabase } = ctx;
     const body = await req.json();
 
@@ -51,6 +52,7 @@ export async function POST(
       lead_id: leadId,
       connection_id: res.connectionId,
       connection_fee_amount: res.connectionFeeAmount,
+      confirmation_status: res.confirmationStatus,
     });
   } catch (err) {
     return handleApiError(err);

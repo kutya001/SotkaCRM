@@ -4,7 +4,6 @@ import * as React from 'react';
 import Link from 'next/link';
 import {
   FileSpreadsheet,
-  X,
   RotateCcw,
   TrendingUp,
   TrendingDown,
@@ -15,7 +14,11 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { api } from '@/lib/api/client';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 import { SALARY_OPERATION_TYPE_LABELS, type SalaryOperationType } from '@/lib/validations';
+import { formatDateOnly, formatMonth } from '@/lib/utils/format';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import type { UserRole } from '@/types/database.types';
 
 interface PayrollSheetModalProps {
@@ -207,10 +210,10 @@ export function PayrollSheetModal({
                   className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40 transition-colors"
                 >
                   <td className="py-2 px-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
-                    {dateVal}
+                    {dateVal === '—' ? '—' : formatDateOnly(dateVal)}
                   </td>
                   <td className="py-2 px-3 font-mono text-[11px] text-zinc-500">
-                    {monthVal}
+                    {formatMonth(monthVal)}
                   </td>
                   <td className="py-2 px-3">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -236,7 +239,7 @@ export function PayrollSheetModal({
                     )}
                     {row.seller_phone && !row.connection_id && (
                       <span className="font-mono text-[10px] text-zinc-400 block">
-                        +{row.seller_phone}
+                        {formatPhoneDisplay(row.seller_phone)}
                       </span>
                     )}
                   </td>
@@ -262,38 +265,17 @@ export function PayrollSheetModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto"
-      onClick={onClose}
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Расчётный лист"
+      subtitle="Сводный финансовый баланс и операции за расчетный период"
+      icon={FileSpreadsheet}
+      tone="success"
+      size="2xl"
+      footer={<Button onClick={onClose}>Закрыть</Button>}
     >
-      <div
-        className="w-full max-w-2xl my-auto p-5 sm:p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Шапка модального окна */}
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-400 flex-shrink-0">
-              <FileSpreadsheet className="w-5 h-5" strokeWidth={1.75} />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                Расчётный лист
-              </h3>
-              <p className="text-xs text-zinc-400">
-                Сводный финансовый баланс и операции за расчетный период
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors cursor-pointer"
-          >
-            <X className="w-4 h-4" strokeWidth={2} />
-          </button>
-        </div>
-
+      <div className="space-y-4">
         {/* Селекторы: Сотрудник и Месяц */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           {/* Выбор сотрудника */}
@@ -336,11 +318,11 @@ export function PayrollSheetModal({
                 {months.length > 0 ? (
                   months.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {formatMonth(m)}
                     </option>
                   ))
                 ) : (
-                  <option value={currentMonthStr}>{currentMonthStr}</option>
+                  <option value={currentMonthStr}>{formatMonth(currentMonthStr)}</option>
                 )}
               </select>
               <Calendar className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
@@ -495,18 +477,7 @@ export function PayrollSheetModal({
             </div>
           </div>
         ) : null}
-
-        {/* Кнопка закрытия */}
-        <div className="flex justify-end pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 px-5 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold shadow-sm transition-all cursor-pointer"
-          >
-            Закрыть
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth/check-role';
 import { LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { DEFAULT_COUNTRY_CODE, digitsOnly, normalizeNational } from '@/lib/utils/phone';
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,6 +33,8 @@ export async function GET(req: NextRequest) {
           assigned_to,
           seller_phone,
           linked_at,
+          cancel_reason,
+          cancelled_at,
           created_at,
           updated_at,
           assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
@@ -90,8 +93,8 @@ export async function POST(req: NextRequest) {
   try {
     const { supabase, profile } = await requireAuth();
 
-    if (profile.role === 'consultant') {
-      return apiError('Консультанты не имеют прав на создание лидов', 'FORBIDDEN', 403);
+    if (profile.role !== 'admin' && profile.role !== 'smm') {
+      return apiError('Добавлять лиды могут администратор и SMM-специалист', 'FORBIDDEN', 403);
     }
 
     const body = await req.json();
@@ -124,15 +127,9 @@ export async function POST(req: NextRequest) {
     }
 
     const valid = parsed.data;
-    const cleanPhone = valid.phone.replace(/\D/g, '');
-    if (!cleanPhone || cleanPhone.length < 6) {
-      return apiError('Укажите корректный номер телефона (минимум 6 цифр)', 'INVALID_PHONE', 422);
-    }
-
-    const phoneWithoutCode =
-      cleanPhone.startsWith('996') && cleanPhone.length > 9
-        ? cleanPhone.substring(3)
-        : cleanPhone;
+    // Национальный номер без кода страны (длина проверена схемой по коду страны)
+    const countryCode = digitsOnly(valid.country_code) || DEFAULT_COUNTRY_CODE;
+    const phoneWithoutCode = normalizeNational(valid.phone, countryCode);
 
     let finalAssignedTo = valid.assigned_to;
     if (profile.role === 'smm') {
@@ -144,7 +141,7 @@ export async function POST(req: NextRequest) {
       .insert({
         client_name: valid.client_name.trim(),
         phone: phoneWithoutCode,
-        country_code: valid.country_code || '996',
+        country_code: countryCode,
         status: 'Открыт',
         instagram: valid.instagram || null,
         comment: valid.comment || null,

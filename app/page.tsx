@@ -27,6 +27,7 @@ import { useUser } from '@/components/auth/AuthProvider';
 import { api } from '@/lib/api/client';
 import { getUserProfileAndKpi, type UserProfileData } from '@/app/profile/actions';
 import { FormattedDate } from '@/components/ui/FormattedDate';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import type { UserRole } from '@/types/database.types';
 
 export default function DashboardPage() {
@@ -51,7 +52,7 @@ export default function DashboardPage() {
   });
 
   const [recentLeads, setRecentLeads] = React.useState<
-    { lead_id: string; client_name: string; phone: string; status: string; created_at: string }[]
+    { lead_id: string; client_name: string; phone: string; country_code?: string | null; status: string; created_at: string }[]
   >([]);
 
   React.useEffect(() => {
@@ -399,7 +400,7 @@ export default function DashboardPage() {
                         {l.client_name}
                       </span>
                       <span className="text-[11px] text-zinc-400 font-mono">
-                        +{l.phone}
+                        {formatPhoneDisplay(l.phone, l.country_code)}
                       </span>
                     </div>
                   </div>
@@ -409,7 +410,7 @@ export default function DashboardPage() {
                       {l.status}
                     </span>
                     <span className="text-[11px] text-zinc-400 font-mono hidden sm:inline">
-                      <FormattedDate date={l.created_at} type="date" />
+                      <FormattedDate date={l.created_at} type="dateTime" />
                     </span>
                   </div>
                 </div>

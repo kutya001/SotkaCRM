@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/LocationPickerMap';
 import { mapLinkForCoordinates } from '@/components/employees/EmployeeProfileFields';
 import { ROLE_LABELS } from '@/lib/constants/roles';
+import { formatPhoneDisplay, telHref } from '@/lib/utils/phone';
 
 export interface EmployeeMapPoint {
   user_id: string;
@@ -79,7 +80,7 @@ export function EmployeesMap({ employees, heightClassName = 'h-[70vh]' }: Employ
                 {e.address && <div style={{ marginTop: 4 }}>{e.address}</div>}
                 {e.phone && (
                   <div style={{ marginTop: 4 }}>
-                    <a href={`tel:${e.phone.replace(/\D/g, '')}`}>{e.phone}</a>
+                    <a href={telHref(e.phone)}>{formatPhoneDisplay(e.phone)}</a>
                   </div>
                 )}
                 <div style={{ marginTop: 6 }}>

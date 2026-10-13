@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { fullPhoneSchema } from '@/lib/validations';
 import type { Database, UserRole, LeadStatus } from '@/types/database.types';
 
 export interface UserProfileData {
@@ -406,7 +407,12 @@ export async function updateProfileData(input: {
   }
 
   if (input.phone !== undefined) {
-    updates.phone = input.phone?.trim() || null;
+    // Полный номер с кодом страны СНГ, хранится цифрами («996555123456»)
+    const parsedPhone = fullPhoneSchema.safeParse(input.phone);
+    if (!parsedPhone.success) {
+      return { success: false, error: parsedPhone.error.issues[0]?.message || 'Некорректный номер телефона' };
+    }
+    updates.phone = parsedPhone.data ?? null;
   }
 
   if (input.color !== undefined) {

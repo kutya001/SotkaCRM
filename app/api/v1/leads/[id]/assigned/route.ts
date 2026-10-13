@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { normalizeNullableUuid } from '@/lib/validations';
+import { implicitStatusForAssignment } from '@/lib/leads/status-rules';
+import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function PATCH(
   req: NextRequest,
@@ -11,7 +14,7 @@ export async function PATCH(
     const { supabase } = await requireAdmin();
     const body = await req.json();
 
-    const assignedTo = body.assigned_to || null;
+    const assignedTo = normalizeNullableUuid(body.assigned_to);
 
     const { data: currentLead } = await supabase
       .from('leads')
@@ -23,17 +26,15 @@ export async function PATCH(
       return apiError('Лид не найден', 'NOT_FOUND', 404);
     }
 
-    const updates: Record<string, any> = {
+    const updates: Record<string, unknown> = {
       assigned_to: assignedTo,
       updated_at: new Date().toISOString(),
     };
 
-    if (assignedTo && (currentLead.status === 'Открыт' || currentLead.status === 'Обработан')) {
-      updates.status = 'Назначен';
-    }
-
-    if (!assignedTo && currentLead.status === 'Назначен') {
-      updates.status = 'Обработан';
+    // Назначение из «Открыт»/«Обработан» → «Назначен»; снятие из «Назначен» → «Обработан»
+    const implicitStatus = implicitStatusForAssignment(currentLead.status, assignedTo);
+    if (implicitStatus) {
+      updates.status = implicitStatus;
     }
 
     const { data: updated, error } = await supabase
@@ -52,6 +53,7 @@ export async function PATCH(
 
     if (error) throw error;
 
+    scheduleTelegramDispatch();
     return apiSuccess(updated);
   } catch (err) {
     return handleApiError(err);

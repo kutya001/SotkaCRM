@@ -2,22 +2,19 @@
 
 import * as React from 'react';
 import {
-  X,
   Search,
   Store,
-  Phone,
-  Wallet,
   Coins,
-  Percent,
   Check,
   AlertCircle,
   Loader2,
-  Building2,
   ArrowRight,
-  ShieldCheck,
   UserCheck,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { api } from '@/lib/api/client';
 import {
   getAvailableSellersForMapping,
@@ -103,13 +100,12 @@ export function LeadSellerMappingModal({
     return () => clearTimeout(timer);
   }, [searchQuery, isOpen, loadAvailableSellers]);
 
-  if (!isOpen || !lead) return null;
-
   // Расчет комиссии
   const planPrice = selectedSeller?.plan_price || 2500;
   const commissionAmount = Math.round(((planPrice * consultantRate) / 100) * 100) / 100;
 
   const handleConfirmLink = async () => {
+    if (!lead) return;
     if (!selectedSeller) {
       showToast('Выберите продавца для связывания', 'error');
       return;
@@ -117,17 +113,25 @@ export function LeadSellerMappingModal({
 
     setIsSubmitting(true);
     try {
-      await api.leads.linkSeller(
+      const res = await api.leads.linkSeller(
         lead.lead_id,
         selectedSeller.seller_phone,
         selectedManagerId || lead.assigned_to || currentUserId
       );
 
       if ('vibrate' in navigator) navigator.vibrate([40, 60, 40]);
-      showToast(
-        `Сделка закрыта! Лид привязан к продавцу +${selectedSeller.seller_phone}. Начислено ${commissionAmount.toLocaleString('ru-RU')} KGS.`,
-        'success'
-      );
+      const phoneLabel = formatPhoneDisplay(selectedSeller.seller_phone);
+      if (res?.confirmation_status === 'pending') {
+        showToast(
+          `Лид привязан к продавцу ${phoneLabel}. Бонус ${commissionAmount.toLocaleString('ru-RU')} KGS будет начислен после подтверждения администратором.`,
+          'info'
+        );
+      } else {
+        showToast(
+          `Сделка закрыта! Лид привязан к продавцу ${phoneLabel}. Начислено ${commissionAmount.toLocaleString('ru-RU')} KGS.`,
+          'success'
+        );
+      }
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -137,34 +141,36 @@ export function LeadSellerMappingModal({
     }
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-xl p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-5"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Шапка модального окна */}
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-              <Store className="w-5 h-5 text-blue-600 dark:text-blue-400" strokeWidth={1.75} />
-              <span>Связать лид с продавцом платформы</span>
-            </h2>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Лид: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{lead.client_name}</span> (+{lead.phone})
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-xl text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <X className="w-4 h-4" strokeWidth={1.75} />
-          </button>
-        </div>
+  if (!lead) return null;
 
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Связать лид с продавцом платформы"
+      subtitle={`Лид: ${lead.client_name} (${formatPhoneDisplay(lead.phone, lead.country_code)})`}
+      icon={Store}
+      tone="info"
+      size="xl"
+      level={2}
+      busy={isSubmitting}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+            Отмена
+          </Button>
+          <Button
+            onClick={handleConfirmLink}
+            disabled={!selectedSeller}
+            loading={isSubmitting}
+            rightIcon={<ArrowRight className="w-4 h-4" strokeWidth={1.75} />}
+          >
+            Подтвердить связывание
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
         {/* Выбор ответственного консультанта (для Администратора) */}
         {currentUserRole === 'admin' && consultants.length > 0 && (
           <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/80 dark:border-zinc-700/60 space-y-1.5">
@@ -251,7 +257,7 @@ export function LeadSellerMappingModal({
                         {seller.store || 'Магазин без названия'}
                       </div>
                       <div className="text-[11px] text-zinc-500 truncate">
-                        {seller.seller_name} • <span className="font-mono">+{seller.seller_phone}</span>
+                        {seller.seller_name} • <span className="font-mono">{formatPhoneDisplay(seller.seller_phone)}</span>
                       </div>
                     </div>
                   </div>
@@ -311,36 +317,7 @@ export function LeadSellerMappingModal({
           </div>
         )}
 
-        {/* Кнопки действий */}
-        <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-zinc-200/50 dark:border-zinc-800/50">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="h-10 px-4 rounded-xl border border-zinc-200 dark:border-zinc-700/60 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-colors"
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmLink}
-            disabled={!selectedSeller || isSubmitting}
-            className="h-10 px-5 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed island-interactive"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} />
-                <span>Фиксация сделки...</span>
-              </>
-            ) : (
-              <>
-                <span>Подтвердить связывание</span>
-                <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-              </>
-            )}
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

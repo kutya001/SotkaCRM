@@ -75,12 +75,19 @@ export async function GET(req: NextRequest) {
     );
     const sellerPhones = (sellersData || []).map((s) => s.seller_phone);
 
-    const [managersRes, leadsRes] = await Promise.all([
+    const [managersRes, leadsRes, connectionsRes] = await Promise.all([
       managerIds.length > 0
         ? supabase.from('users').select('user_id, full_name, role, login, color').in('user_id', managerIds)
         : Promise.resolve({ data: null }),
       sellerPhones.length > 0
         ? supabase.from('leads').select('lead_id, client_name, status, created_at, seller_phone').in('seller_phone', sellerPhones)
+        : Promise.resolve({ data: null }),
+      sellerPhones.length > 0
+        ? supabase
+            .from('connections')
+            .select('connection_id, seller_phone, manager_id, confirmation_status, rejection_reason, assigned_at')
+            .in('seller_phone', sellerPhones)
+            .order('assigned_at', { ascending: false })
         : Promise.resolve({ data: null }),
     ]);
 
@@ -96,10 +103,26 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Текущее подключение продавца (самое свежее) — статус подтверждения администратором
+    const connectionsMap = new Map<string, { connection_id: string; manager_id: string; confirmation_status: string; rejection_reason: string | null }>();
+    if (connectionsRes.data) {
+      for (const c of connectionsRes.data as any[]) {
+        if (!connectionsMap.has(c.seller_phone)) {
+          connectionsMap.set(c.seller_phone, {
+            connection_id: c.connection_id,
+            manager_id: c.manager_id,
+            confirmation_status: c.confirmation_status,
+            rejection_reason: c.rejection_reason,
+          });
+        }
+      }
+    }
+
     const enriched = (sellersData || []).map((seller) => ({
       ...seller,
       manager_user: seller.manager_id ? managersMap.get(seller.manager_id) || null : null,
       linked_lead: leadsMap.get(seller.seller_phone) || null,
+      connection: connectionsMap.get(seller.seller_phone) || null,
     }));
 
     return apiSuccess({

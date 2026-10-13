@@ -1,11 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { X, Link2, Search, UserCheck, Clock, Loader2, Store, Phone, Check } from 'lucide-react';
+import { Link2, Search, UserCheck, Loader2, Store, Phone, Check } from 'lucide-react';
 import { getAvailableLeadsForSellerLinking, type SellerItem } from '@/app/sellers/actions';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api/client';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 
 interface LinkSellerLeadModalProps {
   isOpen: boolean;
@@ -18,6 +21,7 @@ interface LeadOption {
   lead_id: string;
   client_name: string;
   phone: string;
+  country_code?: string | null;
   status: string;
   assigned_to: string | null;
   assigned_user?: {
@@ -66,8 +70,6 @@ export function LinkSellerLeadModal({
     }
   }, [isOpen, seller, filterOnlySigned, fetchLeads]);
 
-  if (!isOpen || !seller) return null;
-
   const filteredLeads = leads.filter(
     (l) =>
       l.client_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -77,6 +79,7 @@ export function LinkSellerLeadModal({
   const selectedLead = leads.find((l) => l.lead_id === selectedLeadId);
 
   const handleLink = async () => {
+    if (!seller) return;
     if (!selectedLeadId) {
       showToast('Выберите лид из списка', 'error');
       return;
@@ -85,10 +88,17 @@ export function LinkSellerLeadModal({
     setIsSubmitting(true);
     try {
       const res = await api.sellers.linkLead(seller.seller_phone, selectedLeadId);
-      showToast(
-        `Продавец успешно связан с лидом! Начислено вознаграждение: +${res.connection_fee_amount || 0} сом`,
-        'success'
-      );
+      if (res.confirmation_status === 'pending') {
+        showToast(
+          `Продавец связан с лидом. Бонус +${res.connection_fee_amount || 0} сом будет начислен после подтверждения администратором`,
+          'info'
+        );
+      } else {
+        showToast(
+          `Продавец успешно связан с лидом! Начислено вознаграждение: +${res.connection_fee_amount || 0} сом`,
+          'success'
+        );
+      }
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -98,35 +108,36 @@ export function LinkSellerLeadModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-      <div
-        className="w-full max-w-lg p-6 rounded-3xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Шапка модального окна */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">
-              <Link2 className="w-5 h-5" strokeWidth={2} />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                Связать продавца с лидом
-              </h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                Автоматическое назначение куратора и расчет выплаты
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-500 transition-colors"
-          >
-            <X className="w-4 h-4" strokeWidth={2} />
-          </button>
-        </div>
+  if (!seller) return null;
 
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Связать продавца с лидом"
+      subtitle="Назначение куратора и расчет выплаты (подтверждает администратор)"
+      icon={Link2}
+      tone="info"
+      size="lg"
+      busy={isSubmitting}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
+            Отмена
+          </Button>
+          <Button
+            variant="info"
+            disabled={!selectedLeadId}
+            loading={isSubmitting}
+            onClick={handleLink}
+            leftIcon={<UserCheck className="w-3.5 h-3.5" />}
+          >
+            Связать с продавцом
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
         {/* Карточка продавца */}
         <div className="p-3.5 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/60 dark:border-zinc-700/60 flex items-center justify-between text-xs">
           <div className="space-y-0.5 min-w-0">
@@ -136,7 +147,7 @@ export function LinkSellerLeadModal({
             </div>
             <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 font-mono">
               <Phone className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-              <span>+{seller.seller_phone}</span>
+              <span>{formatPhoneDisplay(seller.seller_phone)}</span>
             </div>
           </div>
           <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 whitespace-nowrap">
@@ -226,7 +237,7 @@ export function LinkSellerLeadModal({
                       </span>
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
-                      <span>+{lead.phone}</span>
+                      <span>{formatPhoneDisplay(lead.phone, lead.country_code)}</span>
                       <span>•</span>
                       {lead.assigned_user ? (
                         <EmployeeBadge
@@ -266,35 +277,7 @@ export function LinkSellerLeadModal({
           </div>
         )}
 
-        {/* Кнопки действий */}
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-9 px-4 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            disabled={!selectedLeadId || isSubmitting}
-            onClick={handleLink}
-            className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Привязка...</span>
-              </>
-            ) : (
-              <>
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>Связать с продавцом</span>
-              </>
-            )}
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

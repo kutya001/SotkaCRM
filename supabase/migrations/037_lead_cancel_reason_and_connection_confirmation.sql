@@ -809,20 +809,23 @@ $function$;
 -- ------------------------------------------------------------------------------
 -- 5. Привязка лида к продавцу: одна реализация, статус подтверждения как параметр.
 --    Начисление за подключение создает триггер 035 (при confirmed) — без прямых вставок.
---    Старые перегрузки (4 и 5 аргументов) удаляются: вместе с новой функцией (у которой
---    есть значения по умолчанию) вызов с 5 аргументами был бы неоднозначным.
+--    Старые перегрузки (4 и 5 аргументов) выводятся из набора перегрузок переименованием
+--    в link_lead_to_seller_legacy_<N>args и лишаются прав вызова: вместе с новой функцией
+--    (у которой есть значения по умолчанию) вызов с 5 аргументами был бы неоднозначным.
 -- ------------------------------------------------------------------------------
 DO $$
 DECLARE
   r RECORD;
 BEGIN
   FOR r IN
-    SELECT p.oid::regprocedure AS signature
+    SELECT p.oid, p.oid::regprocedure::text AS signature, p.pronargs
     FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = 'link_lead_to_seller' AND p.pronargs <> 6
   LOOP
-    EXECUTE 'DROP FUNCTION ' || r.signature;
+    EXECUTE 'ALTER FUNCTION ' || r.signature || ' RENAME TO '
+      || quote_ident('link_lead_to_seller_legacy_' || r.pronargs || 'args');
+    EXECUTE 'REVOKE ALL ON FUNCTION ' || r.oid::regprocedure::text || ' FROM PUBLIC, anon, authenticated';
   END LOOP;
 END $$;
 

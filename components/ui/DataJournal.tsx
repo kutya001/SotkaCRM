@@ -1350,10 +1350,12 @@ export function DataJournal<T extends Record<string, any>>({
     [onRowClick]
   );
 
-  const onStatusChangeStable = React.useCallback(
+  const onStatusChangeCallback = React.useCallback(
     (row: T, newStatus: string) => onStatusChange?.(row, newStatus),
     [onStatusChange]
   );
+  // Без обработчика на странице статус показывается бейджем, а не выпадающим списком
+  const onStatusChangeStable = onStatusChange ? onStatusChangeCallback : undefined;
 
   const onAssignedChangeStable = React.useCallback(
     (row: T, newAssigned: string | null) => {

@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useActionState } from 'react';
 import { login, type AuthState } from '@/app/auth/actions';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { PasswordResetPanel } from '@/components/auth/PasswordResetPanel';
 import { Layers, Lock, User, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
 
 const initialState: AuthState = {
@@ -12,6 +13,8 @@ const initialState: AuthState = {
 
 export default function LoginPage() {
   const [state, formAction, isPending] = useActionState(login, initialState);
+  const [isReset, setIsReset] = React.useState(false);
+  const [typedLogin, setTypedLogin] = React.useState('');
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden bg-zinc-100 dark:bg-zinc-950">
@@ -38,6 +41,10 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {isReset ? (
+          <PasswordResetPanel initialLogin={typedLogin} onBack={() => setIsReset(false)} />
+        ) : (
+        <>
         {state?.error && (
           <div className="mb-6 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2.5">
             <AlertCircle className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
@@ -65,6 +72,7 @@ export default function LoginPage() {
                 required
                 autoComplete="username"
                 placeholder="admin, consultant1, smm_operator"
+                onChange={(e) => setTypedLogin(e.target.value)}
                 className="w-full h-11 pl-10 pr-4 text-sm bg-white/60 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700/60 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 transition-all"
               />
             </div>
@@ -113,7 +121,19 @@ export default function LoginPage() {
               )}
             </button>
           </div>
+
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setIsReset(true)}
+              className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 underline-offset-4 hover:underline"
+            >
+              Забыли пароль? Восстановить через Telegram
+            </button>
+          </div>
         </form>
+        </>
+        )}
 
         <div className="mt-8 pt-6 border-t border-zinc-200/50 dark:border-zinc-800/50 text-center">
           <p className="text-[11px] text-zinc-400">

@@ -49,6 +49,7 @@ const KIND_OPTIONS: StatusOption[] = [
   { value: 'connections', label: 'Подключения', colorClass: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30', dotColor: 'bg-blue-500' },
   { value: 'payroll', label: 'Операции по ЗП', colorClass: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30', dotColor: 'bg-emerald-500' },
   { value: 'leads', label: 'Лиды', colorClass: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30', dotColor: 'bg-purple-500' },
+  { value: 'tasks', label: 'Задачи', colorClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30', dotColor: 'bg-amber-500' },
   { value: 'broadcast', label: 'Рассылка', colorClass: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30', dotColor: 'bg-sky-500' },
   { value: 'system', label: 'Системное', colorClass: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-300 border-zinc-500/30', dotColor: 'bg-zinc-400' },
 ];
@@ -57,6 +58,7 @@ const PREF_LABELS: Record<PrefKey, string> = {
   payroll: 'ЗП',
   connections: 'Подключения',
   leads: 'Лиды',
+  tasks: 'Задачи',
   broadcast: 'Рассылка',
 };
 

@@ -942,7 +942,7 @@ export const api = {
         linked: boolean;
         username: string | null;
         linked_at: string | null;
-        prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean };
+        prefs: { payroll: boolean; connections: boolean; leads: boolean; tasks: boolean; broadcast: boolean };
         pending: { code: string; deep_link: string | null; expires_at: string } | null;
       }>('/api/v1/telegram', { method: 'GET', bypassCache: true }),
     createLink: () =>
@@ -955,8 +955,8 @@ export const api = {
         webhook_reason: string | null;
       }>('/api/v1/telegram/link', { method: 'POST' }),
     unlink: () => request<{ success: boolean }>('/api/v1/telegram/link', { method: 'DELETE' }),
-    updatePrefs: (prefs: Partial<{ payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean }>) =>
-      request<{ prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean } }>(
+    updatePrefs: (prefs: Partial<{ payroll: boolean; connections: boolean; leads: boolean; tasks: boolean; broadcast: boolean }>) =>
+      request<{ prefs: { payroll: boolean; connections: boolean; leads: boolean; tasks: boolean; broadcast: boolean } }>(
         '/api/v1/telegram',
         { method: 'PATCH', body: JSON.stringify({ prefs }) }
       ),
@@ -994,7 +994,7 @@ export const api = {
           linked: boolean;
           username: string | null;
           linked_at: string | null;
-          prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean };
+          prefs: { payroll: boolean; connections: boolean; leads: boolean; tasks: boolean; broadcast: boolean };
           sent_count: number;
           last_sent_at: string | null;
         }[];
@@ -1032,9 +1032,9 @@ export const api = {
       request<{ success: boolean; was_linked: boolean }>(`/api/v1/telegram/admin/users/${userId}/link`, { method: 'DELETE' }),
     adminUpdateUserPrefs: (
       userId: string,
-      prefs: Partial<{ payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean }>
+      prefs: Partial<{ payroll: boolean; connections: boolean; leads: boolean; tasks: boolean; broadcast: boolean }>
     ) =>
-      request<{ prefs: { payroll: boolean; connections: boolean; leads: boolean; broadcast: boolean } }>(
+      request<{ prefs: { payroll: boolean; connections: boolean; leads: boolean; tasks: boolean; broadcast: boolean } }>(
         `/api/v1/telegram/admin/users/${userId}/link`,
         { method: 'PATCH', body: JSON.stringify({ prefs }) }
       ),
@@ -1044,4 +1044,105 @@ export const api = {
         { method: 'POST' }
       ),
   },
+
+  // Задачи сотрудников
+  tasks: {
+    getAll: (params?: { status?: string; assigned_to?: string }) =>
+      request<{ items: TaskItem[]; total: number }>(`/api/v1/tasks${buildQuery(params)}`, { method: 'GET', bypassCache: true }),
+    create: (data: TaskInput) => {
+      invalidateCache('/api/v1/tasks');
+      return request<TaskItem>('/api/v1/tasks', { method: 'POST', body: JSON.stringify(data) });
+    },
+    update: (id: string, data: Partial<TaskInput> & { status?: string; result_note?: string | null }) => {
+      invalidateCache('/api/v1/tasks');
+      return request<TaskItem>(`/api/v1/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    },
+    delete: (id: string) => {
+      invalidateCache('/api/v1/tasks');
+      return request<{ success: boolean }>(`/api/v1/tasks/${id}`, { method: 'DELETE' });
+    },
+  },
+
+  // Планы по подключениям
+  goals: {
+    getAll: (params?: { period_kind?: string; user_id?: string }) =>
+      request<{ items: PlanItem[]; total: number; employees: PlanEmployee[]; today: string }>(
+        `/api/v1/goals${buildQuery(params)}`,
+        { method: 'GET', bypassCache: true }
+      ),
+    create: (data: {
+      scope: 'personal' | 'team';
+      user_id?: string | null;
+      period_kind: string;
+      period_date: string;
+      target_count: number;
+      note?: string | null;
+    }) => request<PlanItem & { replaced: boolean }>('/api/v1/goals', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: { target_count?: number; note?: string | null }) =>
+      request<PlanItem>(`/api/v1/goals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ success: boolean }>(`/api/v1/goals/${id}`, { method: 'DELETE' }),
+  },
 };
+
+export interface TaskUserRef {
+  user_id: string;
+  full_name: string;
+  login: string;
+  role: string;
+  color: string | null;
+}
+
+export interface TaskItem {
+  task_id: string;
+  title: string;
+  description: string | null;
+  status: 'Открыт' | 'Назначен' | 'Выполнен' | 'Отложен' | 'Отмена';
+  priority: 'low' | 'normal' | 'high';
+  assigned_to: string | null;
+  created_by: string;
+  due_date: string | null;
+  completed_at: string | null;
+  result_note: string | null;
+  created_at: string;
+  updated_at: string;
+  assigned_user: TaskUserRef | null;
+  creator: TaskUserRef | null;
+  is_overdue: boolean;
+}
+
+export interface TaskInput {
+  title: string;
+  description?: string | null;
+  assigned_to?: string | null;
+  due_date?: string | null;
+  priority?: 'low' | 'normal' | 'high';
+}
+
+export interface PlanEmployee {
+  user_id: string;
+  full_name: string;
+  login: string;
+  role: string;
+  color: string | null;
+  is_active: boolean;
+}
+
+export interface PlanItem {
+  plan_id: string;
+  scope: 'personal' | 'team';
+  user_id: string | null;
+  period_kind: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'half_year' | 'yearly';
+  period_start: string;
+  period_end: string;
+  target_count: number;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  user: PlanEmployee | null;
+  actual_count: number;
+  percent: number;
+  remaining: number;
+  progress_status: 'done' | 'active' | 'overdue' | 'upcoming';
+  elapsed_share: number;
+}

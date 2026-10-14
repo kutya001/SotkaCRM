@@ -129,9 +129,6 @@ export default function DashboardPage() {
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
               Здравствуйте, {userName}!
             </h1>
-            <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 max-w-xl">
-              Единый командный центр SotkaCRM: оперативный учет входящего потока заявок, сопровождение продавцов платформы и прозрачные финансовые расчеты.
-            </p>
           </div>
 
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-between md:justify-end">

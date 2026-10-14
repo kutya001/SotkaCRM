@@ -260,6 +260,34 @@ export default function ConnectionsPage() {
   const closeBulkAccrueModal = () =>
     setBulkAccrueModal({ isOpen: false, mode: 'maintenance_only', month: currentMonthISO() });
 
+  // Массовое удаление подключений (connections.delete): с подтверждением, начисления удаляются
+  const handleBulkDeleteSelected = async (clearSelection: () => void) => {
+    if (selectedConnectionIds.length === 0) return;
+    const ok = await confirm({
+      title: 'Удалить выбранные подключения?',
+      subtitle: `Выбрано подключений: ${selectedConnectionIds.length}`,
+      description:
+        'У продавцов будет снят консультант, начисления за подключение и сопровождение по этим подключениям удалятся из журнала ЗП. Действие необратимо.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.connections.batch({ action: 'delete_selected', connection_ids: selectedConnectionIds });
+      showToast(res.message || `Удалено подключений: ${res.deleted_count ?? selectedConnectionIds.length}`, 'success');
+      if (res.skipped?.length) showToast(res.skipped.join('; '), 'info');
+      if (selectedConnection && selectedConnectionIds.includes(selectedConnection.connection_id)) setSelectedConnection(null);
+      clearSelection();
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось удалить подключения', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
   const handleBulkConfirmSelected = async (clearSelection: () => void) => {
     if (selectedConnectionIds.length === 0) return;
     const ok = await confirm({
@@ -1272,6 +1300,19 @@ export default function ConnectionsPage() {
                 <Coins className="w-3.5 h-3.5" />
                 <span>Начислить ({ids.length})</span>
               </button>
+
+              {canDelete && (
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() => handleBulkDeleteSelected(clearSelection)}
+                  className="h-8 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Удалить выбранные подключения вместе с начислениями"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Удалить ({ids.length})</span>
+                </button>
+              )}
             </div>
           )}
         />

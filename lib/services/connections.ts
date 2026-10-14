@@ -351,6 +351,41 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
   return { success: true, connectionId, participantsChanged, managerChanged, confirmed, maintenanceUpdated, skipped };
 }
 
+/**
+ * Удаление подключения (одиночное и массовое): консультант у продавца снимается, назначения
+ * сопровождения, участники и начисления по подключению удаляются из обоих регистров.
+ * Область видимости и право connections.delete проверяет вызывающий маршрут.
+ */
+export async function deleteConnection(connectionId: string): Promise<ServiceResult<{ deletedId: string; sellerPhone: string | null }>> {
+  const admin = createAdminClient();
+  const { data: conn, error: getErr } = await admin
+    .from('connections')
+    .select('connection_id, seller_phone, manager_id')
+    .eq('connection_id', connectionId)
+    .maybeSingle();
+  if (getErr) return fail(getErr.message, 'DB_ERROR', 500);
+  if (!conn) return fail('Подключение не найдено', 'NOT_FOUND', 404);
+
+  if (conn.seller_phone) {
+    const { error: sellerErr } = await admin.from('sellers').update({ manager_id: null }).eq('seller_phone', conn.seller_phone);
+    if (sellerErr) console.error('[deleteConnection] Ошибка сброса консультанта продавца:', sellerErr);
+  }
+
+  await admin.from('connection_maintenance_assignments').delete().eq('connection_id', connectionId);
+  await admin.from('connection_participants').delete().eq('connection_id', connectionId);
+  await admin.from('connection_accruals').delete().eq('connection_id', connectionId);
+  await admin.from('employee_payouts').delete().eq('connection_id', connectionId).eq('operation_sign', '+');
+  try {
+    await admin.from('client_maintenance').delete().eq('connection_id', connectionId);
+  } catch {}
+
+  const { error: delErr } = await admin.from('connections').delete().eq('connection_id', connectionId);
+  if (delErr) return fail(delErr.message, 'DB_ERROR', 500);
+
+  scheduleTelegramDispatch();
+  return { success: true, deletedId: connectionId, sellerPhone: conn.seller_phone ?? null };
+}
+
 interface AssignParams {
   sellerPhone: string;
   managerId: string | null;

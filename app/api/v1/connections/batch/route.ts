@@ -4,12 +4,13 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
-import { assignConnectionStaff, connectionOwnScopeFilter, setConnectionConfirmation } from '@/lib/services/connections';
+import { assignConnectionStaff, connectionOwnScopeFilter, deleteConnection, setConnectionConfirmation } from '@/lib/services/connections';
 
 /** Право на конкретное массовое действие (в дополнение к «connections.bulk») */
 const BATCH_ACTION_PERMISSION: Record<string, string> = {
   confirm_selected: 'connections.confirm',
   assign_staff: 'connections.edit',
+  delete_selected: 'connections.delete',
   update_maintenance_months: 'connections.edit',
   accrue_selected: 'connections.accrue',
 };
@@ -117,6 +118,25 @@ export async function POST(req: NextRequest) {
         message: `Сотрудники назначены: ${updated}${confirmed > 0 ? `, подтверждено подключений: ${confirmed}` : ''}${
           skipped.length > 0 ? `, пропущено: ${skipped.length}` : ''
         }`,
+      });
+    }
+
+    // 0.2. Действие: массовое удаление подключений (консультант у продавца снимается, начисления удаляются)
+    if (action === 'delete_selected') {
+      let deleted = 0;
+      const skipped: string[] = [];
+      for (const connectionId of connection_ids as string[]) {
+        const res = await deleteConnection(connectionId);
+        if (res.success) deleted++;
+        else skipped.push(`${connectionId}: ${res.error}`);
+      }
+      return apiSuccess({
+        success: true,
+        action,
+        deleted_count: deleted,
+        skipped_count: skipped.length,
+        skipped: skipped.length > 0 ? skipped : undefined,
+        message: `Удалено подключений: ${deleted}${skipped.length > 0 ? `, пропущено: ${skipped.length}` : ''}`,
       });
     }
 

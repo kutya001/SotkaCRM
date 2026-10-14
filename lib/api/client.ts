@@ -647,7 +647,7 @@ export const api = {
       return res;
     },
     batch: async (data: {
-      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected' | 'assign_staff';
+      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected' | 'assign_staff' | 'delete_selected';
       connection_ids: string[];
       payload?: {
         months_total?: number;

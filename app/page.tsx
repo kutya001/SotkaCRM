@@ -95,11 +95,14 @@ export default function DashboardPage() {
   }, []);
 
   const roleLabel =
-    userRole === 'admin'
+    user.roleName ||
+    (userRole === 'admin'
       ? 'Администратор системы'
+      : userRole === 'supervisor'
+      ? 'Учредитель'
       : userRole === 'consultant'
       ? 'Продавец-консультант'
-      : 'SMM-специалист';
+      : 'SMM-специалист');
 
   return (
     <AppLayout
@@ -162,7 +165,7 @@ export default function DashboardPage() {
           </Link>
 
           <Link
-            href={userRole === 'smm' ? '/leads' : '/sellers'}
+            href={user.can('sellers.menu') ? '/sellers' : '/leads'}
             className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1 hover:border-purple-500/40 transition-all cursor-pointer block"
           >
             <div className="flex items-center justify-between">
@@ -182,7 +185,7 @@ export default function DashboardPage() {
           </Link>
 
           <Link
-            href={userRole === 'smm' ? '/leads' : '/connections'}
+            href={user.can('connections.menu') ? '/connections' : '/leads'}
             className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1 hover:border-emerald-500/40 transition-all cursor-pointer block"
           >
             <div className="flex items-center justify-between">
@@ -202,7 +205,7 @@ export default function DashboardPage() {
           </Link>
 
           <Link
-            href={userRole === 'smm' ? '/profile' : '/payouts'}
+            href={user.can('payouts.menu') ? '/payouts' : '/profile'}
             className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1 hover:border-amber-500/40 transition-all cursor-pointer block"
           >
             <div className="flex items-center justify-between">

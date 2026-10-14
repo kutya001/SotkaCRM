@@ -81,7 +81,7 @@ export default function TelegramPage() {
   const { showToast } = useToast();
   const confirm = useConfirm();
   const user = useUser();
-  const isAdmin = user.role === 'admin';
+  const isAdmin = user.can('telegram.manage') || user.can('telegram.broadcast');
 
   const [overview, setOverview] = React.useState<Overview | null>(null);
   const [items, setItems] = React.useState<OutboxItem[]>([]);

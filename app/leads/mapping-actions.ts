@@ -1,8 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { requireAuth } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 
 export interface AvailableSellerItem {
@@ -29,24 +29,24 @@ export interface LinkLeadResult {
 }
 
 /**
- * Получение списка свободных продавцов для ручного связывания с лидом
+ * Получение списка свободных продавцов для ручного связывания с лидом (право «leads.link_seller»)
  * ИНВАРИАНТ: Продавцы, чей телефон уже привязан к какому-либо лиду, исключаются из выборки
  */
 export async function getAvailableSellersForMapping(
   searchQuery = ''
 ): Promise<{ sellers: AvailableSellerItem[]; error?: string }> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  const ctx = await requireAuth().catch(() => null);
+  if (!ctx) {
     return { sellers: [], error: 'Пользователь не аутентифицирован' };
   }
+  if (!ctx.can('leads.link_seller')) {
+    return { sellers: [], error: 'Недостаточно прав для связывания лида с продавцом' };
+  }
+
+  const admin = createAdminClient();
 
   // 1. Извлекаем все телефоны продавцов, которые уже привязаны к лидам
-  const { data: linkedLeads, error: leadsError } = await supabase
+  const { data: linkedLeads, error: leadsError } = await admin
     .from('leads')
     .select('seller_phone')
     .not('seller_phone', 'is', null);
@@ -61,7 +61,7 @@ export async function getAvailableSellersForMapping(
     .filter((phone): phone is string => Boolean(phone));
 
   // 2. Запрашиваем каталог планов для обогащения ценами
-  const { data: plansData } = await supabase
+  const { data: plansData } = await admin
     .from('plans')
     .select('plan_id, plan_name, price');
 
@@ -74,7 +74,12 @@ export async function getAvailableSellersForMapping(
   }
 
   // 3. Выборка продавцов
-  let query = supabase.from('sellers').select('*');
+  let query = admin.from('sellers').select('*');
+
+  // Область данных модуля продавцов: без «sellers.view_all» — свои и свободные одобренные
+  if (!ctx.canViewAll('sellers')) {
+    query = query.or(`manager_id.eq.${ctx.profile.user_id},and(manager_id.is.null,moderation.eq.approved)`);
+  }
 
   // Исключаем занятых продавцов
   if (linkedPhones.length > 0) {
@@ -128,12 +133,19 @@ export async function getAvailableSellersForMapping(
 }
 
 /**
- * Получение персональной ставки комиссии консультанта за подключение
+ * Получение персональной ставки комиссии консультанта за подключение.
+ * Своя ставка доступна всегда; чужая — при праве «rates.manage» или «payouts.view_all».
  */
 export async function getConsultantRate(consultantId: string): Promise<number> {
-  const supabase = await createClient();
+  const ctx = await requireAuth().catch(() => null);
+  if (!ctx) return 30.0;
 
-  const { data } = await supabase
+  const isSelf = consultantId === ctx.profile.user_id;
+  if (!isSelf && !ctx.can('rates.manage') && !ctx.canViewAll('payouts')) {
+    return 30.0; // Дефолтная ставка 30%
+  }
+
+  const { data } = await createAdminClient()
     .from('employee_rates')
     .select('connection_percent')
     .eq('user_id', consultantId)
@@ -162,11 +174,11 @@ export async function linkLeadToSeller(params: {
   try {
     const ctx = await requireAuth();
 
-    if (ctx.profile.role === 'smm' || ctx.profile.role === 'supervisor') {
-      return { success: false, error: 'Связывать лид с продавцом может администратор или консультант' };
+    if (!ctx.can('leads.link_seller')) {
+      return { success: false, error: 'Недостаточно прав для связывания лида с продавцом' };
     }
 
-    const result = await linkLeadToSellerAtomic(ctx, params);
+    const result = await linkLeadToSellerAtomic(ctx, { ...params, via: 'lead' });
     if (!result.success) {
       return { success: false, error: result.error };
     }

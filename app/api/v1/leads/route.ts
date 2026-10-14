@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
@@ -7,7 +8,7 @@ import { DEFAULT_COUNTRY_CODE, digitsOnly, normalizeNational } from '@/lib/utils
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
+    const { profile, canViewAll } = await requirePermission('leads.menu');
     const { searchParams } = new URL(req.url);
 
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
     const sortBy = searchParams.get('sort_by') || 'created_at';
     const sortOrder = searchParams.get('sort_order') === 'asc' ? 'asc' : 'desc';
 
-    let query = supabase
+    let query = createAdminClient()
       .from('leads')
       .select(
         `
@@ -43,9 +44,9 @@ export async function GET(req: NextRequest) {
         { count: 'exact' }
       );
 
-    // Ролевая изоляция: консультант видит только свои назначенные лиды, SMM видит все лиды для сквозной аналитики
-    if (profile.role === 'consultant') {
-      query = query.eq('assigned_to', profile.user_id);
+    // Область данных: без «leads.view_all» — только свои лиды (назначенные мне или созданные мной)
+    if (!canViewAll('leads')) {
+      query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
     }
 
     // Фильтр по статусу воронки
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
       query = query.eq('status', status as any);
     }
 
-    // Фильтр по куратору
+    // Фильтр по консультанту
     if (assignedTo && assignedTo !== 'all') {
       if (assignedTo === 'unassigned') {
         query = query.is('assigned_to', null);
@@ -91,11 +92,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
-
-    if (profile.role !== 'admin' && profile.role !== 'smm') {
-      return apiError('Добавлять лиды могут администратор и SMM-специалист', 'FORBIDDEN', 403);
-    }
+    const { profile, can } = await requirePermission('leads.create');
 
     const body = await req.json();
 
@@ -131,12 +128,14 @@ export async function POST(req: NextRequest) {
     const countryCode = digitsOnly(valid.country_code) || DEFAULT_COUNTRY_CODE;
     const phoneWithoutCode = normalizeNational(valid.phone, countryCode);
 
-    let finalAssignedTo = valid.assigned_to;
-    if (profile.role === 'smm') {
+    // Без права «leads.assign» ответственного выбрать нельзя: лид остается без консультанта,
+    // кроме случая, когда сотрудник назначает лид на самого себя
+    let finalAssignedTo = valid.assigned_to || null;
+    if (!can('leads.assign') && finalAssignedTo !== profile.user_id) {
       finalAssignedTo = null;
     }
 
-    const { data: newLead, error } = await supabase
+    const { data: newLead, error } = await createAdminClient()
       .from('leads')
       .insert({
         client_name: valid.client_name.trim(),
@@ -146,7 +145,7 @@ export async function POST(req: NextRequest) {
         instagram: valid.instagram || null,
         comment: valid.comment || null,
         created_by: profile.user_id,
-        assigned_to: finalAssignedTo || null,
+        assigned_to: finalAssignedTo,
       })
       .select(
         `

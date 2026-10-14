@@ -19,6 +19,7 @@ import {
   canAssignTask,
   canEditTaskFields,
   canManageTasks,
+  canDeleteTask,
   isOpenTaskStatus,
   type TaskPriority,
   type TaskStatus,
@@ -77,7 +78,9 @@ export default function TasksPage() {
   const user = useUser();
   const role = user.role;
   const userId = user.profile?.user_id || '';
-  const isManager = canManageTasks(role);
+  const actor = React.useMemo(() => ({ userId, permissions: user.permissions }), [userId, user.permissions]);
+  const isManager = canManageTasks(actor);
+  const canCreateTask = user.can('tasks.create');
   const today = todayISODate();
 
   const [tasks, setTasks] = React.useState<TaskItem[]>([]);
@@ -110,8 +113,9 @@ export default function TasksPage() {
   }, [fetchData]);
 
   // Сотрудники для назначения: руководство — все активные (из модуля планов), остальные — только себя
+  const canAssignOthers = canAssignTask(actor);
   React.useEffect(() => {
-    if (!isManager) {
+    if (!canAssignOthers) {
       if (user.profile) {
         setEmployees([{ user_id: user.profile.user_id, full_name: user.userName, login: user.userLogin, role, color: (user.profile as any).color ?? null }]);
       }
@@ -121,10 +125,11 @@ export default function TasksPage() {
       .getAll()
       .then((res) => setEmployees(res.employees.map((e) => ({ user_id: e.user_id, full_name: e.full_name, login: e.login, role: e.role, color: e.color }))))
       .catch(() => undefined);
-  }, [isManager, role, user.profile, user.userName, user.userLogin]);
+  }, [canAssignOthers, role, user.profile, user.userName, user.userLogin]);
+
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM, assigned_to: isManager ? '' : userId });
+    setForm({ ...EMPTY_FORM, assigned_to: canAssignOthers ? '' : userId });
     setEditor({ open: true, task: null });
   };
 
@@ -192,11 +197,11 @@ export default function TasksPage() {
 
   const getStatusOptions = React.useCallback(
     (task: TaskItem) => {
-      const allowed = allowedTaskTransitions(role, task, userId);
+      const allowed = allowedTaskTransitions(actor, task);
       if (allowed.length === 0) return null;
       return STATUS_OPTIONS.filter((o) => o.value === task.status || allowed.includes(o.value as TaskStatus));
     },
-    [role, userId]
+    [actor]
   );
 
   const handleDelete = async () => {
@@ -349,8 +354,8 @@ export default function TasksPage() {
     [today]
   );
 
-  const canEditCurrent = (task: TaskItem) => canEditTaskFields(role, task, userId);
-  const canDeleteCurrent = (task: TaskItem) => role === 'admin' || task.created_by === userId;
+  const canEditCurrent = (task: TaskItem) => canEditTaskFields(actor, task);
+  const canDeleteCurrent = (task: TaskItem) => canDeleteTask(actor, task);
 
   return (
     <AppLayout
@@ -507,7 +512,7 @@ export default function TasksPage() {
 
               {/* Быстрая смена статуса */}
               {(() => {
-                const allowed = allowedTaskTransitions(role, viewTask, userId);
+                const allowed = allowedTaskTransitions(actor, viewTask);
                 if (allowed.length === 0) return null;
                 return (
                   <FormField label="Перевести в статус">
@@ -564,13 +569,13 @@ export default function TasksPage() {
               <FormField
                 label="Ответственный"
                 htmlFor="task-assignee"
-                hint={isManager ? 'Смена ответственного отправит уведомление' : 'Задачу другим сотрудникам ставит администратор или руководитель'}
+                hint={canAssignTask(actor) ? 'Смена ответственного отправит уведомление' : 'Назначать задачи другим может сотрудник с правом назначения'}
               >
                 <Select
                   id="task-assignee"
                   value={form.assigned_to}
                   onChange={(e) => setForm((f) => ({ ...f, assigned_to: e.target.value }))}
-                  disabled={!canAssignTask(role) && Boolean(editor.task)}
+                  disabled={!canAssignTask(actor)}
                   size="lg"
                 >
                   <option value="">— Не назначен —</option>

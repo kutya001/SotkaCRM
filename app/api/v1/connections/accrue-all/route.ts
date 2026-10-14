@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
@@ -8,7 +8,7 @@ import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/pa
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('connections.accrue');
 
     let targetMonth = new Date().toISOString().slice(0, 7);
     // Бонус за подключение начисляется автоматически (триггер 035): процедура по умолчанию — сопровождение
@@ -41,8 +41,10 @@ export async function POST(req: NextRequest) {
     }
 
     let resultData: any = null;
-    // RPC начислений доступны только service_role (миграция 029), права admin проверены выше
+    // RPC начислений доступны только service_role (миграция 029), право «connections.accrue» проверено выше;
+    // нативный движок тоже пишет сервисным клиентом (RLS разрешает запись начислений только администратору)
     const adminSupabase = createAdminClient();
+    const supabase = adminSupabase;
 
     // 1. Попытка вызвать хранимую процедуру accrue_connection_bonuses_v2
     try {
@@ -73,7 +75,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Если RPC недоступна или вернула ошибку, выполняем надежную нативную обработку в TypeScript
     if (!resultData) {
-      // Получаем список активных подключений с назначенным куратором
+      // Получаем список активных подключений с назначенным консультантом
       const { data: conns, error: connErr } = await supabase
         .from('connections')
         .select(`

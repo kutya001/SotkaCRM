@@ -15,6 +15,7 @@ import {
   allowedLeadTransitions,
   canChangeLeadStatus,
   canEditLeadFields,
+  canEditLeadComment,
   isCancelStatus,
 } from '@/lib/leads/status-rules';
 
@@ -71,6 +72,17 @@ function LeadsContent() {
   const [totalCount, setTotalCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  // Права назначенной роли и актор для единых правил статусов
+  const perms = user.permissions;
+  const canCreateLeads = user.can('leads.create');
+  const canAssignLeads = user.can('leads.assign');
+  const canDeleteLeads = user.can('leads.delete');
+  const canBulkLeads = user.can('leads.bulk');
+  const canLinkSeller = user.can('leads.link_seller');
+  const canUnlinkSeller = user.can('leads.unlink_seller');
+  const canOpenScripts = user.can('leads.scripts');
+  const canEditFullLead = user.can('leads.edit');
+  const canViewAllLeads = user.canViewAll('leads');
   const [userName, setUserName] = React.useState(user.userName);
   const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
@@ -139,8 +151,8 @@ function LeadsContent() {
 
   const handleConfirmDeleteLead = async () => {
     if (!leadToDelete) return;
-    if (currentUserRole !== 'admin') {
-      showToast('Удаление лидов разрешено только администраторам', 'error');
+    if (!canDeleteLeads) {
+      showToast('Удаление лидов не предусмотрено вашей ролью', 'error');
       return;
     }
 
@@ -191,8 +203,17 @@ function LeadsContent() {
         getConsultantsList(),
       ]);
 
-      setLeads(leadsRes.items || []);
-      setTotalCount(leadsRes.total || 0);
+      // Весь реестр загружается постранично: вкладки и фильтры работают на клиенте
+      const items = [...(leadsRes.items || [])];
+      const total = leadsRes.total || items.length;
+      for (let page = 2; items.length < total && page <= 50; page++) {
+        const next = await api.leads.getAll({ page, limit: 100 });
+        if (!next.items || next.items.length === 0) break;
+        items.push(...next.items);
+      }
+
+      setLeads(items);
+      setTotalCount(total);
       setStats(statsRes);
       setConsultants(consultantsRes);
     } catch (err) {
@@ -202,6 +223,8 @@ function LeadsContent() {
       setIsLoading(false);
     }
   }, [showToast]);
+
+  const leadActor = React.useMemo(() => ({ userId: currentUserId, permissions: perms }), [currentUserId, perms]);
 
   React.useEffect(() => {
     if (user.profile) {
@@ -218,7 +241,7 @@ function LeadsContent() {
 
   // Автоматический расчет ответственного консультанта по умолчанию
   const defaultConsultantId = React.useMemo(() => {
-    if (currentUserRole === 'consultant') {
+    if (!canAssignLeads) {
       return currentUserId;
     }
     const currentInList = consultants.find((c) => c.user_id === currentUserId);
@@ -226,12 +249,12 @@ function LeadsContent() {
       return currentInList.user_id;
     }
     return consultants[0]?.user_id || '';
-  }, [currentUserRole, currentUserId, consultants]);
+  }, [canAssignLeads, currentUserId, consultants]);
 
   // Автоматическое открытие формы создания при переходе по ?action=create (кнопка FAB)
   React.useEffect(() => {
     if (searchParams.get('action') === 'create') {
-      if (currentUserRole === 'consultant') return;
+      if (!canCreateLeads) return;
       setModalState({
         isOpen: true,
         mode: 'create',
@@ -241,7 +264,7 @@ function LeadsContent() {
         } as any,
       });
     }
-  }, [searchParams, defaultConsultantId, currentUserRole]);
+  }, [searchParams, defaultConsultantId, canCreateLeads]);
 
   // Конфигурация колонок DataJournal (мемоизирована для стабилизации виртуализатора)
   const columns: ColumnDef<LeadItem>[] = React.useMemo(
@@ -320,7 +343,7 @@ function LeadsContent() {
           ...consultants.map((c) => ({ value: c.user_id, label: c.full_name })),
         ],
         renderCell: (row) => {
-          if (currentUserRole === 'admin') {
+          if (canAssignLeads) {
             const isUnassigned = !row.assigned_to;
             const currentConsultant = consultants.find((c) => c.user_id === row.assigned_to);
             return (
@@ -401,7 +424,7 @@ function LeadsContent() {
         ),
       },
     ],
-    [currentUserRole, consultants, fetchInitialData, showToast]
+    [canAssignLeads, consultants, fetchInitialData, showToast]
   );
 
   // Конфигурация полей EntityModal (мемоизирована для предотвращения сброса формы при ререндере)
@@ -424,7 +447,7 @@ function LeadsContent() {
         name: 'client_name',
         label: 'Имя клиента или название точки',
         required: true,
-        immutable: currentUserRole === 'consultant',
+        immutable: !canEditFullLead,
         placeholder: 'Например: Айбек (Магазин Береке)',
       },
       {
@@ -432,12 +455,12 @@ function LeadsContent() {
         label: 'Номер телефона',
         type: 'phone',
         required: true,
-        immutable: currentUserRole === 'consultant',
+        immutable: !canEditFullLead,
       },
       {
         name: 'instagram',
         label: 'Instagram аккаунт',
-        immutable: currentUserRole === 'consultant',
+        immutable: !canEditFullLead,
         placeholder: '@username или ссылка',
       },
       {
@@ -451,16 +474,15 @@ function LeadsContent() {
         name: 'assigned_to',
         label: 'Ответственный консультант',
         type: 'select',
-        disabled: currentUserRole !== 'admin',
-        immutable: currentUserRole !== 'admin',
-        isSystem: currentUserRole === 'smm',
-        defaultValue: currentUserRole === 'consultant' ? currentUserId : '',
-        helperText:
-          currentUserRole === 'consultant'
-            ? 'Лид закреплен за вами'
-            : currentUserRole === 'smm'
-            ? 'Куратор назначается администратором'
-            : 'Назначение из «Открыт»/«Обработан» переводит лид в «Назначен»',
+        disabled: !canAssignLeads,
+        immutable: !canAssignLeads,
+        isSystem: !canAssignLeads && !canViewAllLeads && currentUserRole === 'smm',
+        defaultValue: !canAssignLeads && currentUserRole === 'consultant' ? currentUserId : '',
+        helperText: canAssignLeads
+          ? 'Назначение из «Открыт»/«Обработан» переводит лид в «Назначен»'
+          : currentUserRole === 'consultant'
+          ? 'Лид закреплен за вами'
+          : 'Консультанта назначает сотрудник с правом назначения',
         options: [
           { value: '', label: '— Не назначен —' },
           ...consultants.map((c) => ({
@@ -500,34 +522,35 @@ function LeadsContent() {
         hidden: (lead) => !isCancelStatus(lead.status),
       },
     ],
-    [consultants, currentUserRole, currentUserId]
+    [consultants, currentUserRole, currentUserId, canAssignLeads, canEditFullLead, canViewAllLeads]
   );
 
-  // Права на редактирование полей текущего лида в EntityModal (единая матрица ролей)
+  // Права на редактирование полей текущего лида в EntityModal (единые правила по правам роли)
   const canEditCurrentLead = React.useMemo(
     () =>
       Boolean(modalState.selectedLead) &&
-      canEditLeadFields(currentUserRole, modalState.selectedLead as LeadItem, currentUserId),
-    [currentUserRole, currentUserId, modalState.selectedLead]
+      (canEditLeadFields(leadActor, modalState.selectedLead as LeadItem) ||
+        canEditLeadComment(leadActor, modalState.selectedLead as LeadItem)),
+    [leadActor, modalState.selectedLead]
   );
 
   // Статусы, в которые текущий пользователь может перевести открытый в карточке лид
   const allowedStatusesForModal = React.useMemo(
     () =>
       modalState.selectedLead && modalState.mode !== 'create'
-        ? allowedLeadTransitions(currentUserRole, modalState.selectedLead, currentUserId)
+        ? allowedLeadTransitions(leadActor, modalState.selectedLead)
         : [],
-    [currentUserRole, currentUserId, modalState.selectedLead, modalState.mode]
+    [leadActor, modalState.selectedLead, modalState.mode]
   );
 
   // Варианты статуса для строки/карточки реестра: только разрешенные переходы (иначе — бейдж)
   const getLeadStatusOptions = React.useCallback(
     (row: LeadItem) => {
-      const allowed = allowedLeadTransitions(currentUserRole, row, currentUserId);
+      const allowed = allowedLeadTransitions(leadActor, row);
       if (allowed.length === 0) return null;
       return PIPELINE_STATUS_OPTIONS.filter((o) => o.value === row.status || allowed.includes(o.value as LeadStatus));
     },
-    [currentUserRole, currentUserId]
+    [leadActor]
   );
 
   // Обработчики строк DataJournal
@@ -539,11 +562,9 @@ function LeadsContent() {
     });
   };
 
-  const canCreateLeads = currentUserRole === 'admin' || currentUserRole === 'smm';
-
   const handleCreateClick = () => {
     if (!canCreateLeads) {
-      showToast('Добавлять лиды могут администратор и SMM-специалист', 'error');
+      showToast('Создание лидов не предусмотрено вашей ролью', 'error');
       return;
     }
     setModalState({
@@ -601,7 +622,7 @@ function LeadsContent() {
         action: 'change_assigned',
         assigned_to: assignedTo,
       });
-      showToast(`Куратор назначен для ${selectedLeadIds.length} лидов`, 'success');
+      showToast(`Консультант назначен для ${selectedLeadIds.length} лидов`, 'success');
       clearSelection();
       await fetchInitialData();
     } catch (err: any) {
@@ -644,7 +665,7 @@ function LeadsContent() {
    */
   const changeLeadStatus = React.useCallback(
     async (lead: LeadItem, newStatus: string): Promise<boolean> => {
-      const check = canChangeLeadStatus(currentUserRole, lead, currentUserId, newStatus);
+      const check = canChangeLeadStatus(leadActor, lead, newStatus);
       if (!check.ok) {
         showToast(check.reason, 'error');
         return false;
@@ -671,7 +692,7 @@ function LeadsContent() {
       getLeadsStats().then(setStats);
       return true;
     },
-    [currentUserRole, currentUserId, showToast]
+    [leadActor, showToast]
   );
 
   const handleStatusChangeInJournal = React.useCallback(
@@ -688,7 +709,7 @@ function LeadsContent() {
         country_code: updated.country_code,
         instagram: updated.instagram,
         comment: updated.comment,
-        ...(currentUserRole === 'admin' ? { assigned_to: updated.assigned_to || null } : {}),
+        ...(canAssignLeads ? { assigned_to: updated.assigned_to || null } : {}),
       });
       await fetchInitialData();
     } catch (err: any) {
@@ -701,12 +722,12 @@ function LeadsContent() {
       throw new Error('Заполните имя клиента и номер телефона');
     }
 
-    const assignedConsultant =
-      currentUserRole === 'consultant'
-        ? currentUserId
-        : currentUserRole === 'smm'
-        ? null
-        : newLeadData.assigned_to || null;
+    // Без права назначения лид либо закрепляется за собой (консультант), либо остается свободным
+    const assignedConsultant = canAssignLeads
+      ? newLeadData.assigned_to || null
+      : currentUserRole === 'consultant'
+      ? currentUserId
+      : null;
 
     try {
       await api.leads.create({
@@ -770,8 +791,8 @@ function LeadsContent() {
       showToast(`Лид уже привязан к продавцу ${formatPhoneDisplay(lead.seller_phone)}`, 'info');
       return;
     }
-    if (currentUserRole !== 'admin' && currentUserRole !== 'consultant') {
-      showToast('Привязка продавцов доступна только администраторам и консультантам', 'error');
+    if (!canLinkSeller) {
+      showToast('Привязка продавцов не предусмотрена вашей ролью', 'error');
       return;
     }
     setMappingModal({
@@ -815,7 +836,7 @@ function LeadsContent() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все консультанты</option>
-          <option value="unassigned">— Без куратора —</option>
+          <option value="unassigned">— Без консультанта —</option>
           {consultants.map((c) => (
             <option key={c.user_id} value={c.user_id}>
               ● {c.full_name}
@@ -856,6 +877,7 @@ function LeadsContent() {
   const leadActions = (
     <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
       {/* Кнопка открытия базы скриптов */}
+      {canOpenScripts && (
       <button
         type="button"
         onClick={() => setIsScriptsOpen(true)}
@@ -866,6 +888,7 @@ function LeadsContent() {
         <BookOpen className="w-4 h-4 text-purple-500 flex-shrink-0" strokeWidth={1.75} />
         <span className="hidden md:inline">Скрипты продаж</span>
       </button>
+      )}
     </div>
   );
 
@@ -874,7 +897,7 @@ function LeadsContent() {
     (row: LeadItem) => {
       const actions: React.ReactNode[] = [];
 
-      if (currentUserRole === 'admin' || currentUserRole === 'consultant') {
+      if (canLinkSeller) {
         if (!row.seller_phone && row.status !== 'Отмена') {
           actions.push(
             <button
@@ -905,7 +928,7 @@ function LeadsContent() {
         }
       }
 
-      if (currentUserRole === 'admin') {
+      if (canDeleteLeads) {
         actions.push(
           <button
             key="delete"
@@ -926,7 +949,7 @@ function LeadsContent() {
       if (actions.length === 0) return null;
       return <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">{actions}</div>;
     },
-    [currentUserRole, handleLinkSeller]
+    [canLinkSeller, canDeleteLeads, handleLinkSeller]
   );
 
   const isAnyModalOpen =
@@ -934,7 +957,7 @@ function LeadsContent() {
 
   // Вкладки воронки продаж для DataJournal
   const leadTabs: DataJournalTab[] = React.useMemo(() => {
-    if (currentUserRole === 'consultant') {
+    if (!canViewAllLeads && currentUserRole === 'consultant') {
       return [
         { id: 'all', label: 'Все в работе', count: stats.total, icon: LayoutList },
         { id: 'Назначен', label: 'Назначен', count: stats.assigned, icon: UserCheck },
@@ -950,7 +973,7 @@ function LeadsContent() {
       { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
       { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
     ];
-  }, [currentUserRole, stats]);
+  }, [currentUserRole, canViewAllLeads, stats]);
 
   return (
     <AppLayout
@@ -978,7 +1001,7 @@ function LeadsContent() {
           tabs={leadTabs}
           activeTab={filterStatus}
           onTabChange={setFilterStatus}
-          enableSelection={currentUserRole === 'admin'}
+          enableSelection={canBulkLeads}
           selectedIds={selectedLeadIds}
           onSelectionChange={setSelectedLeadIds}
           renderBulkActions={(ids, clearSelection) => (
@@ -1015,7 +1038,7 @@ function LeadsContent() {
                 className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer max-w-[150px] truncate"
               >
                 <option value="" disabled className="text-zinc-900 bg-white">Назначить...</option>
-                <option value="null" className="text-zinc-900 bg-white">Без куратора</option>
+                <option value="null" className="text-zinc-900 bg-white">Без консультанта</option>
                 {consultants.map((c) => (
                   <option key={c.user_id} value={c.user_id} className="text-zinc-900 bg-white">
                     {c.full_name}
@@ -1040,7 +1063,7 @@ function LeadsContent() {
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
           getStatusOptions={getLeadStatusOptions}
-          totalCount={totalCount}
+          totalCount={filteredLeads.length}
         />
 
         {/* 4. Единая гибридная форма сущности EntityModal */}
@@ -1061,10 +1084,8 @@ function LeadsContent() {
             onSave={canEditCurrentLead ? handleSaveLead : undefined}
             onCreate={canCreateLeads ? handleCreateLead : undefined}
             onStatusChange={allowedStatusesForModal.length > 0 ? handleStatusChangeInModal : undefined}
-            onLinkSeller={
-              currentUserRole === 'admin' || currentUserRole === 'consultant' ? handleLinkSeller : undefined
-            }
-            onDelete={currentUserRole === 'admin' ? (lead) => setLeadToDelete(lead) : undefined}
+            onLinkSeller={canLinkSeller ? handleLinkSeller : undefined}
+            onDelete={canDeleteLeads ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
             linkedBanner={
               modalState.selectedLead?.seller_phone
@@ -1083,14 +1104,8 @@ function LeadsContent() {
                         )}`
                       );
                     },
-                    unlinkLabel:
-                      currentUserRole === 'admin' || currentUserRole === 'consultant'
-                        ? 'Отвязать продавца'
-                        : undefined,
-                    onUnlink:
-                      currentUserRole === 'admin' || currentUserRole === 'consultant'
-                        ? () => setLeadToUnlink(modalState.selectedLead)
-                        : undefined,
+                    unlinkLabel: canUnlinkSeller ? 'Отвязать продавца' : undefined,
+                    onUnlink: canUnlinkSeller ? () => setLeadToUnlink(modalState.selectedLead) : undefined,
                   }
                 : undefined
             }
@@ -1119,9 +1134,9 @@ function LeadsContent() {
           confirmDisabled={cancelDialog.reason.trim().length < 3}
           level={2}
           description={
-            currentUserRole === 'admin'
-              ? 'Вернуть лид из статуса «Отмена» сможет только администратор.'
-              : 'После отмены вернуть лид в работу сможет только администратор.'
+            user.can('leads.rollback')
+              ? 'Вернуть лид из статуса «Отмена» может сотрудник с правом отката статуса.'
+              : 'После отмены вернуть лид в работу сможет только сотрудник с правом отката статуса.'
           }
         >
           <FormField label="Причина отмены" required hint="Не менее 3 символов. Причина сохраняется в карточке лида.">
@@ -1197,7 +1212,7 @@ function LeadsContent() {
           level={2}
           description={
             <>
-              При отвязке лид вернется в статус <b>«Назначен»</b>, привязка к продавцу будет разорвана, а у продавца будет сброшен назначенный куратор.
+              При отвязке лид вернется в статус <b>«Назначен»</b>, привязка к продавцу будет разорвана, а у продавца будет сброшен назначенный консультант.
             </>
           }
         />

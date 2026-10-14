@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
-import { requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
+import { isLeadInScope, leadActorFrom } from '@/lib/leads/status-rules';
 
 export async function POST(
   req: NextRequest,
@@ -9,8 +11,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    // Руководитель — только просмотр (решение по матрице ролей)
-    const ctx = await requireRoles(['admin', 'consultant']);
+    const ctx = await requirePermission('leads.link_seller');
     const body = await req.json();
 
     const sellerPhone = body.seller_phone;
@@ -18,11 +19,13 @@ export async function POST(
       return apiError('Номер телефона продавца обязателен', 'MISSING_SELLER_PHONE', 400);
     }
 
-    // Атомарная процедура в СУБД с блокировкой FOR UPDATE (права проверяются в хелпере)
+    // Атомарная процедура в СУБД с блокировкой FOR UPDATE (область видимости, выбор консультанта
+    // и статус подтверждения проверяются в хелпере по правам)
     const result = await linkLeadToSellerAtomic(ctx, {
       leadId: id,
       sellerPhone,
       managerId: body.manager_id,
+      via: 'lead',
     });
 
     if (!result.success) {
@@ -48,16 +51,21 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireRoles(['admin']);
+    const ctx = await requirePermission('leads.unlink_seller');
+    const admin = createAdminClient();
 
-    const { data: lead } = await supabase
+    const { data: lead } = await admin
       .from('leads')
-      .select('lead_id, seller_phone')
+      .select('lead_id, seller_phone, created_by, assigned_to')
       .eq('lead_id', id)
       .single();
 
     if (!lead) {
       return apiError('Лид не найден', 'NOT_FOUND', 404);
+    }
+
+    if (!isLeadInScope(leadActorFrom(ctx), lead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
     if (!lead.seller_phone) {
@@ -67,7 +75,7 @@ export async function DELETE(
     const prevSellerPhone = lead.seller_phone;
 
     // Обнуляем seller_phone в лиде и возвращаем статус в Обработан
-    const { error: updateLeadError } = await supabase
+    const { error: updateLeadError } = await admin
       .from('leads')
       .update({
         seller_phone: null,
@@ -79,8 +87,8 @@ export async function DELETE(
 
     if (updateLeadError) throw updateLeadError;
 
-    // Отвязываем куратора у продавца
-    await supabase
+    // Отвязываем консультанта у продавца
+    await admin
       .from('sellers')
       .update({ manager_id: null })
       .eq('seller_phone', prevSellerPhone);

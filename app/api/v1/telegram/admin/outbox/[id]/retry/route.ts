@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isTelegramConfigured } from '@/lib/telegram/bot';
@@ -16,7 +16,7 @@ function db(): SupabaseClient<any> {
 /** Повторная отправка сообщения (неуспешного или пропущенного) */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin();
+    await requirePermission('telegram.manage');
     const { id } = await params;
 
     if (!isTelegramConfigured()) {

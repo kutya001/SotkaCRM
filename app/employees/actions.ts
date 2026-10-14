@@ -1,8 +1,8 @@
 'use server';
 
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requirePermission } from '@/lib/auth/check-role';
 import { createCrmUser } from '@/app/auth/actions';
 import { createEmployeeSchema, updateEmployeeSchema } from '@/lib/validations';
 import { isValidHex, normalizeHex } from '@/lib/constants/colors';
@@ -13,7 +13,11 @@ export interface EmployeeItem {
   login: string;
   full_name: string;
   phone: string | null;
+  /** Базовый профиль (устаревший enum), синхронизируется с назначенной ролью */
   role: UserRole;
+  /** Назначенная роль (roles.role_id) */
+  role_id: string | null;
+  role_name: string | null;
   is_active: boolean;
   color: string;
   created_at: string;
@@ -66,39 +70,17 @@ export interface EmployeesResponse {
   error?: string;
 }
 
-/**
- * Проверка прав администратора
- */
-async function requireAdminAuth() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    throw new Error('Пользователь не авторизован');
-  }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role, full_name')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile || profile.role !== 'admin') {
-    throw new Error('Доступ разрешен только администраторам системы');
-  }
-
-  return { supabase, user, profile };
-}
-
-/** Понятные сообщения для ограничений анкеты (миграция 030) */
+/** Понятные сообщения для ограничений анкеты (миграция 030) и ролей (миграция 040) */
 function friendlyProfileError(message: string): string {
   if (message.includes('users_inn_unique')) return 'Сотрудник с таким ИНН уже есть в системе';
   if (message.includes('users_inn_format')) return 'ИНН должен состоять из 14 цифр';
   if (message.includes('users_coordinates_pair')) return 'Укажите и широту, и долготу';
+  if (message.includes('role_not_found') || message.includes('users_role_id_fkey')) return 'Указанная роль не найдена';
   if (message.includes('column') && /address|latitude|longitude|inn|birth_date|gender|bio/.test(message)) {
     return 'В базе нет полей анкеты сотрудника: примените миграцию 030_employee_profile_fields.sql';
+  }
+  if (message.includes('column') && /role_id|roles/.test(message)) {
+    return 'В базе нет ролевой модели: примените миграцию 040_roles_and_permissions.sql';
   }
   return message;
 }
@@ -124,7 +106,7 @@ const fetchCachedEmployees = unstable_cache(
     let query = supabase
       .from('users')
       .select(
-        'user_id, login, full_name, phone, role, is_active, color, created_at, address, latitude, longitude, inn, birth_date, gender, bio, telegram_username, telegram_chat_id',
+        'user_id, login, full_name, phone, role, role_id, roles:role_id(name), is_active, color, created_at, address, latitude, longitude, inn, birth_date, gender, bio, telegram_username, telegram_chat_id',
         {
           count: 'exact',
         }
@@ -168,11 +150,16 @@ const fetchCachedEmployees = unstable_cache(
       return { employees: [], totalCount: 0, error: error.message };
     }
 
-    const employees: EmployeeItem[] = ((data || []) as any[]).map(({ telegram_chat_id, ...rest }) => ({
-      ...rest,
-      telegram_username: rest.telegram_username ?? null,
-      telegram_linked: telegram_chat_id !== null && telegram_chat_id !== undefined,
-    }));
+    const employees: EmployeeItem[] = ((data || []) as any[]).map(({ telegram_chat_id, roles, ...rest }) => {
+      const roleJoin = Array.isArray(roles) ? roles[0] || null : roles;
+      return {
+        ...rest,
+        role_id: rest.role_id ?? null,
+        role_name: roleJoin?.name ?? null,
+        telegram_username: rest.telegram_username ?? null,
+        telegram_linked: telegram_chat_id !== null && telegram_chat_id !== undefined,
+      };
+    });
 
     return {
       employees,
@@ -184,13 +171,13 @@ const fetchCachedEmployees = unstable_cache(
 );
 
 /**
- * Получение списка сотрудников с пагинацией и фильтрацией
+ * Получение списка сотрудников с пагинацией и фильтрацией (employees.menu)
  */
 export async function getEmployees(
   params: GetEmployeesParams = {}
 ): Promise<EmployeesResponse> {
   try {
-    await requireAdminAuth();
+    await requirePermission('employees.menu');
     return await fetchCachedEmployees(JSON.stringify(params));
   } catch (err: any) {
     return { employees: [], totalCount: 0, error: err.message };
@@ -210,7 +197,7 @@ export interface EmployeeMapPointData {
 }
 
 /**
- * Сотрудники для общей карты (администратор): активные с заданными координатами
+ * Сотрудники для общей карты (employees.menu): активные с заданными координатами
  * и список имен тех, у кого место проживания не указано
  */
 export async function getEmployeesForMap(): Promise<{
@@ -219,8 +206,8 @@ export async function getEmployeesForMap(): Promise<{
   error?: string;
 }> {
   try {
-    const { supabase } = await requireAdminAuth();
-    const { data, error } = await supabase
+    await requirePermission('employees.menu');
+    const { data, error } = await createAdminClient()
       .from('users')
       .select('user_id, full_name, login, role, color, phone, address, latitude, longitude')
       .eq('is_active', true)
@@ -255,7 +242,8 @@ export async function getEmployeesForMap(): Promise<{
 }
 
 /**
- * Добавление нового сотрудника
+ * Добавление нового сотрудника (employees.create).
+ * role — базовый профиль (устаревший enum), role_id — назначенная роль (при наличии имеет приоритет).
  */
 export async function createEmployee(input: {
   login: string;
@@ -263,10 +251,11 @@ export async function createEmployee(input: {
   full_name: string;
   phone?: string;
   role: UserRole;
+  role_id?: string;
   color?: string;
 } & EmployeeProfileFields): Promise<{ success: boolean; userId?: string; error?: string }> {
   try {
-    const { supabase } = await requireAdminAuth();
+    await requirePermission('employees.create');
 
     const parsed = createEmployeeSchema.safeParse(input);
     if (!parsed.success) {
@@ -281,13 +270,14 @@ export async function createEmployee(input: {
       full_name: valid.full_name,
       phone: valid.phone || undefined,
       role: valid.role,
+      role_id: valid.role_id,
     });
 
     if (res.success && res.userId) {
       const extra: Database['public']['Tables']['users']['Update'] = pickProfileFields(valid);
       if (cleanColor) extra.color = cleanColor;
       if (Object.keys(extra).length > 0) {
-        const { error: extraErr } = await supabase.from('users').update(extra).eq('user_id', res.userId);
+        const { error: extraErr } = await createAdminClient().from('users').update(extra).eq('user_id', res.userId);
         if (extraErr) {
           revalidateTag('employees');
           revalidatePath('/employees');
@@ -313,7 +303,8 @@ export async function createEmployee(input: {
 }
 
 /**
- * Редактирование существующего сотрудника
+ * Редактирование существующего сотрудника (employees.edit; смена активности — employees.deactivate).
+ * role_id — назначенная роль; триггер БД синхронизирует устаревший enum role.
  */
 export async function updateEmployee(
   userId: string,
@@ -321,18 +312,23 @@ export async function updateEmployee(
     full_name?: string;
     phone?: string | null;
     role?: UserRole;
+    role_id?: string;
     is_active?: boolean;
     color?: string;
   } & EmployeeProfileFields
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdminAuth();
+    const ctx = await requirePermission('employees.edit');
 
     const parsed = updateEmployeeSchema.safeParse(input);
     if (!parsed.success) {
       return { success: false, error: parsed.error.issues[0]?.message || 'Ошибка валидации полей' };
     }
     const valid = parsed.data;
+
+    if (valid.is_active !== undefined && !ctx.can('employees.deactivate')) {
+      return { success: false, error: 'Недостаточно прав: блокировать и разблокировать сотрудников' };
+    }
 
     const updates: Database['public']['Tables']['users']['Update'] = pickProfileFields(valid);
     if (valid.full_name !== undefined) {
@@ -343,7 +339,10 @@ export async function updateEmployee(
       updates.phone = valid.phone?.trim() || null;
     }
 
-    if (valid.role !== undefined) {
+    if (valid.role_id !== undefined) {
+      updates.role_id = valid.role_id;
+    } else if (valid.role !== undefined) {
+      // Устаревший путь: enum без role_id — триггер переведет на системную роль профиля
       updates.role = valid.role;
     }
 
@@ -355,7 +354,8 @@ export async function updateEmployee(
       updates.color = valid.color && isValidHex(valid.color) ? normalizeHex(valid.color) : (valid.color || '#3B82F6');
     }
 
-    const { data: updated, error: updateError } = await supabase
+    const adminClient = createAdminClient();
+    const { data: updated, error: updateError } = await adminClient
       .from('users')
       .update(updates)
       .eq('user_id', userId)
@@ -369,7 +369,6 @@ export async function updateEmployee(
     // Синхронизация user_metadata в auth.users
     if (updated?.auth_id) {
       try {
-        const adminClient = createAdminClient();
         await adminClient.auth.admin.updateUserById(updated.auth_id, {
           user_metadata: {
             full_name: updated.full_name,
@@ -391,16 +390,16 @@ export async function updateEmployee(
 }
 
 /**
- * Быстрое переключение активности (блокировка / разблокировка)
+ * Быстрое переключение активности (блокировка / разблокировка) — employees.deactivate
  */
 export async function toggleEmployeeActive(
   userId: string,
   isActive: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdminAuth();
+    await requirePermission('employees.deactivate');
 
-    const { error } = await supabase
+    const { error } = await createAdminClient()
       .from('users')
       .update({ is_active: isActive })
       .eq('user_id', userId);
@@ -419,20 +418,21 @@ export async function toggleEmployeeActive(
 }
 
 /**
- * Административный сброс пароля сотрудника
+ * Сброс пароля сотрудника — employees.reset_password
  */
 export async function resetEmployeePassword(
   userId: string,
   newPassword: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdminAuth();
+    await requirePermission('employees.reset_password');
 
     if (!newPassword || newPassword.length < 6) {
       return { success: false, error: 'Пароль должен содержать минимум 6 символов' };
     }
 
-    const { data: targetUser, error: findError } = await supabase
+    const adminClient = createAdminClient();
+    const { data: targetUser, error: findError } = await adminClient
       .from('users')
       .select('auth_id')
       .eq('user_id', userId)
@@ -442,7 +442,6 @@ export async function resetEmployeePassword(
       return { success: false, error: 'Сотрудник не найден в системе' };
     }
 
-    const adminClient = createAdminClient();
     const { error: authError } = await adminClient.auth.admin.updateUserById(
       targetUser.auth_id,
       { password: newPassword }

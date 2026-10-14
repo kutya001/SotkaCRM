@@ -30,7 +30,7 @@ export interface PlanUserRef {
 
 /**
  * Факт по планам: подтвержденные подключения (connections.confirmation_status = confirmed)
- * по дате назначения куратора внутри периода; персональные — по manager_id, общие — все.
+ * по дате назначения консультанта внутри периода; персональные — по manager_id, общие — все.
  */
 export async function withPlanProgress(plans: PlanRow[]) {
   const admin = createAdminClient() as unknown as SupabaseClient<any>;

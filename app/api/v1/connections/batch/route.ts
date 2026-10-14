@@ -1,17 +1,26 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
 import { setConnectionConfirmation } from '@/lib/services/connections';
 
+/** Право на конкретное массовое действие (в дополнение к «connections.bulk») */
+const BATCH_ACTION_PERMISSION: Record<string, string> = {
+  confirm_selected: 'connections.confirm',
+  update_maintenance_months: 'connections.edit',
+  accrue_selected: 'connections.accrue',
+};
+
 export async function POST(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const ctx = await requirePermission('connections.bulk');
+    const { profile } = ctx;
     const body = await req.json();
 
-    const { action, connection_ids, payload } = body;
+    const { action, payload } = body;
+    let connection_ids = body.connection_ids;
 
     if (!action) {
       return apiError('Укажите действие (action)', 'MISSING_ACTION', 400);
@@ -19,6 +28,29 @@ export async function POST(req: NextRequest) {
 
     if (!Array.isArray(connection_ids) || connection_ids.length === 0) {
       return apiError('Список connection_ids не может быть пустым', 'EMPTY_CONNECTION_IDS', 400);
+    }
+
+    const actionPermission = BATCH_ACTION_PERMISSION[action];
+    if (!actionPermission) {
+      return apiError(`Неизвестное действие: ${action}`, 'INVALID_ACTION', 400);
+    }
+    await requirePermission(actionPermission);
+
+    // Таблицы начислений пишутся сервисным клиентом после проверки прав (RLS разрешает запись только администратору)
+    const supabase = createAdminClient();
+
+    // Область видимости: без «connections.view_all» массовое действие затрагивает только свои подключения
+    if (!ctx.canViewAll('connections')) {
+      const { data: ownRows, error: ownErr } = await supabase
+        .from('connections')
+        .select('connection_id')
+        .in('connection_id', connection_ids)
+        .eq('manager_id', profile.user_id);
+      if (ownErr) throw ownErr;
+      connection_ids = (ownRows || []).map((r) => r.connection_id);
+      if (connection_ids.length === 0) {
+        return apiError('Выбранные подключения вне вашей области видимости', 'FORBIDDEN', 403);
+      }
     }
 
     // 0. Действие: Массовое подтверждение подключений (только pending; остальные пропускаются)

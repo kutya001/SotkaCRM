@@ -1,21 +1,22 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { getUnpaidAccrualsAction } from '@/app/payouts/actions';
 
+/** Неоплаченные начисления: payouts.menu; чужие — payouts.view_all */
 export async function GET(req: NextRequest) {
   try {
-    const { profile } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к начислениям', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('payouts.menu');
+    const { profile } = ctx;
 
     const { searchParams } = new URL(req.url);
     let targetEmployeeId = searchParams.get('employeeId') || searchParams.get('userId');
     const settlementMonth = searchParams.get('settlementMonth') || searchParams.get('month') || undefined;
 
-    if (profile.role === 'consultant') {
+    if (!ctx.canViewAll('payouts')) {
+      if (targetEmployeeId && targetEmployeeId !== profile.user_id) {
+        return apiError('Просмотр начислений других сотрудников запрещен', 'FORBIDDEN', 403);
+      }
       targetEmployeeId = profile.user_id;
     } else if (!targetEmployeeId) {
       return apiError('Параметр employeeId обязателен', 'BAD_REQUEST', 400);

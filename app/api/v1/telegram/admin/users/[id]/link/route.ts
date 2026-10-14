@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeTelegramPrefs, type TelegramPrefs } from '@/lib/telegram/outbox';
@@ -11,10 +11,10 @@ function db(): SupabaseClient<any> {
   return createAdminClient() as unknown as SupabaseClient<any>;
 }
 
-/** Администратор отвязывает Telegram сотрудника */
+/** Отвязка Telegram сотрудника (telegram.manage) */
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin();
+    await requirePermission('telegram.manage');
     const { id } = await params;
     const admin = db();
 
@@ -34,10 +34,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-/** Администратор меняет виды уведомлений сотрудника */
+/** Изменение видов уведомлений сотрудника (telegram.manage) */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin();
+    await requirePermission('telegram.manage');
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const input = (body?.prefs && typeof body.prefs === 'object' ? body.prefs : body) as Partial<TelegramPrefs>;

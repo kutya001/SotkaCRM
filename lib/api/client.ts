@@ -197,6 +197,35 @@ export const api = {
       }),
   },
 
+  // 1.1. Роли и доступы
+  roles: {
+    getAll: (options?: { bypassCache?: boolean }) =>
+      request<{ items: RoleItem[]; catalog: unknown }>('/api/v1/roles', {
+        method: 'GET',
+        bypassCache: options?.bypassCache,
+      }),
+    create: async (data: RoleInput) => {
+      const res = await request<RoleItem>('/api/v1/roles', { method: 'POST', body: JSON.stringify(data) });
+      invalidateNamespaces('roles', 'employees', 'auth');
+      return res;
+    },
+    update: async (id: string, data: Partial<RoleInput>) => {
+      const res = await request<RoleItem>(`/api/v1/roles/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+      invalidateNamespaces('roles', 'employees', 'auth');
+      return res;
+    },
+    delete: async (id: string) => {
+      const res = await request<{ success: boolean; deleted_id: string }>(`/api/v1/roles/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      invalidateNamespaces('roles', 'employees', 'auth');
+      return res;
+    },
+  },
+
   // 2. Главная панель
   dashboard: {
     getKpi: (options?: { bypassCache?: boolean }) =>
@@ -1145,4 +1174,24 @@ export interface PlanItem {
   remaining: number;
   progress_status: 'done' | 'active' | 'overdue' | 'upcoming';
   elapsed_share: number;
+}
+
+export interface RoleItem {
+  role_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  base_role: 'admin' | 'supervisor' | 'consultant' | 'smm';
+  is_system: boolean;
+  is_admin: boolean;
+  sort_order: number;
+  permissions: string[];
+  users_count: number;
+}
+
+export interface RoleInput {
+  name: string;
+  description?: string | null;
+  base_role?: 'admin' | 'supervisor' | 'consultant' | 'smm';
+  permissions?: string[];
 }

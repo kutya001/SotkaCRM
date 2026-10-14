@@ -1,6 +1,9 @@
 'use client';
 
 import * as React from 'react';
+import { ROLE_LABELS } from '@/lib/constants/roles';
+import { api, type RoleItem } from '@/lib/api/client';
+import { useUser } from '@/components/auth/AuthProvider';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -66,6 +69,7 @@ const PASSWORD_FORM_ID = 'profile-password-form';
 export default function ProfilePage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const user = useUser();
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [profile, setProfile] = React.useState<UserProfileData | null>(null);
@@ -92,6 +96,16 @@ export default function ProfilePage() {
   const [editFullName, setEditFullName] = React.useState('');
   const editPhoneParts = usePhoneParts(null);
   const [editRole, setEditRole] = React.useState<UserRole>('consultant');
+  const [editRoleId, setEditRoleId] = React.useState<string>('');
+  // Справочник ролей для смены роли сотрудника (право employees.edit)
+  const [rolesList, setRolesList] = React.useState<RoleItem[]>([]);
+  React.useEffect(() => {
+    if (!user.can('employees.edit')) return;
+    api.roles
+      .getAll()
+      .then((res) => setRolesList(res.items || []))
+      .catch(() => undefined);
+  }, [user]);
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
   const [isSavingProfile, setIsSavingProfile] = React.useState(false);
@@ -119,7 +133,7 @@ export default function ProfilePage() {
           setAdminStats(res.adminStats || null);
 
           // Если администратор, подгружаем список пользователей
-          if (res.currentUserRole === 'admin' || res.role === 'admin') {
+          if (user.can('profile.others')) {
             const usersRes = await getAllUsersForAdmin();
             if (usersRes.users) {
               setAllUsers(usersRes.users);
@@ -184,6 +198,7 @@ export default function ProfilePage() {
     setEditFullName(profile.full_name);
     editPhoneParts.reset(profile.phone);
     setEditRole(profile.role);
+    setEditRoleId(profile.role_id || '');
     setEditColor(profile.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(profile.is_active);
     setIsEditModalOpen(true);
@@ -205,7 +220,8 @@ export default function ProfilePage() {
       const res = await updateProfileData({
         full_name: editFullName.trim(),
         phone: editPhoneParts.full,
-        role: editRole,
+        role: rolesList.find((r) => r.role_id === editRoleId)?.base_role || editRole,
+        role_id: editRoleId || undefined,
         color: editColor,
         is_active: editIsActive,
         targetUserId: activeViewingUserId,
@@ -276,7 +292,7 @@ export default function ProfilePage() {
     >
       <div className="space-y-6 max-w-5xl mx-auto pb-16">
         {/* ПАНЕЛЬ АДМИНИСТРАТОРА: ВЫБОР СОТРУДНИКА ДЛЯ ПРОСМОТРА И РЕДАКТИРОВАНИЯ */}
-        {currentUserRole === 'admin' && allUsers.length > 0 && (
+        {user.can('profile.others') && allUsers.length > 0 && (
           <div className="p-4 sm:p-5 rounded-3xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
@@ -298,10 +314,10 @@ export default function ProfilePage() {
                 onChange={(e) => setActiveViewingUserId(e.target.value || undefined)}
                 className="h-9 px-3 text-xs font-semibold rounded-xl bg-white dark:bg-zinc-800 border border-blue-500/30 text-zinc-900 dark:text-zinc-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">Мой профиль (Администратор)</option>
+                <option value="">Мой профиль</option>
                 {allUsers.map((u) => (
                   <option key={u.user_id} value={u.user_id}>
-                    {u.full_name} ({u.role === 'admin' ? 'Админ' : u.role === 'consultant' ? 'Консультант' : 'SMM'})
+                    {u.full_name} ({u.role_name || ROLE_LABELS[u.role] || u.role})
                   </option>
                 ))}
               </select>
@@ -451,7 +467,7 @@ export default function ProfilePage() {
         {!activeViewingUserId && <TelegramCard />}
 
         {/* Ссылка на документацию API (Swagger) — строго для роли Администратора */}
-        {currentUserRole === 'admin' && (
+        {user.can('docs.menu') && (
           <Link
             href="/docs"
             className="flex items-center justify-between p-4 sm:p-5 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 hover:border-blue-500/40 hover:bg-blue-50/20 dark:hover:bg-zinc-800/60 transition-all group shadow-sm"
@@ -756,19 +772,22 @@ export default function ProfilePage() {
             </FormField>
 
             {/* Поля роли и активности доступны только администратору */}
-            {currentUserRole === 'admin' && (
+            {user.can('employees.edit') && (
               <>
                 <FormField label="Роль в системе CRM" htmlFor="profile-edit-role">
                   <Select
                     id="profile-edit-role"
-                    value={editRole}
-                    onChange={(e) => setEditRole(e.target.value as UserRole)}
+                    value={editRoleId}
+                    onChange={(e) => setEditRoleId(e.target.value)}
                     className="font-semibold"
                     size="lg"
                   >
-                    <option value="consultant">Продавец-консультант</option>
-                    <option value="admin">Администратор</option>
-                    <option value="smm">SMM-специалист</option>
+                    {rolesList.length === 0 && <option value="">— Роли не загружены —</option>}
+                    {rolesList.map((r) => (
+                      <option key={r.role_id} value={r.role_id}>
+                        {r.name}
+                      </option>
+                    ))}
                   </Select>
                 </FormField>
 

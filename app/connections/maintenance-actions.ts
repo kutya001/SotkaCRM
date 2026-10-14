@@ -1,8 +1,9 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
-import type { Database, MaintenanceStatus, ClientLifecycleStatus } from '@/types/database.types';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requirePermission } from '@/lib/auth/check-role';
+import type { ClientLifecycleStatus } from '@/types/database.types';
 
 export interface MaintenanceAccrualResult {
   success: boolean;
@@ -21,45 +22,29 @@ export interface MaintenanceAccrualResult {
 }
 
 /**
- * Ежемесячный биллинг сопровождения клиентов (строго роль admin)
+ * Ежемесячный биллинг сопровождения клиентов (право «connections.accrue»)
  * Начисляет бонусы консультантам за удержание активных продавцов
  */
 export async function generateMonthlyMaintenanceAccruals(
   targetMonth?: string
 ): Promise<MaintenanceAccrualResult> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  let ctx;
+  try {
+    ctx = await requirePermission('connections.accrue');
+  } catch (err: any) {
     return {
       success: false,
       count: 0,
       totalAmount: 0,
       skippedCount: 0,
       targetMonth: '',
-      error: 'Пользователь не аутентифицирован',
+      error: err?.message || 'Пользователь не аутентифицирован',
     };
   }
+  const actorUserId = ctx.profile.user_id;
 
-  const { data: adminProfile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!adminProfile || adminProfile.role !== 'admin') {
-    return {
-      success: false,
-      count: 0,
-      totalAmount: 0,
-      skippedCount: 0,
-      targetMonth: '',
-      error: 'Генерация ежемесячных начислений доступна исключительно администратору',
-    };
-  }
+  // Запись начислений разрешена RLS только администратору — после проверки права пишем сервисным клиентом
+  const supabase = createAdminClient();
 
   const month = targetMonth || new Date().toISOString().substring(0, 7);
 
@@ -148,7 +133,7 @@ export async function generateMonthlyMaintenanceAccruals(
       maintenance_percent: percent,
       maintenance_amount: maintenanceAmount,
       status: 'начислено',
-      accrued_by: adminProfile.user_id,
+      accrued_by: actorUserId,
     });
 
     if (insertError) {
@@ -196,12 +181,18 @@ export async function generateMonthlyMaintenanceAccruals(
 }
 
 /**
- * Получение истории начислений за сопровождение
+ * Получение истории начислений за сопровождение (право «connections.menu»,
+ * без «connections.view_all» — только по своим подключениям)
  */
 export async function getMaintenanceAccruals(accrualMonth?: string) {
-  const supabase = await createClient();
+  let ctx;
+  try {
+    ctx = await requirePermission('connections.menu');
+  } catch (err: any) {
+    return { accruals: [], error: err?.message || 'Пользователь не аутентифицирован' };
+  }
 
-  let query = supabase
+  let query = createAdminClient()
     .from('client_maintenance')
     .select(
       `
@@ -211,6 +202,10 @@ export async function getMaintenanceAccruals(accrualMonth?: string) {
     `
     )
     .order('accrued_at', { ascending: false });
+
+  if (!ctx.canViewAll('connections')) {
+    query = query.eq('manager_id', ctx.profile.user_id);
+  }
 
   if (accrualMonth && accrualMonth !== 'all') {
     query = query.eq('accrual_month', accrualMonth);

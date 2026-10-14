@@ -1,15 +1,11 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { getAnalyticsSummaryAction } from '@/app/analytics/actions';
 
 export async function GET(req: NextRequest) {
   try {
-    const { profile } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к сквозной аналитике', 'FORBIDDEN', 403);
-    }
+    await requirePermission('analytics.menu');
 
     const { searchParams } = new URL(req.url);
     const startDate = searchParams.get('startDate') || undefined;

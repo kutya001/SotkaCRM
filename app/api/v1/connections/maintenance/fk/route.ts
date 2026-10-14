@@ -1,11 +1,14 @@
 import { NextRequest } from 'next/server';
 import { requireAdmin } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { generateMonthlyMaintenanceAccruals } from '@/app/connections/maintenance-actions';
 
+/** Служебная операция восстановления связей (вне каталога прав) — только роль с полным доступом */
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
+    const supabase = createAdminClient();
 
     let targetMonth: string | undefined;
     try {

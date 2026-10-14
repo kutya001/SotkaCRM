@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { authenticateSotkaAdmin, fetchSellerDetail, logoutSotkaSession } from '@/lib/services/sotka-api';
 import { normalizeSellerTransactions } from '@/lib/sotka';
 import { findSellerByKey } from '@/lib/services/sellers';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(
   req: NextRequest,
@@ -11,14 +12,11 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { profile, supabase } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к транзакциям продавцов', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('sellers.transactions');
+    const { profile } = ctx;
 
     // 1. Поиск продавца для извлечения organization_id (sotka_id)
-    const seller = await findSellerByKey(supabase, id, [
+    const seller = await findSellerByKey(createAdminClient(), id, [
       'seller_phone',
       'seller_name',
       'store',
@@ -30,9 +28,9 @@ export async function GET(
       return apiError('Продавец не найден', 'NOT_FOUND', 404);
     }
 
-    // Ролевая проверка для consultant: только свои продавцы
-    if (profile.role === 'consultant' && seller.manager_id !== profile.user_id) {
-      return apiError('Доступ к транзакциям открыт только куратору данного продавца', 'FORBIDDEN', 403);
+    // Область видимости: без «sellers.view_all» — только транзакции своих продавцов
+    if (!ctx.canViewAll('sellers') && seller.manager_id !== profile.user_id) {
+      return apiError('Доступ к транзакциям открыт только консультанту данного продавца', 'FORBIDDEN', 403);
     }
 
     const emptyTransactions = normalizeSellerTransactions(null);
@@ -47,17 +45,32 @@ export async function GET(
     }
 
     // 2. Детальная карточка продавца в Sotka HQ: GET /api/private/v1/admin/sellers-overview/{organization_id}/
-    // Права уже проверены выше (admin, supervisor, куратор-консультант), поэтому запрос идет напрямую,
-    // без серверного действия getSellerDetailFromSotka, доступного только администратору.
+    // Право «sellers.transactions» и область видимости уже проверены выше, поэтому запрос идет напрямую,
+    // без серверного действия getSellerDetailFromSotka, требующего право «sellers.sync».
     let token = '';
     try {
       token = await authenticateSotkaAdmin();
       const detail = await fetchSellerDetail(token, seller.organization_id);
+      const transactions = normalizeSellerTransactions(detail?.transactions);
+
+      // Итоги пополнений/списаний кэшируются в карточке продавца для колонки реестра
+      try {
+        await createAdminClient()
+          .from('sellers')
+          .update({
+            hq_topups_total: transactions.total_topups,
+            hq_charges_total: transactions.total_charges,
+            hq_tx_synced_at: new Date().toISOString(),
+          } as any)
+          .eq('seller_phone', seller.seller_phone);
+      } catch (cacheErr: any) {
+        console.warn('[Seller Transactions] Не удалось сохранить итоги транзакций:', cacheErr?.message);
+      }
 
       return apiSuccess({
         organization_id: seller.organization_id,
         seller_phone: seller.seller_phone,
-        transactions: normalizeSellerTransactions(detail?.transactions),
+        transactions,
       });
     } catch (sotkaErr: any) {
       console.warn('[Seller Transactions] Sotka HQ API недоступен:', sotkaErr?.message);

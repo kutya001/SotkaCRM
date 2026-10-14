@@ -1,15 +1,23 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
+/** Редактирование операции: payouts.edit (смена статуса в теле запроса — дополнительно payouts.status) */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireAdmin();
+    const ctx = await requirePermission('payouts.edit');
     const body = await req.json();
+
+    if (body.status !== undefined && !ctx.can('payouts.status')) {
+      return apiError('Недостаточно прав: менять статус операции', 'FORBIDDEN', 403);
+    }
+
+    const supabase = createAdminClient();
 
     const updates: Record<string, any> = {};
     if (body.amount !== undefined) updates.amount = Number(body.amount);
@@ -58,7 +66,7 @@ export async function PATCH(
       if (updates.payout_date !== undefined) coreUpdates.payout_date = updates.payout_date;
       if (updates.settlement_month !== undefined) coreUpdates.settlement_month = updates.settlement_month;
       if (updates.operation_type !== undefined) coreUpdates.operation_type = updates.operation_type;
-      
+
       const retry2 = await supabase
         .from('employee_payouts')
         .update(coreUpdates as any)
@@ -83,13 +91,15 @@ export async function PATCH(
   }
 }
 
+/** Удаление операции: payouts.delete */
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireAdmin();
+    await requirePermission('payouts.delete');
+    const supabase = createAdminClient();
 
     // 1. Снятие признака выплаты со всех связанных начислений
     const { error: unfreezeErr } = await supabase

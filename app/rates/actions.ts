@@ -1,12 +1,14 @@
 'use server';
 
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requireAnyPermission, requirePermission } from '@/lib/auth/check-role';
 import { EmployeeRateSchema } from '@/lib/validations';
 import { roundMoney } from '@/lib/utils/money';
-import type { Database, UserRole } from '@/types/database.types';
+import type { UserRole } from '@/types/database.types';
+
+/** Чтение ставок доступно управляющему ставками и модулю сотрудников */
+const RATE_READ_PERMISSIONS = ['rates.manage', 'employees.menu'];
 
 export interface EmployeeRateItem {
   rate_id?: string;
@@ -99,27 +101,19 @@ const fetchCachedEmployeeRates = unstable_cache(
 );
 
 /**
- * Получение персональных ставок сотрудников
+ * Получение персональных ставок сотрудников (rates.manage или employees.menu)
  */
 export async function getEmployeeRates(): Promise<{
   rates: EmployeeRateItem[];
   currentUserRole?: UserRole;
   error?: string;
 }> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  let currentUserRole: UserRole = 'consultant';
-  if (user) {
-    const { data: profile } = await supabase
-      .from('users')
-      .select('role')
-      .eq('auth_id', user.id)
-      .single();
-    if (profile) currentUserRole = profile.role as UserRole;
+  let currentUserRole: UserRole;
+  try {
+    const { profile } = await requireAnyPermission(RATE_READ_PERMISSIONS);
+    currentUserRole = profile.role;
+  } catch (err: any) {
+    return { rates: [], error: err?.message || 'Недостаточно прав' };
   }
 
   const cached = await fetchCachedEmployeeRates();
@@ -127,13 +121,18 @@ export async function getEmployeeRates(): Promise<{
 }
 
 /**
- * Получение истории процентных ставок по периодам для конкретного сотрудника
+ * Получение истории процентных ставок по периодам для конкретного сотрудника (rates.manage или employees.menu)
  */
 export async function getEmployeeRatesHistory(
   userId: string
 ): Promise<EmployeeRateHistoryItem[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  try {
+    await requireAnyPermission(RATE_READ_PERMISSIONS);
+  } catch {
+    return [];
+  }
+
+  const { data, error } = await createAdminClient()
     .from('employee_rates')
     .select('*, creator:users!employee_rates_created_by_fkey(full_name)')
     .eq('user_id', userId)
@@ -152,14 +151,14 @@ export async function getEmployeeRatesHistory(
 }
 
 /**
- * Удаление конкретного периода ставки сотрудника
+ * Удаление конкретного периода ставки сотрудника (rates.manage)
  */
 export async function deleteEmployeeRatePeriod(
   rateId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
-    const { error } = await supabase.from('employee_rates').delete().eq('rate_id', rateId);
+    await requirePermission('rates.manage');
+    const { error } = await createAdminClient().from('employee_rates').delete().eq('rate_id', rateId);
     if (error) return { success: false, error: error.message };
     revalidateTag('rates');
     revalidatePath('/rates');
@@ -171,7 +170,7 @@ export async function deleteEmployeeRatePeriod(
 }
 
 /**
- * Установка или обновление персональной ставки на период (строго admin)
+ * Установка или обновление персональной ставки на период (rates.manage)
  * Сохраняет историю периодов (UNIQUE по user_id, effective_from)
  */
 export async function upsertEmployeeRate(data: {
@@ -181,7 +180,7 @@ export async function upsertEmployeeRate(data: {
   effective_from: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const { profile, supabase } = await requireAdmin();
+    const { profile } = await requirePermission('rates.manage');
 
     const parsed = EmployeeRateSchema.safeParse(data);
     if (!parsed.success) {
@@ -192,7 +191,7 @@ export async function upsertEmployeeRate(data: {
     const connectionPercent = roundMoney(validData.connection_percent);
     const maintenancePercent = roundMoney(validData.maintenance_percent);
 
-    const { error } = await supabase.from('employee_rates').upsert(
+    const { error } = await createAdminClient().from('employee_rates').upsert(
       {
         user_id: validData.user_id,
         connection_percent: connectionPercent,
@@ -215,18 +214,18 @@ export async function upsertEmployeeRate(data: {
 }
 
 /**
- * Сброс/удаление персональной ставки сотрудника (строго admin)
+ * Сброс/удаление персональной ставки сотрудника (rates.manage)
  * После удаления сотрудник рассчитывается по базовым ставкам платформы (30% / 10%)
  */
 export async function deleteEmployeeRate(userId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('rates.manage');
 
     if (!userId) {
       return { success: false, error: 'Не указан идентификатор сотрудника' };
     }
 
-    const { error } = await supabase
+    const { error } = await createAdminClient()
       .from('employee_rates')
       .delete()
       .eq('user_id', userId);
@@ -244,4 +243,3 @@ export async function deleteEmployeeRate(userId: string): Promise<{ success: boo
     return { success: false, error: err.message || 'Ошибка сброса персональной ставки' };
   }
 }
-

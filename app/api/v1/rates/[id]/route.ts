@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { upsertEmployeeRate, deleteEmployeeRate } from '@/app/rates/actions';
 
+/** Обновление ставки сотрудника: rates.manage */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requirePermission('rates.manage');
     const body = await req.json();
 
     const res = await upsertEmployeeRate({
@@ -29,13 +30,14 @@ export async function PATCH(
   }
 }
 
+/** Сброс ставки сотрудника: rates.manage */
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requirePermission('rates.manage');
 
     const res = await deleteEmployeeRate(id);
     if (!res.success) {

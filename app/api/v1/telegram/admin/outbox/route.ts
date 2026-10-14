@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -30,7 +30,7 @@ export interface TelegramOutboxItem {
 /** Журнал сообщений Telegram (очередь и отправленные) */
 export async function GET(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requirePermission('telegram.manage');
     const admin = db();
     const { searchParams } = req.nextUrl;
 

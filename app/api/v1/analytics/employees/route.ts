@@ -1,10 +1,13 @@
 import { NextRequest } from 'next/server';
-import { requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
-export async function GET(req: NextRequest) {
+/** KPI сотрудников (analytics.employees): результативность консультантов по лидам */
+export async function GET(_req: NextRequest) {
   try {
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    await requirePermission('analytics.employees');
+    const supabase = createAdminClient();
 
     // Запрашиваем консультантов и их результативность
     const { data: consultants, error: userErr } = await supabase

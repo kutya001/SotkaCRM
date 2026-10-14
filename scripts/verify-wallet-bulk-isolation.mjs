@@ -56,7 +56,7 @@ const leadsAssignBatch = LeadsBatchActionSchema.safeParse({
   lead_ids: ['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'],
   assigned_to: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
 });
-assert(leadsAssignBatch.success, 'Пакетное переназначение куратора лидов валидно');
+assert(leadsAssignBatch.success, 'Пакетное переназначение консультанта лидов валидно');
 
 // Лиды: delete
 const leadsDeleteBatch = LeadsBatchActionSchema.safeParse({
@@ -79,7 +79,7 @@ const sellersManagerBatch = SellersBatchActionSchema.safeParse({
   seller_ids: ['996555123456'],
   manager_id: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
 });
-assert(sellersManagerBatch.success, 'Пакетное назначение куратора продавцов валидно');
+assert(sellersManagerBatch.success, 'Пакетное назначение консультанта продавцов валидно');
 
 // Продавцы: delete
 const sellersDeleteBatch = SellersBatchActionSchema.safeParse({

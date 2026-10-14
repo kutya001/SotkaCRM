@@ -56,7 +56,7 @@ export const MaintenanceBillingModal: React.FC<MaintenanceBillingModalProps> = (
       open={isOpen}
       onClose={onClose}
       title="Биллинг сопровождения"
-      subtitle="Ежемесячное начисление комиссий кураторам"
+      subtitle="Ежемесячное начисление комиссий консультантам"
       icon={RefreshCw}
       tone="purple"
       size="md"
@@ -80,7 +80,7 @@ export const MaintenanceBillingModal: React.FC<MaintenanceBillingModalProps> = (
     >
       <div className="space-y-4">
         <ModalCallout tone="purple">
-          Процедура начисляет бонусы кураторам за сопровождение магазинов (в пределах 2 месяцев сопровождения) по всем
+          Процедура начисляет бонусы консультантам за сопровождение магазинов (в пределах 2 месяцев сопровождения) по всем
           подтвержденным подключениям. Месяцы рассчитываются автоматически.
         </ModalCallout>
 

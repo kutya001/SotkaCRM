@@ -791,11 +791,76 @@ export type Database = {
           },
         ]
       }
+      role_permissions: {
+        Row: {
+          permission: string
+          role_id: string
+        }
+        Insert: {
+          permission: string
+          role_id: string
+        }
+        Update: {
+          permission?: string
+          role_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_permissions_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["role_id"]
+          },
+        ]
+      }
+      roles: {
+        Row: {
+          base_role: Database["public"]["Enums"]["user_role"]
+          code: string
+          created_at: string
+          description: string | null
+          is_admin: boolean
+          is_system: boolean
+          name: string
+          role_id: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          base_role?: Database["public"]["Enums"]["user_role"]
+          code: string
+          created_at?: string
+          description?: string | null
+          is_admin?: boolean
+          is_system?: boolean
+          name: string
+          role_id?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          base_role?: Database["public"]["Enums"]["user_role"]
+          code?: string
+          created_at?: string
+          description?: string | null
+          is_admin?: boolean
+          is_system?: boolean
+          name?: string
+          role_id?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       sellers: {
         Row: {
           balance: number
           brands: string | null
           employees_count: number
+          hq_charges_total: number | null
+          hq_topups_total: number | null
+          hq_tx_synced_at: string | null
           is_active: boolean
           is_deleted_from_source: boolean
           last_activity: string | null
@@ -816,6 +881,9 @@ export type Database = {
           balance?: number
           brands?: string | null
           employees_count?: number
+          hq_charges_total?: number | null
+          hq_topups_total?: number | null
+          hq_tx_synced_at?: string | null
           is_active?: boolean
           is_deleted_from_source?: boolean
           last_activity?: string | null
@@ -836,6 +904,9 @@ export type Database = {
           balance?: number
           brands?: string | null
           employees_count?: number
+          hq_charges_total?: number | null
+          hq_topups_total?: number | null
+          hq_tx_synced_at?: string | null
           is_active?: boolean
           is_deleted_from_source?: boolean
           last_activity?: string | null
@@ -893,6 +964,7 @@ export type Database = {
           longitude: number | null
           phone: string | null
           role: Database["public"]["Enums"]["user_role"]
+          role_id: string | null
           user_id: string
         }
         Insert: {
@@ -911,6 +983,7 @@ export type Database = {
           longitude?: number | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
+          role_id?: string | null
           user_id?: string
         }
         Update: {
@@ -929,9 +1002,18 @@ export type Database = {
           longitude?: number | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"]
+          role_id?: string | null
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "users_role_id_fkey"
+            columns: ["role_id"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["role_id"]
+          },
+        ]
       }
     }
     Views: {
@@ -945,6 +1027,7 @@ export type Database = {
           login: string | null
           phone: string | null
           role: Database["public"]["Enums"]["user_role"] | null
+          role_id: string | null
           user_id: string | null
         }
         Insert: {
@@ -956,6 +1039,7 @@ export type Database = {
           login?: string | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
+          role_id?: string | null
           user_id?: string | null
         }
         Update: {
@@ -967,6 +1051,7 @@ export type Database = {
           login?: string | null
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
+          role_id?: string | null
           user_id?: string | null
         }
         Relationships: []
@@ -998,6 +1083,14 @@ export type Database = {
         Returns: Json
       }
       get_current_crm_user_id: { Args: never; Returns: string }
+      get_current_user_permissions: {
+        Args: Record<PropertyKey, never>
+        Returns: string[]
+      }
+      has_permission: {
+        Args: { p_key: string }
+        Returns: boolean
+      }
       get_current_user_role: {
         Args: never
         Returns: Database["public"]["Enums"]["user_role"]

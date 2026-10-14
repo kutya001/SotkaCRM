@@ -209,7 +209,7 @@ export const CuratorSelectDropdown: React.FC<CuratorSelectDropdownProps> = ({
                 <Search className="w-3.5 h-3.5" />
                 <input
                   type="text"
-                  placeholder="Поиск куратора..."
+                  placeholder="Поиск консультанта..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   onClick={(e) => e.stopPropagation()}
@@ -238,7 +238,7 @@ export const CuratorSelectDropdown: React.FC<CuratorSelectDropdownProps> = ({
               {isUnassigned && <Check className="w-3.5 h-3.5 text-zinc-500 shrink-0 ml-1" />}
             </button>
 
-            {/* Список кураторов с точечной подсветкой */}
+            {/* Список консультантов с точечной подсветкой */}
             {filteredManagers.map((mgr) => {
               const isSelected = mgr.user_id === value;
               return (
@@ -276,7 +276,7 @@ export const CuratorSelectDropdown: React.FC<CuratorSelectDropdownProps> = ({
 
             {filteredManagers.length === 0 && (
               <div className="px-3 py-2 text-center text-[11px] text-zinc-400">
-                Куратор не найден
+                Консультант не найден
               </div>
             )}
           </div>

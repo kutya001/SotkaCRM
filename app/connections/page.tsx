@@ -128,6 +128,13 @@ export default function ConnectionsPage() {
   const { showToast } = useToast();
   const confirm = useConfirm();
   const user = useUser();
+  // Права назначенной роли
+  const canEdit = user.can('connections.edit');
+  const canConfirm = user.can('connections.confirm');
+  const canAccrue = user.can('connections.accrue');
+  const canEditAccruals = user.can('connections.accruals_edit');
+  const canDelete = user.can('connections.delete');
+  const canBulk = user.can('connections.bulk');
 
   const [connections, setConnections] = React.useState<ConnectionItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
@@ -194,15 +201,15 @@ export default function ConnectionsPage() {
   const [isDeletingConnection, setIsDeletingConnection] = React.useState(false);
 
   const handleDeleteConnection = async (conn: ConnectionItem) => {
-    if (currentUserRole !== 'admin') {
-      showToast('Удаление подключений разрешено только администраторам', 'error');
+    if (!canDelete) {
+      showToast('Удаление подключений не предусмотрено вашей ролью', 'error');
       return;
     }
     setIsDeletingConnection(true);
     try {
       await api.connections.delete(conn.connection_id);
       showToast(
-        `Подключение ${conn.seller_name} удалено. Куратор продавца сброшен`,
+        `Подключение ${conn.seller_name} удалено. Консультант продавца сброшен`,
         'success'
       );
       setConnectionToDelete(null);
@@ -247,7 +254,7 @@ export default function ConnectionsPage() {
       title: 'Подтвердить выбранные подключения?',
       subtitle: `Выбрано подключений: ${selectedConnectionIds.length}`,
       description:
-        'Подтверждаются только подключения в статусе «Ожидает подтверждения»; остальные будут пропущены. После подтверждения куратору начисляется бонус за подключение.',
+        'Подтверждаются только подключения в статусе «Ожидает подтверждения»; остальные будут пропущены. После подтверждения консультанту начисляется бонус за подключение.',
       tone: 'success',
       icon: ShieldCheck,
       confirmLabel: 'Подтвердить',
@@ -324,30 +331,38 @@ export default function ConnectionsPage() {
     }
   };
 
-  // Загрузка данных
-  const fetchData = React.useCallback(async (month?: string, status?: string, confirmation?: string) => {
+  // Загрузка данных: весь реестр за выбранный месяц/статус клиента постранично.
+  // Вкладки подтверждения — клиентский фильтр, без повторных запросов.
+  const fetchData = React.useCallback(async (month?: string, status?: string) => {
     setIsLoading(true);
     try {
       const monthFilter = month !== undefined ? month : selectedMonth;
       const statusFilter = status !== undefined ? status : selectedStatus;
-      const confirmationFilter = confirmation !== undefined ? confirmation : confirmationTab;
+      const PAGE_SIZE = 100;
+      const baseParams = {
+        pageSize: PAGE_SIZE,
+        accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
+        clientStatus: statusFilter !== 'all' ? statusFilter : undefined,
+        bypassCache: true,
+      };
 
       const [res, statsRes, monthsRes, plansRes] = await Promise.all([
-        api.connections.getAll({
-          page: 1,
-          pageSize: 50,
-          accrualMonth: monthFilter !== 'all' ? monthFilter : undefined,
-          clientStatus: statusFilter !== 'all' ? statusFilter : undefined,
-          confirmation: confirmationFilter !== 'all' ? confirmationFilter : undefined,
-          bypassCache: true,
-        }),
+        api.connections.getAll({ page: 1, ...baseParams }),
         getConnectionsStats(),
         getAccrualMonthsList(),
         getActivePlansList(),
       ]);
 
-      setConnections(res.items || []);
-      setTotalCount(res.total || 0);
+      const items = [...(res.items || [])];
+      const total = res.total || items.length;
+      for (let page = 2; items.length < total && page <= 50; page++) {
+        const next = await api.connections.getAll({ page, ...baseParams });
+        if (!next.items || next.items.length === 0) break;
+        items.push(...next.items);
+      }
+
+      setConnections(items);
+      setTotalCount(total);
       setPendingCount(Number(res.pending_count) || 0);
       setStats(statsRes);
       setAccrualMonths(monthsRes);
@@ -363,11 +378,17 @@ export default function ConnectionsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedMonth, selectedStatus, confirmationTab, showToast]);
+  }, [selectedMonth, selectedStatus, showToast]);
 
+  // Клиентский фильтр по вкладке подтверждения
+  const visibleConnections = React.useMemo(
+    () => (confirmationTab === 'all' ? connections : connections.filter((c) => c.confirmation_status === confirmationTab)),
+    [connections, confirmationTab]
+  );
+
+  // Вкладка — чистый клиентский фильтр: данные не перезапрашиваются
   const handleConfirmationTabChange = (tabId: string) => {
     setConfirmationTab(tabId);
-    fetchData(undefined, undefined, tabId);
   };
 
   // Подтверждение подключения администратором (бонус начисляется триггером БД)
@@ -375,8 +396,8 @@ export default function ConnectionsPage() {
     async (conn: ConnectionItem) => {
       const ok = await confirm({
         title: 'Подтвердить подключение?',
-        subtitle: `${conn.seller_name} (${formatPhoneDisplay(conn.seller_phone)}) → ${conn.manager_user?.full_name || 'куратор'}`,
-        description: `Куратору будет начислен бонус за подключение: +${Number(
+        subtitle: `${conn.seller_name} (${formatPhoneDisplay(conn.seller_phone)}) → ${conn.manager_user?.full_name || 'консультант'}`,
+        description: `Консультанту будет начислен бонус за подключение: +${Number(
           conn.tariff_connection_fee || conn.connection_fee || conn.connection_fee_amount || 0
         ).toLocaleString('ru-RU')} сом.`,
         tone: 'success',
@@ -412,7 +433,7 @@ export default function ConnectionsPage() {
     }
     try {
       const res = await api.connections.setConfirmation(conn.connection_id, 'reject', reason);
-      showToast(res.message || 'Подключение отклонено, куратор у продавца снят', 'info');
+      showToast(res.message || 'Подключение отклонено, консультант у продавца снят', 'info');
       setRejectDialog({ connection: null, reason: '' });
       setSelectedConnection((prev) =>
         prev?.connection_id === conn.connection_id
@@ -427,12 +448,17 @@ export default function ConnectionsPage() {
 
   const confirmationTabs: DataJournalTab[] = React.useMemo(
     () => [
-      { id: 'all', label: 'Все', icon: Link2 },
-      { id: 'pending', label: 'Ожидают подтверждения', icon: Hourglass, count: pendingCount },
-      { id: 'confirmed', label: 'Подтверждены', icon: ShieldCheck },
-      { id: 'rejected', label: 'Отклонены', icon: XCircle },
+      { id: 'all', label: 'Все', icon: Link2, count: connections.length },
+      {
+        id: 'pending',
+        label: 'Ожидают подтверждения',
+        icon: Hourglass,
+        count: Math.max(pendingCount, connections.filter((c) => c.confirmation_status === 'pending').length),
+      },
+      { id: 'confirmed', label: 'Подтверждены', icon: ShieldCheck, count: connections.filter((c) => c.confirmation_status === 'confirmed').length },
+      { id: 'rejected', label: 'Отклонены', icon: XCircle, count: connections.filter((c) => c.confirmation_status === 'rejected').length },
     ],
-    [pendingCount]
+    [pendingCount, connections]
   );
 
   React.useEffect(() => {
@@ -514,7 +540,7 @@ export default function ConnectionsPage() {
     }
   };
 
-  // Динамический пересчет цены тарифа и ставки куратора при смене даты или тарифа
+  // Динамический пересчет цены тарифа и ставки консультанта при смене даты или тарифа
   const handleDateOrPlanChange = async (newDate: string, newPlanId: string) => {
     setEditAssignedDate(newDate);
     setEditPlanId(newPlanId);
@@ -606,7 +632,7 @@ export default function ConnectionsPage() {
   };
 
   // Если пользователь SMM — доступ закрыт
-  if (currentUserRole === 'smm') {
+  if (currentUserRole === 'smm' || !user.can('connections.menu')) {
     return (
       <AppLayout userRole="smm" userName={userName} userLogin={userLogin}>
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
@@ -983,7 +1009,7 @@ export default function ConnectionsPage() {
         <span className="hidden md:inline">Обновить</span>
       </button>
 
-      {currentUserRole === 'admin' && (
+      {canAccrue && (
         <button
           type="button"
           onClick={() => setIsAccrueBonusesModalOpen(true)}
@@ -1000,8 +1026,8 @@ export default function ConnectionsPage() {
 
   const renderCustomRowActions = React.useCallback(
     (row: ConnectionItem) => {
-      if (currentUserRole !== 'admin') return null;
-      const isPending = row.confirmation_status === 'pending';
+      if (!canConfirm && !canDelete) return null;
+      const isPending = row.confirmation_status === 'pending' && canConfirm;
       return (
         <div className="flex flex-col gap-0.5">
           {isPending && (
@@ -1031,21 +1057,23 @@ export default function ConnectionsPage() {
               </button>
             </>
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setConnectionToDelete(row);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
-          >
-            <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
-            <span>Удалить подключение</span>
-          </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConnectionToDelete(row);
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
+              <span>Удалить подключение</span>
+            </button>
+          )}
         </div>
       );
     },
-    [currentUserRole, confirmingId, handleConfirmConnection]
+    [canConfirm, canDelete, confirmingId, handleConfirmConnection]
   );
 
   return (
@@ -1086,20 +1114,20 @@ export default function ConnectionsPage() {
 
         {/* ЯРУС 3: Универсальный реестр DataJournal */}
         <DataJournal<ConnectionItem>
-          data={connections}
+          data={visibleConnections}
           columns={columns}
           keyField="connection_id"
           storageKey="connections_journal"
           searchPlaceholder="Поиск по продавцу, магазину или телефону..."
           onRowClick={handleRowClick}
-          totalCount={totalCount}
+          totalCount={visibleConnections.length}
           externalSearchQuery={searchQuery}
           tabs={confirmationTabs}
           activeTab={confirmationTab}
           onTabChange={handleConfirmationTabChange}
           customActions={connectionActions}
           customRowActions={renderCustomRowActions}
-          enableSelection={currentUserRole === 'admin'}
+          enableSelection={canBulk}
           selectedIds={selectedConnectionIds}
           onSelectionChange={setSelectedConnectionIds}
           renderBulkActions={(ids, clearSelection) => (
@@ -1155,7 +1183,7 @@ export default function ConnectionsPage() {
             footerClassName="justify-between"
             footer={
               <>
-                {currentUserRole === 'admin' ? (
+                {canDelete ? (
                   <Button
                     variant="dangerSoft"
                     onClick={() => setConnectionToDelete(selectedConnection)}
@@ -1185,7 +1213,7 @@ export default function ConnectionsPage() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <ConfirmationBadge status={selectedConnection.confirmation_status} />
-                  {currentUserRole === 'admin' && selectedConnection.confirmation_status === 'pending' && (
+                  {canConfirm && selectedConnection.confirmation_status === 'pending' && (
                     <div className="flex items-center gap-2">
                       <Button
                         variant="success"
@@ -1260,13 +1288,13 @@ export default function ConnectionsPage() {
                     <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
                       Дата подключения
                     </span>
-                    {currentUserRole === 'admin' && (
+                    {canEdit && (
                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium">
-                        Admin
+                        Редактирование
                       </span>
                     )}
                   </div>
-                  {currentUserRole === 'admin' ? (
+                  {canEdit ? (
                     <div className="space-y-1 pt-0.5">
                       <Input
                         type="date"
@@ -1303,7 +1331,7 @@ export default function ConnectionsPage() {
                   </span>
                 </div>
 
-                {currentUserRole === 'admin' ? (
+                {canEdit ? (
                   <div className="space-y-2.5 pt-1 border-t border-emerald-500/20 text-xs">
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
@@ -1492,7 +1520,7 @@ export default function ConnectionsPage() {
                   </div>
                 </div>
 
-                {currentUserRole === 'admin' ? (
+                {canEdit ? (
                   <div className="pt-2 border-t border-zinc-200/40 dark:border-zinc-700/40 flex items-center justify-between gap-3 text-xs">
                     <div>
                       <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block">
@@ -1532,7 +1560,7 @@ export default function ConnectionsPage() {
               <div className="pt-2 border-t border-zinc-200/50 dark:border-zinc-700/50">
                 <ConnectionAccrualsSection
                   connectionId={selectedConnection.connection_id}
-                  isAdmin={currentUserRole === 'admin'}
+                  isAdmin={canEditAccruals}
                   onUpdated={fetchData}
                 />
               </div>
@@ -1570,7 +1598,7 @@ export default function ConnectionsPage() {
                 <span>Внимание: действие необратимо</span>
               </div>
               <p className="text-[11px] leading-relaxed">
-                Будут удалены все начисления куратора по этому клиенту, а назначенный куратор в карточке продавца будет автоматически сброшен.
+                Будут удалены все начисления консультанта по этому клиенту, а назначенный консультант в карточке продавца будет автоматически сброшен.
               </p>
             </div>
           }
@@ -1585,7 +1613,7 @@ export default function ConnectionsPage() {
           subtitle={
             rejectDialog.connection
               ? `${rejectDialog.connection.seller_name} (${formatPhoneDisplay(rejectDialog.connection.seller_phone)}) → ${
-                  rejectDialog.connection.manager_user?.full_name || 'куратор'
+                  rejectDialog.connection.manager_user?.full_name || 'консультант'
                 }`
               : undefined
           }
@@ -1594,7 +1622,7 @@ export default function ConnectionsPage() {
           confirmLabel="Отклонить"
           confirmDisabled={rejectDialog.reason.trim().length < 3}
           level={2}
-          description="Куратор у продавца будет снят, привязанный лид вернется в статус «Назначен». Консультант получит уведомление с причиной."
+          description="Консультант у продавца будет снят, привязанный лид вернется в статус «Назначен». Консультант получит уведомление с причиной."
         >
           <FormField label="Причина отклонения" required hint="Не менее 3 символов">
             <Textarea

@@ -1,14 +1,17 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
-export async function GET(req: NextRequest) {
+/** Воронка лидов: analytics.menu; область лидов — leads.view_all либо свои (назначенные или созданные) */
+export async function GET(_req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
+    const ctx = await requirePermission('analytics.menu');
+    const { profile } = ctx;
 
-    let query = supabase.from('leads').select('status, created_at');
-    if (profile.role === 'consultant') {
-      query = query.eq('assigned_to', profile.user_id);
+    let query = createAdminClient().from('leads').select('status, created_at');
+    if (!ctx.canViewAll('leads')) {
+      query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
     }
 
     const { data: leads, error } = await query;

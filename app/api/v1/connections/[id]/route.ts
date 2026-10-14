@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireRoles, requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { isConnectionInScope } from '@/lib/services/connections';
 
 export async function GET(
   req: NextRequest,
@@ -8,18 +10,16 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { profile, supabase } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к подключениям', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('connections.menu');
+    const { profile } = ctx;
+    const supabase = createAdminClient();
 
     let query = (supabase as any)
       .from('connections_with_accruals')
       .select('*')
       .eq('connection_id', id);
 
-    if (profile.role === 'consultant') {
+    if (!ctx.canViewAll('connections')) {
       query = query.eq('manager_id', profile.user_id);
     }
 
@@ -87,7 +87,8 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    const ctx = await requirePermission('connections.edit');
+    const supabase = createAdminClient();
     const body = await req.json();
 
     const allowed = [
@@ -114,6 +115,21 @@ export async function PATCH(
       }
     }
 
+    // Запись должна быть в области видимости сотрудника
+    const { data: current, error: currentErr } = await supabase
+      .from('connections')
+      .select('connection_id, manager_id')
+      .eq('connection_id', id)
+      .maybeSingle();
+
+    if (currentErr) throw currentErr;
+    if (!current) {
+      return apiError('Подключение не найдено или не удалось обновить', 'NOT_FOUND', 404);
+    }
+    if (!isConnectionInScope(ctx, current)) {
+      return apiError('Подключение вне вашей области видимости', 'FORBIDDEN', 403);
+    }
+
     const { data: updated, error } = await supabase
       .from('connections')
       .update(updates as any)
@@ -137,12 +153,13 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireAdmin();
+    const ctx = await requirePermission('connections.delete');
+    const supabase = createAdminClient();
 
     // 1. Поиск подключения для извлечения seller_phone
     const { data: conn, error: getErr } = await supabase
       .from('connections')
-      .select('connection_id, seller_phone')
+      .select('connection_id, seller_phone, manager_id')
       .eq('connection_id', id)
       .maybeSingle();
 
@@ -150,8 +167,11 @@ export async function DELETE(
     if (!conn) {
       return apiError('Подключение не найдено', 'NOT_FOUND', 404);
     }
+    if (!isConnectionInScope(ctx, conn)) {
+      return apiError('Подключение вне вашей области видимости', 'FORBIDDEN', 403);
+    }
 
-    // 2. Сброс назначенного куратора у продавца в NULL
+    // 2. Сброс назначенного консультанта у продавца в NULL
     if (conn.seller_phone) {
       const { error: sellerErr } = await supabase
         .from('sellers')
@@ -159,11 +179,11 @@ export async function DELETE(
         .eq('seller_phone', conn.seller_phone);
 
       if (sellerErr) {
-        console.error('[DELETE connection] Ошибка сброса куратора продавца:', sellerErr);
+        console.error('[DELETE connection] Ошибка сброса консультанта продавца:', sellerErr);
       }
     }
 
-    // 3. Удаление связанных начислений кураторам из обоих регистров
+    // 3. Удаление связанных начислений консультантам из обоих регистров
     await supabase
       .from('connection_accruals')
       .delete()

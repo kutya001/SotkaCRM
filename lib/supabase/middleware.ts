@@ -133,26 +133,8 @@ export async function updateSession(request: NextRequest) {
       return createRedirectWithCookies(url, supabaseResponse);
     }
 
-    // Маршруты /admin/*, /plans/* и /docs разрешены строго для роли admin
-    if (
-      (pathname.startsWith('/admin') || pathname.startsWith('/plans') || pathname.startsWith('/docs')) &&
-      role !== 'admin'
-    ) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/';
-      return createRedirectWithCookies(url, supabaseResponse);
-    }
-
-    // Роли smm запрещен доступ к продавцам, платежам, связям, выплатам, аналитике и тарифам
-    const restrictedForSmm = ['/sellers', '/payments', '/connections', '/payouts', '/analytics', '/plans', '/rates'];
-    if (
-      role === 'smm' &&
-      restrictedForSmm.some((prefix) => pathname.startsWith(prefix))
-    ) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/leads';
-      return createRedirectWithCookies(url, supabaseResponse);
-    }
+    // Доступ к разделам определяется правами назначенной роли (каталог lib/auth/permissions-catalog.ts):
+    // страницы и API проверяют их сами, middleware только поддерживает сессию и блокировку.
   }
 
   return supabaseResponse;

@@ -1,7 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
-import type { AuthContext } from '@/lib/auth/check-role';
-import type { UserRole } from '@/types/database.types';
+import { hasAnyPermission, hasPermission } from '@/lib/auth/permissions';
+import { isLeadInScope } from '@/lib/leads/status-rules';
 
 export interface LeadLinkResult {
   success: boolean;
@@ -12,35 +12,59 @@ export interface LeadLinkResult {
   confirmationStatus?: 'pending' | 'confirmed';
 }
 
-/** Роли, которые привязывают лид с подтвержденным подключением (руководитель — только просмотр) */
-const PRIVILEGED_ROLES: UserRole[] = ['admin'];
+/** Субъект связывания: серверный AuthContext либо компактная форма { userId, permissions } */
+export type LeadLinkActor =
+  | { userId: string; permissions: string[] }
+  | { profile: { user_id: string }; permissions: string[] };
+
+export interface LeadLinkParams {
+  leadId: string;
+  sellerPhone: string;
+  /** Желаемый консультант — учитывается только при праве «sellers.assign» */
+  managerId?: string | null;
+  /**
+   * Откуда инициировано связывание: со стороны лида («leads.link_seller») или продавца («sellers.link_lead»).
+   * Если не указано — достаточно любого из двух прав.
+   */
+  via?: 'lead' | 'seller';
+}
+
+const LINK_PERMISSIONS: Record<NonNullable<LeadLinkParams['via']>, string> = {
+  lead: 'leads.link_seller',
+  seller: 'sellers.link_lead',
+};
+
+function normalizeActor(actor: LeadLinkActor): { userId: string; permissions: string[] } {
+  return 'profile' in actor
+    ? { userId: actor.profile.user_id, permissions: actor.permissions }
+    : { userId: actor.userId, permissions: actor.permissions };
+}
 
 /**
  * Атомарное связывание лида с продавцом через RPC link_lead_to_seller.
  *
  * RPC доступна только service_role (миграция 029), поэтому права проверяются здесь:
- * - admin может указать любого куратора (managerId), подключение сразу подтверждено;
- * - consultant связывает только свои или неназначенные лиды, куратором становится лид-владелец
- *   или сам консультант — переданный managerId игнорируется; подключение ожидает
- *   подтверждения администратором (начисление — после подтверждения, миграция 037).
+ * - право связывания: «leads.link_seller» (со стороны лида) или «sellers.link_lead» (со стороны продавца);
+ * - без «leads.view_all» связывать можно только свои (назначенные мне / созданные мной) или неназначенные лиды;
+ * - выбор консультанта (managerId) — только с правом «sellers.assign», иначе консультантом становится
+ *   ответственный за лид либо сам сотрудник;
+ * - подключение подтверждается сразу при праве «connections.confirm», иначе ожидает подтверждения
+ *   (начисление — после подтверждения, миграция 037).
  */
-export async function linkLeadToSellerAtomic(
-  ctx: AuthContext,
-  params: { leadId: string; sellerPhone: string; managerId?: string | null }
-): Promise<LeadLinkResult> {
-  const { profile, supabase } = ctx;
+export async function linkLeadToSellerAtomic(ctx: LeadLinkActor, params: LeadLinkParams): Promise<LeadLinkResult> {
+  const { userId, permissions } = normalizeActor(ctx);
 
-  if (!PRIVILEGED_ROLES.includes(profile.role) && profile.role !== 'consultant') {
+  const requiredKeys = params.via ? [LINK_PERMISSIONS[params.via]] : Object.values(LINK_PERMISSIONS);
+  if (!hasAnyPermission(permissions, requiredKeys)) {
     return { success: false, error: 'Недостаточно прав для связывания лида с продавцом' };
   }
 
-  const isPrivileged = PRIVILEGED_ROLES.includes(profile.role);
+  const admin = createAdminClient();
 
-  if (!isPrivileged) {
-    // Чтение с клиентом пользователя: RLS скрывает чужие лиды
-    const { data: lead } = await supabase
+  if (!hasPermission(permissions, 'leads.view_all')) {
+    const { data: lead } = await admin
       .from('leads')
-      .select('lead_id, assigned_to')
+      .select('lead_id, assigned_to, created_by')
       .eq('lead_id', params.leadId)
       .maybeSingle();
 
@@ -48,19 +72,25 @@ export async function linkLeadToSellerAtomic(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    if (lead.assigned_to && lead.assigned_to !== profile.user_id) {
-      return { success: false, error: 'Можно связывать только свои лиды' };
+    const isUnassigned = !lead.assigned_to;
+    if (!isUnassigned && !isLeadInScope({ userId, permissions }, lead)) {
+      return { success: false, error: 'Можно связывать только свои или неназначенные лиды' };
     }
   }
 
+  const canChooseManager = hasPermission(permissions, 'sellers.assign');
+  const confirmationStatus: 'pending' | 'confirmed' = hasPermission(permissions, 'connections.confirm')
+    ? 'confirmed'
+    : 'pending';
+
   // Единственная реализация RPC (миграция 037): все параметры передаются явно
-  const { data, error } = await (createAdminClient().rpc as any)('link_lead_to_seller', {
+  const { data, error } = await admin.rpc('link_lead_to_seller', {
     p_lead_id: params.leadId,
     p_seller_phone: params.sellerPhone,
-    p_user_id: profile.user_id,
-    p_manager_id: (isPrivileged && params.managerId) || null,
-    p_assigned_by: profile.user_id,
-    p_confirmation_status: isPrivileged ? 'confirmed' : 'pending',
+    p_user_id: userId,
+    p_manager_id: (canChooseManager && params.managerId) || null,
+    p_assigned_by: userId,
+    p_confirmation_status: confirmationStatus,
   });
 
   if (error) {

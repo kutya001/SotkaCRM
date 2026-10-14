@@ -1,15 +1,18 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { requireAuth } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { CancelReasonSchema, LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
 import {
+  canAssignLead,
   canChangeLeadStatus,
+  canEditLeadComment,
   canEditLeadFields,
   implicitStatusForAssignment,
   isCancelStatus,
+  isLeadInScope,
+  leadActorFrom,
 } from '@/lib/leads/status-rules';
 import {
   DEFAULT_COUNTRY_CODE,
@@ -63,9 +66,21 @@ export interface GetLeadsParams {
 export interface LeadsResponse {
   leads: LeadItem[];
   totalCount: number;
+  /** Базовая роль (устаревший enum) — только как данные для интерфейса */
   currentUserRole?: string;
   currentUserId?: string;
+  /** Права назначенной роли («*» — полный доступ) для правил lib/leads/status-rules на клиенте */
+  currentUserPermissions?: string[];
 }
+
+const EMPTY_STATS = {
+  total: 0,
+  open: 0,
+  processed: 0,
+  assigned: 0,
+  signed: 0,
+  cancelled: 0,
+};
 
 /**
  * Получение списка лидов с обогащением данных ответственных и авторов
@@ -77,7 +92,17 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
   } catch {
     return { leads: [], totalCount: 0 };
   }
-  const { profile: currentProfile, supabase } = authCtx;
+  const { profile: currentProfile, permissions, can, canViewAll } = authCtx;
+
+  if (!can('leads.menu')) {
+    return {
+      leads: [],
+      totalCount: 0,
+      currentUserRole: currentProfile.role,
+      currentUserId: currentProfile.user_id,
+      currentUserPermissions: permissions,
+    };
+  }
 
   const {
     page = 1,
@@ -88,42 +113,38 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
     sortOrder = 'desc',
   } = params;
 
-    let query = supabase
-      .from('leads')
-      .select(
-        `
-          lead_id,
-          client_name,
-          phone,
-          country_code,
-          status,
-          instagram,
-          comment,
-          created_by,
-          assigned_to,
-          seller_phone,
-          linked_at,
-          created_at,
-          updated_at,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
-        `,
-        { count: 'exact' }
-      );
+  let query = createAdminClient()
+    .from('leads')
+    .select(
+      `
+        lead_id,
+        client_name,
+        phone,
+        country_code,
+        status,
+        instagram,
+        comment,
+        created_by,
+        assigned_to,
+        seller_phone,
+        linked_at,
+        created_at,
+        updated_at,
+        assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
+        created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
+      `,
+      { count: 'exact' }
+    );
 
-    // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только свои назначенные лиды в статусах Назначен, Подписан, Отмена
-    if (currentProfile?.role === 'consultant') {
-      query = query
-        .eq('assigned_to', currentProfile.user_id)
-        .in('status', ['Назначен', 'Подписан', 'Отмена']);
-    } else if (currentProfile?.role === 'smm') {
-      query = query.eq('created_by', currentProfile.user_id);
-    }
+  // Область данных: без «leads.view_all» — только свои лиды (назначенные мне или созданные мной)
+  if (!canViewAll('leads')) {
+    query = query.or(`assigned_to.eq.${currentProfile.user_id},created_by.eq.${currentProfile.user_id}`);
+  }
 
-    // Фильтрация по статусу
-    if (status && status !== 'Все') {
-      query = query.eq('status', status as LeadStatus);
-    }
+  // Фильтрация по статусу
+  if (status && status !== 'Все') {
+    query = query.eq('status', status as LeadStatus);
+  }
 
   // Поиск по имени, телефону или комментарию
   if (search.trim()) {
@@ -152,8 +173,9 @@ export async function getLeads(params: GetLeadsParams = {}): Promise<LeadsRespon
   return {
     leads: (data as unknown as LeadItem[]) || [],
     totalCount: count || 0,
-    currentUserRole: currentProfile?.role,
-    currentUserId: currentProfile?.user_id,
+    currentUserRole: currentProfile.role,
+    currentUserId: currentProfile.user_id,
+    currentUserPermissions: permissions,
   };
 }
 
@@ -169,13 +191,10 @@ export async function createLead(input: {
   assigned_to?: string | null;
 }): Promise<{ success: boolean; error?: string; lead?: LeadItem }> {
   try {
-    const { profile, supabase } = await requireAuth();
+    const { profile, can } = await requireAuth();
 
-    if (profile.role !== 'admin' && profile.role !== 'smm') {
-      return {
-        success: false,
-        error: 'Добавлять лиды могут администратор и SMM-специалист',
-      };
+    if (!can('leads.create')) {
+      return { success: false, error: 'Недостаточно прав для создания лидов' };
     }
 
     // Санитизация пустых строк для опциональных полей перед валидацией
@@ -210,15 +229,14 @@ export async function createLead(input: {
     const countryCode = digitsOnly(valid.country_code) || DEFAULT_COUNTRY_CODE;
     const phoneWithoutCode = normalizeNational(valid.phone, countryCode);
 
-    // Инвариант назначения ответственного:
-    // 1. Для SMM куратор не назначается (заполняется администратором при переводе в «Назначен»)
-    // 2. Для администратора лид назначается на выбранного консультанта (или остается null)
-    let finalAssignedTo = valid.assigned_to;
-    if (profile.role === 'smm') {
+    // Инвариант назначения ответственного: без права «leads.assign» консультант не выбирается
+    // (лид остается без ответственного), кроме назначения на самого себя
+    let finalAssignedTo = valid.assigned_to || null;
+    if (!can('leads.assign') && finalAssignedTo !== profile.user_id) {
       finalAssignedTo = null;
     }
 
-    const { data: newLead, error } = await supabase
+    const { data: newLead, error } = await createAdminClient()
       .from('leads')
       .insert({
         client_name: valid.client_name.trim(),
@@ -228,7 +246,7 @@ export async function createLead(input: {
         instagram: valid.instagram || null,
         comment: valid.comment || null,
         created_by: profile.user_id,
-        assigned_to: finalAssignedTo || null,
+        assigned_to: finalAssignedTo,
       })
       .select(
         `
@@ -268,10 +286,12 @@ export async function updateLead(
   }
 ): Promise<{ success: boolean; error?: string; lead?: LeadItem }> {
   try {
-    const { profile, supabase } = await requireAuth();
+    const ctx = await requireAuth();
+    const actor = leadActorFrom(ctx);
+    const admin = createAdminClient();
 
-    // RBAC: единая матрица ролей (lib/leads/status-rules)
-    const { data: targetLead } = await supabase
+    // RBAC: единые правила по правам (lib/leads/status-rules)
+    const { data: targetLead } = await admin
       .from('leads')
       .select('created_by, assigned_to, status, country_code')
       .eq('lead_id', leadId)
@@ -281,43 +301,55 @@ export async function updateLead(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    if (!canEditLeadFields(profile.role, targetLead, profile.user_id)) {
-      return { success: false, error: 'Недостаточно прав для редактирования этого лида' };
+    if (!isLeadInScope(actor, targetLead)) {
+      return { success: false, error: 'Лид вне вашей области видимости' };
     }
 
-    if (updates.status !== undefined && updates.status !== targetLead.status) {
-      const check = canChangeLeadStatus(profile.role, targetLead, profile.user_id, updates.status);
+    const fullEdit = canEditLeadFields(actor, targetLead);
+    const commentEdit = canEditLeadComment(actor, targetLead);
+    const wantsFieldEdit =
+      updates.client_name !== undefined ||
+      updates.phone !== undefined ||
+      updates.country_code !== undefined ||
+      updates.instagram !== undefined;
+    const wantsReassign =
+      updates.assigned_to !== undefined &&
+      normalizeNullableUuid(updates.assigned_to) !== (targetLead.assigned_to ?? null);
+    const wantsStatusChange = updates.status !== undefined && updates.status !== targetLead.status;
+
+    if (wantsFieldEdit && !fullEdit) {
+      return { success: false, error: 'Недостаточно прав для редактирования карточки лида' };
+    }
+    if (updates.comment !== undefined && !commentEdit) {
+      return { success: false, error: 'Недостаточно прав для редактирования комментария лида' };
+    }
+    if (wantsReassign && !canAssignLead(actor)) {
+      return { success: false, error: 'Недостаточно прав для назначения ответственного' };
+    }
+    if (wantsStatusChange) {
+      const check = canChangeLeadStatus(actor, targetLead, updates.status as LeadStatus);
       if (!check.ok) return { success: false, error: check.reason };
       if (isCancelStatus(updates.status)) {
         return { success: false, error: 'Для отмены лида используйте действие «Отменить» с указанием причины' };
       }
+    }
+    if (!fullEdit && !commentEdit && !wantsReassign && !wantsStatusChange) {
+      return { success: false, error: 'Недостаточно прав для редактирования этого лида' };
     }
 
     const payload: Database['public']['Tables']['leads']['Update'] = {
       updated_at: new Date().toISOString(),
     };
 
-    // Консультант имеет право изменять ТОЛЬКО статус и комментарий
-    if (profile.role === 'consultant') {
-      if (updates.status !== undefined) payload.status = updates.status;
-      if (updates.comment !== undefined) {
-        payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
-      }
-    } else {
-      // Администратор и SMM (с учетом проверок выше)
+    if (updates.comment !== undefined) {
+      payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
+    }
+
+    if (fullEdit) {
       if (updates.client_name !== undefined) payload.client_name = updates.client_name.trim();
       if (updates.instagram !== undefined) {
         payload.instagram = updates.instagram && updates.instagram.trim() !== '' ? updates.instagram.trim() : null;
       }
-      if (updates.comment !== undefined) {
-        payload.comment = updates.comment && updates.comment.trim() !== '' ? updates.comment.trim() : null;
-      }
-      if (updates.assigned_to !== undefined && profile.role === 'admin') {
-        payload.assigned_to = normalizeNullableUuid(updates.assigned_to);
-        const implicit = implicitStatusForAssignment(targetLead.status, payload.assigned_to);
-        if (implicit && updates.status === undefined) payload.status = implicit;
-      }
-      if (updates.status !== undefined) payload.status = updates.status;
 
       if (updates.phone !== undefined || updates.country_code !== undefined) {
         const countryCode = digitsOnly(updates.country_code ?? targetLead.country_code) || DEFAULT_COUNTRY_CODE;
@@ -339,7 +371,15 @@ export async function updateLead(
       }
     }
 
-    const { data, error } = await supabase
+    if (wantsReassign) {
+      payload.assigned_to = normalizeNullableUuid(updates.assigned_to);
+      const implicit = implicitStatusForAssignment(targetLead.status, payload.assigned_to);
+      if (implicit && !wantsStatusChange) payload.status = implicit;
+    }
+
+    if (wantsStatusChange) payload.status = updates.status;
+
+    const { data, error } = await admin
       .from('leads')
       .update(payload)
       .eq('lead_id', leadId)
@@ -373,9 +413,10 @@ export async function updateLeadStatus(
   status: LeadStatus
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { profile, supabase } = await requireAuth();
+    const ctx = await requireAuth();
+    const admin = createAdminClient();
 
-    const { data: targetLead } = await supabase
+    const { data: targetLead } = await admin
       .from('leads')
       .select('created_by, assigned_to, status')
       .eq('lead_id', leadId)
@@ -385,7 +426,7 @@ export async function updateLeadStatus(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    const check = canChangeLeadStatus(profile.role, targetLead, profile.user_id, status);
+    const check = canChangeLeadStatus(leadActorFrom(ctx), targetLead, status);
     if (!check.ok) {
       return { success: false, error: check.reason };
     }
@@ -393,8 +434,8 @@ export async function updateLeadStatus(
       return { success: false, error: 'Для отмены лида укажите причину (действие «Отменить»)' };
     }
 
-    // Запись сервисным клиентом: права проверены матрицей ролей, RLS — страховка
-    const { error } = await createAdminClient()
+    // Запись сервисным клиентом: права проверены правилами, RLS — страховка
+    const { error } = await admin
       .from('leads')
       .update({
         status,
@@ -423,14 +464,15 @@ export async function cancelLead(
   reason: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { profile, supabase } = await requireAuth();
+    const ctx = await requireAuth();
+    const admin = createAdminClient();
 
     const parsedReason = CancelReasonSchema.safeParse(reason ?? '');
     if (!parsedReason.success) {
       return { success: false, error: parsedReason.error.issues[0]?.message || 'Укажите причину отмены' };
     }
 
-    const { data: currentLead } = await supabase
+    const { data: currentLead } = await admin
       .from('leads')
       .select('created_by, assigned_to, status')
       .eq('lead_id', leadId)
@@ -440,12 +482,12 @@ export async function cancelLead(
       return { success: false, error: 'Лид не найден в системе' };
     }
 
-    const check = canChangeLeadStatus(profile.role, currentLead, profile.user_id, 'Отмена');
+    const check = canChangeLeadStatus(leadActorFrom(ctx), currentLead, 'Отмена');
     if (!check.ok) {
       return { success: false, error: check.reason };
     }
 
-    const { error } = await createAdminClient()
+    const { error } = await admin
       .from('leads')
       .update({
         status: 'Отмена',
@@ -468,16 +510,15 @@ export async function cancelLead(
 }
 
 /**
- * Получение списка активных консультантов и администраторов
+ * Получение списка активных консультантов и администраторов (кандидаты в ответственные)
  */
 export async function getConsultantsList(): Promise<
   { user_id: string; full_name: string; role: string; login: string; color?: string }[]
 > {
   const authCtx = await requireAuth().catch(() => null);
   if (!authCtx) return [];
-  const { supabase } = authCtx;
 
-  const { data, error } = await supabase
+  const { data, error } = await createAdminClient()
     .from('users')
     .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
@@ -497,19 +538,13 @@ export async function getConsultantsList(): Promise<
  */
 export async function getLeadsStats() {
   const authCtx = await requireAuth().catch(() => null);
-  if (!authCtx) {
-    return {
-      total: 0,
-      open: 0,
-      processed: 0,
-      assigned: 0,
-      signed: 0,
-      cancelled: 0,
-    };
+  if (!authCtx || !authCtx.can('leads.menu')) {
+    return { ...EMPTY_STATS };
   }
-  const { supabase } = authCtx;
+  const { supabase, profile, canViewAll } = authCtx;
 
-  // Попытка получить предвычисленные агрегаты через SQL-функцию get_leads_funnel_stats (миграция 003)
+  // Попытка получить предвычисленные агрегаты через SQL-функцию get_leads_funnel_stats (миграция 003):
+  // RPC сама ограничивает область по auth.uid(), поэтому вызывается клиентом пользователя
   try {
     const { data: rpcStats, error: rpcError } = await supabase.rpc('get_leads_funnel_stats');
     if (!rpcError && rpcStats) {
@@ -527,19 +562,15 @@ export async function getLeadsStats() {
     console.warn('RPC get_leads_funnel_stats недоступен, fallback на агрегацию в памяти:', rpcErr);
   }
 
-  const { data, error } = await supabase
-    .from('leads')
-    .select('status');
+  let query = createAdminClient().from('leads').select('status');
+  if (!canViewAll('leads')) {
+    query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
+  }
+
+  const { data, error } = await query;
 
   if (error || !data) {
-    return {
-      total: 0,
-      open: 0,
-      processed: 0,
-      assigned: 0,
-      signed: 0,
-      cancelled: 0,
-    };
+    return { ...EMPTY_STATS };
   }
 
   return {
@@ -553,7 +584,7 @@ export async function getLeadsStats() {
 }
 
 /**
- * Быстрое назначение/переназначение ответственного консультанта администратором
+ * Быстрое назначение/переназначение ответственного консультанта (право «leads.assign»)
  * Поддерживает сброс консультанта (null) с возвратом статуса в "Обработан"
  */
 export async function assignLeadConsultant(
@@ -561,34 +592,38 @@ export async function assignLeadConsultant(
   consultantId: string | null
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { profile, supabase } = await requireAuth();
+    const ctx = await requireAuth();
+    const actor = leadActorFrom(ctx);
+    const admin = createAdminClient();
 
-    if (profile.role !== 'admin') {
-      return { success: false, error: 'Переназначение консультантов доступно только администратору' };
+    if (!canAssignLead(actor)) {
+      return { success: false, error: 'Недостаточно прав для назначения ответственного' };
     }
 
-    const { data: currentLead } = await supabase
+    const { data: currentLead } = await admin
       .from('leads')
-      .select('status')
+      .select('status, created_by, assigned_to')
       .eq('lead_id', leadId)
       .single();
+
+    if (!currentLead) {
+      return { success: false, error: 'Лид не найден в системе' };
+    }
+
+    if (!isLeadInScope(actor, currentLead)) {
+      return { success: false, error: 'Лид вне вашей области видимости' };
+    }
 
     const updates: Database['public']['Tables']['leads']['Update'] = {
       assigned_to: consultantId || null,
       updated_at: new Date().toISOString(),
     };
 
-    // Если консультант назначен и статус был Открыт или Обработан, автоматически переводим в Назначен
-    if (consultantId && currentLead && (currentLead.status === 'Открыт' || currentLead.status === 'Обработан')) {
-      updates.status = 'Назначен';
-    }
+    // Назначение из «Открыт»/«Обработан» → «Назначен»; снятие из «Назначен» → «Обработан»
+    const implicit = implicitStatusForAssignment(currentLead.status, consultantId);
+    if (implicit) updates.status = implicit;
 
-    // Если консультанта сбросили (null) и статус был Назначен, возвращаем в Обработан
-    if (!consultantId && currentLead && currentLead.status === 'Назначен') {
-      updates.status = 'Обработан';
-    }
-
-    const { error } = await supabase
+    const { error } = await admin
       .from('leads')
       .update(updates)
       .eq('lead_id', leadId);

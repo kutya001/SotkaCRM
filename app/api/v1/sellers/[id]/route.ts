@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireRoles, requireAdmin } from '@/lib/auth/check-role';
+import { requireAuth, requirePermission, PermissionError } from '@/lib/auth/check-role';
+import { PERMISSION_LABELS } from '@/lib/auth/permissions-catalog';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { assignSellerManager } from '@/app/sellers/actions';
-import { findSellerByKey } from '@/lib/services/sellers';
+import { findSellerByKey, isSellerInScope } from '@/lib/services/sellers';
 
 export async function GET(
   req: NextRequest,
@@ -11,11 +13,8 @@ export async function GET(
   try {
     const { id } = await params;
     const decodedId = decodeURIComponent(id);
-    const { supabase, profile } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к продавцам', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('sellers.menu');
+    const supabase = createAdminClient();
 
     const { data: seller, error } = await supabase
       .from('sellers')
@@ -27,10 +26,9 @@ export async function GET(
       return apiError('Продавец не найден', 'NOT_FOUND', 404);
     }
 
-    if (profile.role === 'consultant') {
-      if (seller.moderation !== 'approved' || seller.manager_id !== profile.user_id) {
-        return apiError('Продавец не назначен вам или находится на модерации', 'FORBIDDEN', 403);
-      }
+    // Область видимости: без «sellers.view_all» — только свои и свободные одобренные
+    if (!isSellerInScope(ctx, seller)) {
+      return apiError('Продавец не назначен вам или находится на модерации', 'FORBIDDEN', 403);
     }
 
     return apiSuccess(seller);
@@ -46,7 +44,7 @@ export async function PATCH(
   try {
     const { id } = await params;
     const decodedId = decodeURIComponent(id);
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    const ctx = await requireAuth();
     const body = await req.json();
 
     const allowedFields = [
@@ -62,13 +60,6 @@ export async function PATCH(
       'employees_count',
     ];
 
-    if (body.manager_id !== undefined) {
-      const assignRes = await assignSellerManager(decodedId, body.manager_id);
-      if (!assignRes.success) {
-        return apiError(assignRes.error || 'Ошибка назначения куратора', 'ASSIGN_FAILED', 400);
-      }
-    }
-
     const updates: Record<string, any> = {};
     for (const field of allowedFields) {
       if (field !== 'manager_id' && body[field] !== undefined) {
@@ -76,11 +67,45 @@ export async function PATCH(
       }
     }
 
-    if (Object.keys(updates).length > 0) {
+    const changesManager = body.manager_id !== undefined;
+    const changesFields = Object.keys(updates).length > 0;
+
+    // Смена консультанта — право «sellers.assign»; остальные поля карточки — «sellers.edit»
+    if (changesManager && !ctx.can('sellers.assign')) {
+      throw new PermissionError(`Недостаточно прав. Требуется: ${PERMISSION_LABELS['sellers.assign']}.`);
+    }
+    if ((changesFields || !changesManager) && !ctx.can('sellers.edit')) {
+      throw new PermissionError(`Недостаточно прав. Требуется: ${PERMISSION_LABELS['sellers.edit']}.`);
+    }
+
+    const supabase = createAdminClient();
+
+    // Запись должна быть в области видимости сотрудника
+    const { data: current, error: currentErr } = await supabase
+      .from('sellers')
+      .select('*')
+      .or(`seller_phone.eq.${decodedId},organization_id.eq.${decodedId}`)
+      .single();
+
+    if (currentErr || !current) {
+      return apiError('Продавец не найден', 'NOT_FOUND', 404);
+    }
+    if (!isSellerInScope(ctx, current)) {
+      return apiError('Продавец вне вашей области видимости', 'FORBIDDEN', 403);
+    }
+
+    if (changesManager) {
+      const assignRes = await assignSellerManager(current.seller_phone, body.manager_id);
+      if (!assignRes.success) {
+        return apiError(assignRes.error || 'Ошибка назначения консультанта', 'ASSIGN_FAILED', 400);
+      }
+    }
+
+    if (changesFields) {
       const { data: updated, error } = await supabase
         .from('sellers')
         .update(updates as any)
-        .or(`seller_phone.eq.${decodedId},organization_id.eq.${decodedId}`)
+        .eq('seller_phone', current.seller_phone)
         .select('*')
         .single();
 
@@ -88,13 +113,13 @@ export async function PATCH(
       return apiSuccess(updated);
     }
 
-    const { data: current } = await supabase
+    const { data: refreshed } = await supabase
       .from('sellers')
       .select('*')
-      .or(`seller_phone.eq.${decodedId},organization_id.eq.${decodedId}`)
+      .eq('seller_phone', current.seller_phone)
       .single();
 
-    return apiSuccess(current);
+    return apiSuccess(refreshed ?? current);
   } catch (err) {
     return handleApiError(err);
   }
@@ -107,7 +132,8 @@ export async function DELETE(
   try {
     const { id } = await params;
     const decodedId = decodeURIComponent(id);
-    const { supabase } = await requireAdmin();
+    await requirePermission('sellers.delete');
+    const supabase = createAdminClient();
 
     // 1. Поиск продавца для определения seller_phone
     const seller = await findSellerByKey(supabase, id, ['seller_phone'] as const);

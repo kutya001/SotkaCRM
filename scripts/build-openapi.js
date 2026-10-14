@@ -465,7 +465,7 @@ const openapi = {
       },
       patch: {
         tags: ["Sellers"],
-        summary: "Обновление продавца и назначение куратора",
+        summary: "Обновление продавца и назначение консультанта",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,

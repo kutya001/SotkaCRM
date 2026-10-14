@@ -1,17 +1,21 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireAuth, type AuthContext } from '@/lib/auth/check-role';
 import { fullPhoneSchema } from '@/lib/validations';
-import type { Database, UserRole, LeadStatus } from '@/types/database.types';
+import type { Database, UserRole } from '@/types/database.types';
 
 export interface UserProfileData {
   user_id: string;
   login: string;
   full_name: string;
   phone: string | null;
+  /** Базовый профиль (устаревший enum), синхронизируется с назначенной ролью */
   role: UserRole;
+  /** Назначенная роль (roles.role_id) */
+  role_id: string | null;
+  role_name: string | null;
   is_active: boolean;
   color: string;
   created_at: string;
@@ -63,66 +67,73 @@ export interface UserKpiResponse {
   error?: string;
 }
 
+const PROFILE_COLUMNS = 'user_id, login, full_name, phone, role, role_id, roles:role_id(name), is_active, color, created_at';
+
+/** Строка users с присоединенной ролью → UserProfileData (role_name сплющивается из roles) */
+function toProfileData(row: any): UserProfileData {
+  const { roles, ...rest } = row;
+  const roleJoin = Array.isArray(roles) ? roles[0] || null : roles;
+  return {
+    ...rest,
+    role_id: rest.role_id ?? null,
+    role_name: roleJoin?.name ?? null,
+  };
+}
+
+async function loadProfile(userId: string): Promise<UserProfileData | null> {
+  const { data, error } = await createAdminClient()
+    .from('users')
+    .select(PROFILE_COLUMNS)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return toProfileData(data);
+}
+
 /**
  * Получение профиля пользователя и расчет персональных KPI.
- * Если передан targetUserId, только администратор может просмотреть данные другого сотрудника.
+ * Свой профиль доступен всегда; чужой — при праве profile.others.
+ * Состав KPI выбирается по базовому профилю (enum) целевого сотрудника — это данные, а не решение о доступе.
  */
 export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserKpiResponse> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { profile: null, role: 'consultant', error: 'Пользователь не авторизован' };
+  let ctx: AuthContext;
+  try {
+    ctx = await requireAuth();
+  } catch (err: any) {
+    return { profile: null, role: 'consultant', error: err?.message || 'Пользователь не авторизован' };
   }
 
-  const { data: callerProfile } = await supabase
-    .from('users')
-    .select('user_id, login, full_name, phone, role, is_active, color, created_at')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!callerProfile) {
-    return { profile: null, role: 'consultant', error: 'Профиль не найден' };
-  }
-
-  const callerRole = callerProfile.role as UserRole;
-  let targetProfile: UserProfileData = callerProfile;
+  const callerRole = ctx.profile.role;
+  const callerId = ctx.profile.user_id;
 
   // Если запрошен профиль другого пользователя
-  if (targetUserId && targetUserId !== callerProfile.user_id) {
-    if (callerRole !== 'admin') {
-      return {
-        profile: null,
-        role: callerRole,
-        currentUserRole: callerRole,
-        error: 'Доступ к чужим профилям разрешен только администратору',
-      };
-    }
+  const isOther = Boolean(targetUserId && targetUserId !== callerId);
+  if (isOther && !ctx.can('profile.others')) {
+    return {
+      profile: null,
+      role: callerRole,
+      currentUserRole: callerRole,
+      error: 'Недостаточно прав: открывать профили других сотрудников',
+    };
+  }
 
-    const { data: requestedUser, error: targetError } = await supabase
-      .from('users')
-      .select('user_id, login, full_name, phone, role, is_active, color, created_at')
-      .eq('user_id', targetUserId)
-      .single();
-
-    if (targetError || !requestedUser) {
-      return {
-        profile: null,
-        role: callerRole,
-        currentUserRole: callerRole,
-        error: 'Запрошенный сотрудник не найден',
-      };
-    }
-
-    targetProfile = requestedUser;
+  const targetProfile = await loadProfile(isOther ? (targetUserId as string) : callerId);
+  if (!targetProfile) {
+    return {
+      profile: null,
+      role: callerRole,
+      currentUserRole: callerRole,
+      error: isOther ? 'Запрошенный сотрудник не найден' : 'Профиль не найден',
+    };
   }
 
   const role = targetProfile.role as UserRole;
   const userId = targetProfile.user_id;
   const currentMonth = new Date().toISOString().substring(0, 7);
+  // Права проверены выше; выборки по целевому сотруднику — сервисным клиентом с явным фильтром по userId
+  const admin = createAdminClient();
+  // Денежные показатели чужого профиля — только при праве видеть операции всех сотрудников
+  const canSeePayouts = !isOther || ctx.canViewAll('payouts');
 
   // 1. KPI для SMM-специалиста
   if (role === 'smm') {
@@ -135,7 +146,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
 
     const startOfMonth = new Date(startOfDay.getFullYear(), startOfDay.getMonth(), 1);
 
-    const { data: userLeads } = await supabase
+    const { data: userLeads } = await admin
       .from('leads')
       .select('lead_id, status, created_at')
       .eq('created_by', userId);
@@ -181,7 +192,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
   // 2. KPI для Продавца-консультанта
   if (role === 'consultant') {
     // Активные лиды в работе
-    const { data: assignedLeads } = await supabase
+    const { data: assignedLeads } = await admin
       .from('leads')
       .select('status')
       .eq('assigned_to', userId);
@@ -200,7 +211,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
     }
 
     // Бонусы за подключение в текущем месяце
-    const { data: connections } = await supabase
+    const { data: connections } = await admin
       .from('connections')
       .select('connection_fee_amount, client_status, accrual_month')
       .eq('manager_id', userId);
@@ -219,7 +230,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
     }
 
     // Бонусы за сопровождение в текущем месяце
-    const { data: maintenance } = await supabase
+    const { data: maintenance } = await admin
       .from('client_maintenance')
       .select('maintenance_amount')
       .eq('manager_id', userId)
@@ -233,20 +244,22 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
     }
 
     // Фактические выплаты за текущий месяц
-    const { data: payouts } = await supabase
-      .from('employee_payouts')
-      .select('amount, payout_category')
-      .eq('user_id', userId)
-      .eq('accrual_month', currentMonth);
-
     let monthTotalPayouts = 0;
-    if (payouts) {
-      for (const p of payouts) {
-        const amt = Number(p.amount) || 0;
-        if (p.payout_category === 'удержание') {
-          monthTotalPayouts -= amt;
-        } else {
-          monthTotalPayouts += amt;
+    if (canSeePayouts) {
+      const { data: payouts } = await admin
+        .from('employee_payouts')
+        .select('amount, payout_category')
+        .eq('user_id', userId)
+        .eq('accrual_month', currentMonth);
+
+      if (payouts) {
+        for (const p of payouts) {
+          const amt = Number(p.amount) || 0;
+          if (p.payout_category === 'удержание') {
+            monthTotalPayouts -= amt;
+          } else {
+            monthTotalPayouts += amt;
+          }
         }
       }
     }
@@ -267,15 +280,15 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
     };
   }
 
-  // 3. KPI для Администратора
+  // 3. KPI для Администратора / руководителя
+  // Статистические RPC опираются на auth.uid() в БД — вызываются клиентом пользователя
   const [funnelRpcRes, sellersRpcRes, payoutsRes, lastSyncRes] = await Promise.all([
-    supabase.rpc('get_leads_funnel_stats'),
-    supabase.rpc('get_sellers_kpi_stats'),
-    supabase
-      .from('employee_payouts')
-      .select('amount, payout_category')
-      .eq('accrual_month', currentMonth),
-    supabase
+    ctx.supabase.rpc('get_leads_funnel_stats'),
+    ctx.supabase.rpc('get_sellers_kpi_stats'),
+    canSeePayouts
+      ? admin.from('employee_payouts').select('amount, payout_category').eq('accrual_month', currentMonth)
+      : Promise.resolve({ data: [] as { amount: number; payout_category: string | null }[] }),
+    admin
       .from('sellers')
       .select('synced_at')
       .order('synced_at', { ascending: false, nullsFirst: false })
@@ -323,80 +336,69 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
 }
 
 /**
- * Получение всех сотрудников для селектора администратора
+ * Получение всех сотрудников для селектора профилей (profile.others)
  */
 export async function getAllUsersForAdmin(): Promise<{
   users: UserProfileData[];
   error?: string;
 }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { users: [], error: 'Не авторизован' };
+  try {
+    const ctx = await requireAuth();
+    if (!ctx.can('profile.others')) {
+      return { users: [], error: 'Недостаточно прав: открывать профили других сотрудников' };
+    }
+  } catch (err: any) {
+    return { users: [], error: err?.message || 'Не авторизован' };
   }
 
-  const { data: callerProfile } = await supabase
+  const { data: allUsers, error } = await createAdminClient()
     .from('users')
-    .select('role')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!callerProfile || callerProfile.role !== 'admin') {
-    return { users: [], error: 'Доступно только администратору' };
-  }
-
-  const { data: allUsers, error } = await supabase
-    .from('users')
-    .select('user_id, login, full_name, phone, role, is_active, color, created_at')
+    .select(PROFILE_COLUMNS)
     .order('full_name', { ascending: true });
 
   if (error) {
     return { users: [], error: error.message };
   }
 
-  return { users: allUsers || [] };
+  return { users: ((allUsers || []) as any[]).map(toProfileData) };
 }
 
 /**
- * Редактирование профиля (ФИО, телефон, и если администратор — роль и активность)
+ * Редактирование профиля: свой — ФИО, телефон, цвет; чужой — employees.edit;
+ * роль (role / role_id) — employees.edit; активность — employees.edit + employees.deactivate
  */
 export async function updateProfileData(input: {
   full_name?: string;
   phone?: string | null;
   role?: UserRole;
+  role_id?: string;
   is_active?: boolean;
   color?: string;
   targetUserId?: string;
 }): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { success: false, error: 'Пользователь не авторизован' };
+  let ctx: AuthContext;
+  try {
+    ctx = await requireAuth();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Пользователь не авторизован' };
   }
 
-  const { data: callerProfile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
+  const callerId = ctx.profile.user_id;
+  const isEditingOther = Boolean(input.targetUserId && input.targetUserId !== callerId);
 
-  if (!callerProfile) {
-    return { success: false, error: 'Профиль не найден' };
+  if (isEditingOther && !ctx.can('employees.edit')) {
+    return { success: false, error: 'Недостаточно прав: редактировать других сотрудников' };
   }
 
-  const isEditingOther = input.targetUserId && input.targetUserId !== callerProfile.user_id;
-
-  if (isEditingOther && callerProfile.role !== 'admin') {
-    return { success: false, error: 'Редактирование чужого профиля доступно только администратору' };
+  const changesRole = input.role !== undefined || input.role_id !== undefined;
+  if (changesRole && !ctx.can('employees.edit')) {
+    return { success: false, error: 'Недостаточно прав: менять роль сотрудника' };
+  }
+  if (input.is_active !== undefined && !(ctx.can('employees.edit') && ctx.can('employees.deactivate'))) {
+    return { success: false, error: 'Недостаточно прав: блокировать и разблокировать сотрудников' };
   }
 
-  const targetId = input.targetUserId || callerProfile.user_id;
+  const targetId = input.targetUserId || callerId;
 
   const updates: Database['public']['Tables']['users']['Update'] = {};
   if (input.full_name !== undefined) {
@@ -419,17 +421,18 @@ export async function updateProfileData(input: {
     updates.color = input.color;
   }
 
-  // Только администратор может менять роль и статус активности
-  if (callerProfile.role === 'admin') {
-    if (input.role !== undefined) {
-      updates.role = input.role;
-    }
-    if (input.is_active !== undefined) {
-      updates.is_active = input.is_active;
-    }
+  if (input.role_id !== undefined) {
+    // Назначенная роль; триггер БД синхронизирует устаревший enum
+    updates.role_id = input.role_id;
+  } else if (input.role !== undefined) {
+    updates.role = input.role;
+  }
+  if (input.is_active !== undefined) {
+    updates.is_active = input.is_active;
   }
 
-  const { data: updatedUser, error: updateError } = await supabase
+  const adminClient = createAdminClient();
+  const { data: updatedUser, error: updateError } = await adminClient
     .from('users')
     .update(updates)
     .eq('user_id', targetId)
@@ -443,7 +446,6 @@ export async function updateProfileData(input: {
   // Синхронизируем метаданные в auth.users через сервисный клиент
   if (updatedUser?.auth_id) {
     try {
-      const adminClient = createAdminClient();
       await adminClient.auth.admin.updateUserById(updatedUser.auth_id, {
         user_metadata: {
           full_name: updatedUser.full_name,
@@ -463,7 +465,7 @@ export async function updateProfileData(input: {
 }
 
 /**
- * Смена пароля (для себя или сброс пароля любого сотрудника администратором)
+ * Смена пароля (для себя всегда; чужой пароль — employees.reset_password)
  */
 export async function changeUserPassword(input: {
   newPassword: string;
@@ -473,38 +475,26 @@ export async function changeUserPassword(input: {
     return { success: false, error: 'Пароль должен содержать не менее 6 символов' };
   }
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { success: false, error: 'Пользователь не авторизован' };
+  let ctx: AuthContext;
+  try {
+    ctx = await requireAuth();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Пользователь не авторизован' };
   }
 
-  const { data: callerProfile } = await supabase
-    .from('users')
-    .select('user_id, role')
-    .eq('auth_id', user.id)
-    .single();
+  const isResettingOther = Boolean(input.targetUserId && input.targetUserId !== ctx.profile.user_id);
 
-  if (!callerProfile) {
-    return { success: false, error: 'Профиль пользователя не найден' };
-  }
-
-  const isResettingOther = input.targetUserId && input.targetUserId !== callerProfile.user_id;
-
-  if (isResettingOther && callerProfile.role !== 'admin') {
-    return { success: false, error: 'Сброс паролей других пользователей доступен только администратору' };
+  if (isResettingOther && !ctx.can('employees.reset_password')) {
+    return { success: false, error: 'Недостаточно прав: сбрасывать пароли других сотрудников' };
   }
 
   try {
     const adminClient = createAdminClient();
 
-    let targetAuthId = user.id;
+    let targetAuthId = ctx.user.id;
 
     if (isResettingOther) {
-      const { data: targetUser, error: findError } = await supabase
+      const { data: targetUser, error: findError } = await adminClient
         .from('users')
         .select('auth_id')
         .eq('user_id', input.targetUserId!)

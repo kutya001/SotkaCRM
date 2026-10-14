@@ -1,13 +1,15 @@
 import { NextRequest } from 'next/server';
-import { requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { findSellerByKey } from '@/lib/services/sellers';
 import { assignSellerToManager } from '@/lib/services/connections';
 
 /**
- * «Взять себе»: консультант становится куратором свободного одобренного продавца.
+ * «Взять себе»: сотрудник с правом «sellers.take» становится консультантом свободного одобренного продавца.
  * Подключение создается в статусе pending — начисление за подключение произойдет
- * только после подтверждения администратором (миграция 037).
+ * только после подтверждения (миграция 037). Если у сотрудника есть право
+ * «connections.confirm», подключение подтверждается сразу.
  */
 export async function POST(
   req: NextRequest,
@@ -15,7 +17,9 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const { supabase, profile } = await requireRoles(['consultant']);
+    const ctx = await requirePermission('sellers.take');
+    const { profile } = ctx;
+    const supabase = createAdminClient();
 
     const seller = await findSellerByKey(supabase, id, ['seller_phone', 'manager_id', 'moderation'] as const);
     if (!seller) {
@@ -23,17 +27,19 @@ export async function POST(
     }
     if (seller.manager_id) {
       return apiError(
-        seller.manager_id === profile.user_id ? 'Этот продавец уже закреплен за вами' : 'У продавца уже есть куратор',
+        seller.manager_id === profile.user_id ? 'Этот продавец уже закреплен за вами' : 'У продавца уже есть консультант',
         'SELLER_ALREADY_TAKEN',
         409
       );
     }
 
+    const autoConfirm = ctx.can('connections.confirm');
+
     const res = await assignSellerToManager({
       sellerPhone: seller.seller_phone,
       managerId: profile.user_id,
       actor: profile,
-      confirmation: 'pending',
+      confirmation: autoConfirm ? 'confirmed' : 'pending',
       expectUnassigned: true,
       requireApproved: true,
     });
@@ -48,7 +54,9 @@ export async function POST(
       manager_id: profile.user_id,
       connection_id: res.connectionId,
       confirmation_status: res.confirmationStatus,
-      message: 'Продавец закреплен за вами. Подключение ожидает подтверждения администратора',
+      message: autoConfirm
+        ? 'Продавец закреплен за вами. Подключение подтверждено'
+        : 'Продавец закреплен за вами. Подключение ожидает подтверждения администратора',
     });
   } catch (err) {
     return handleApiError(err);

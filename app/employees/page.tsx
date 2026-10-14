@@ -19,7 +19,9 @@ import {
   getEmployeeRatesHistory,
   type EmployeeRateHistoryItem,
 } from '@/app/rates/actions';
-import { getUserProfileAndKpi } from '@/app/profile/actions';
+import { useUser } from '@/components/auth/AuthProvider';
+import { RolesAccessPanel } from '@/components/employees/RolesAccessPanel';
+import { api as apiClient, type RoleItem } from '@/lib/api/client';
 import {
   Users,
   Plus,
@@ -39,6 +41,7 @@ import {
   Trash2,
   MapPin,
   Send,
+  ShieldHalf,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -66,11 +69,25 @@ const RESET_FORM_ID = 'employee-reset-password-form';
 export default function EmployeesPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const user = useUser();
+  const canCreate = user.can('employees.create');
+  const canEdit = user.can('employees.edit');
+  const canDeactivate = user.can('employees.deactivate');
+  const canResetPassword = user.can('employees.reset_password');
+  const canManageRates = user.can('rates.manage');
+  const canSeeRoles = user.can('employees.menu');
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
   const [currentUserName, setCurrentUserName] = React.useState('Администратор');
   const [currentUserLogin, setCurrentUserLogin] = React.useState('admin');
+
+  // Вкладки модуля: реестр сотрудников и роли с доступами
+  const [pageTab, setPageTab] = React.useState<'employees' | 'roles'>('employees');
+
+  // Справочник ролей для назначения сотрудникам
+  const [roles, setRoles] = React.useState<RoleItem[]>([]);
+  const roleNameById = React.useMemo(() => new Map(roles.map((r) => [r.role_id, r.name])), [roles]);
 
   const [employees, setEmployees] = React.useState<EmployeeItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
@@ -89,7 +106,7 @@ export default function EmployeesPage() {
   const [newPassword, setNewPassword] = React.useState('');
   const [newFullName, setNewFullName] = React.useState('');
   const newPhoneParts = usePhoneParts(null);
-  const [newRole, setNewRole] = React.useState<UserRole>('consultant');
+  const [newRoleId, setNewRoleId] = React.useState<string>('');
   const [newColor, setNewColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [newProfile, setNewProfile] = React.useState<EmployeeProfileFormValue>(EMPTY_EMPLOYEE_PROFILE);
   const [isCreating, setIsCreating] = React.useState(false);
@@ -99,7 +116,7 @@ export default function EmployeesPage() {
   const [selectedEmployee, setSelectedEmployee] = React.useState<EmployeeItem | null>(null);
   const [editFullName, setEditFullName] = React.useState('');
   const editPhoneParts = usePhoneParts(null);
-  const [editRole, setEditRole] = React.useState<UserRole>('consultant');
+  const [editRoleId, setEditRoleId] = React.useState<string>('');
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
   const [editProfile, setEditProfile] = React.useState<EmployeeProfileFormValue>(EMPTY_EMPLOYEE_PROFILE);
@@ -123,39 +140,46 @@ export default function EmployeesPage() {
   const fetchEmployeesData = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      const [profileRes, employeesRes] = await Promise.all([
-        getUserProfileAndKpi(),
-        api.employees.getAll({
-          search: searchQuery,
-          role: roleFilter,
-          isActive: statusFilter,
-        }),
+      const [employeesRes, rolesRes] = await Promise.all([
+        api.employees.getAll({ pageSize: 100 }),
+        apiClient.roles.getAll().catch(() => ({ items: [] as RoleItem[] })),
       ]);
-
-      if (profileRes.profile) {
-        setCurrentUserRole(profileRes.role);
-        setCurrentUserName(profileRes.profile.full_name);
-        setCurrentUserLogin(profileRes.profile.login);
-
-        if (profileRes.role !== 'admin') {
-          showToast('Доступ к модулю «Сотрудники» разрешен только администраторам', 'error');
-          router.push('/');
-          return;
-        }
-      }
-
       setEmployees(employeesRes.items || []);
       setTotalCount(employeesRes.total || 0);
-    } catch {
-      showToast('Ошибка загрузки сотрудников', 'error');
+      setRoles(rolesRes.items || []);
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка загрузки сотрудников', 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, roleFilter, statusFilter, showToast, router]);
+  }, [showToast]);
+
+  // Доступ к модулю — по праву «Сотрудники: видеть в меню»
+  React.useEffect(() => {
+    if (!user.profile) return;
+    setCurrentUserRole(user.role);
+    setCurrentUserName(user.userName);
+    setCurrentUserLogin(user.userLogin);
+    if (!user.can('employees.menu')) {
+      showToast('Доступ к модулю «Сотрудники» не предусмотрен вашей ролью', 'error');
+      router.push('/');
+    }
+  }, [user, router, showToast]);
 
   React.useEffect(() => {
     fetchEmployeesData();
   }, [fetchEmployeesData]);
+
+  // Вкладка роли и фильтр активности — клиентские фильтры без повторных запросов
+  const visibleEmployees = React.useMemo(
+    () =>
+      employees.filter((e) => {
+        if (roleFilter !== 'all' && (e.role_id || '') !== roleFilter) return false;
+        if (statusFilter !== 'all' && String(Boolean(e.is_active)) !== statusFilter) return false;
+        return true;
+      }),
+    [employees, roleFilter, statusFilter]
+  );
 
   // Проверка анкеты до отправки (сервер проверяет те же правила)
   const validateProfile = (profile: EmployeeProfileFormValue): string | null => {
@@ -204,7 +228,8 @@ export default function EmployeesPage() {
         password: newPassword,
         full_name: newFullName.trim(),
         phone: newPhoneParts.full || undefined,
-        role: newRole,
+        role: roles.find((r) => r.role_id === newRoleId)?.base_role || 'consultant',
+        role_id: newRoleId || undefined,
         color: newColor,
         ...employeeProfileToPayload(newProfile),
       });
@@ -215,7 +240,7 @@ export default function EmployeesPage() {
       setNewPassword('');
       setNewFullName('');
       newPhoneParts.reset(null);
-      setNewRole('consultant');
+      setNewRoleId(roles.find((r) => r.code === 'consultant')?.role_id || '');
       setNewColor(DEFAULT_EMPLOYEE_COLOR);
       setNewProfile(EMPTY_EMPLOYEE_PROFILE);
       fetchEmployeesData();
@@ -231,7 +256,7 @@ export default function EmployeesPage() {
     setSelectedEmployee(emp);
     setEditFullName(emp.full_name);
     editPhoneParts.reset(emp.phone);
-    setEditRole(emp.role);
+    setEditRoleId(emp.role_id || roles.find((r) => r.base_role === emp.role)?.role_id || '');
     setEditColor(emp.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(emp.is_active);
     setEditProfile(employeeProfileToForm(emp));
@@ -319,7 +344,8 @@ export default function EmployeesPage() {
       await api.employees.update(selectedEmployee.user_id, {
         full_name: editFullName.trim(),
         phone: editPhoneParts.full,
-        role: editRole,
+        role: roles.find((r) => r.role_id === editRoleId)?.base_role || selectedEmployee.role,
+        role_id: editRoleId || undefined,
         is_active: editIsActive,
         color: editColor,
         ...employeeProfileToPayload(editProfile),
@@ -406,38 +432,29 @@ export default function EmployeesPage() {
       ),
     },
     {
-      key: 'role',
+      key: 'role_id',
       label: 'Роль',
       sortable: true,
       filterable: true,
       groupable: true,
       filterType: 'select',
-      filterOptions: [
-        { value: 'admin', label: 'Администратор' },
-        { value: 'consultant', label: 'Консультант' },
-        { value: 'smm', label: 'SMM-специалист' },
-      ],
+      filterOptions: roles.map((r) => ({ value: r.role_id, label: r.name })),
+      textValue: (item: EmployeeItem) => item.role_name || roleNameById.get(item.role_id || '') || item.role,
       renderCell: (item: EmployeeItem) => {
-        if (item.role === 'admin') {
-          return (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-              <ShieldCheck className="w-3 h-3" strokeWidth={2} />
-              <span>Администратор</span>
-            </span>
-          );
-        }
-        if (item.role === 'consultant') {
-          return (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              <UserCheck className="w-3 h-3" strokeWidth={2} />
-              <span>Консультант</span>
-            </span>
-          );
-        }
+        const role = roles.find((r) => r.role_id === item.role_id);
+        const name = item.role_name || role?.name || item.role;
+        const tone = role?.is_admin
+          ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+          : item.role === 'supervisor'
+          ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+          : item.role === 'smm'
+          ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
+          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20';
+        const Icon = role?.is_admin ? ShieldCheck : item.role === 'smm' ? Sparkles : UserCheck;
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-            <Sparkles className="w-3 h-3" strokeWidth={2} />
-            <span>SMM-специалист</span>
+          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${tone}`}>
+            <Icon className="w-3 h-3" strokeWidth={2} />
+            <span>{name}</span>
           </span>
         );
       },
@@ -478,16 +495,17 @@ export default function EmployeesPage() {
       renderCell: (item: EmployeeItem) => (
         <button
           type="button"
+          disabled={!canDeactivate}
           onClick={(e) => {
             e.stopPropagation();
-            handleToggleActive(item);
+            if (canDeactivate) handleToggleActive(item);
           }}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all active:scale-95 ${
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all active:scale-95 disabled:cursor-default ${
             item.is_active
               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
               : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
           }`}
-          title={item.is_active ? 'Нажмите для блокировки' : 'Нажмите для активации'}
+          title={!canDeactivate ? undefined : item.is_active ? 'Нажмите для блокировки' : 'Нажмите для активации'}
         >
           {item.is_active ? (
             <>
@@ -591,40 +609,52 @@ export default function EmployeesPage() {
       label: 'Действия',
       renderCell: (item: EmployeeItem) => (
         <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={() => handleOpenEdit(item)}
-            className="p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
-            title="Редактировать сотрудника"
-          >
-            <Edit3 className="w-4 h-4" strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleOpenResetPassword(item)}
-            className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950 text-zinc-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-            title="Сбросить пароль"
-          >
-            <KeyRound className="w-4 h-4" strokeWidth={1.75} />
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => handleOpenEdit(item)}
+              className="p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+              title="Редактировать сотрудника"
+            >
+              <Edit3 className="w-4 h-4" strokeWidth={1.75} />
+            </button>
+          )}
+          {canResetPassword && (
+            <button
+              type="button"
+              onClick={() => handleOpenResetPassword(item)}
+              className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950 text-zinc-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+              title="Сбросить пароль"
+            >
+              <KeyRound className="w-4 h-4" strokeWidth={1.75} />
+            </button>
+          )}
         </div>
       ),
     },
   ];
 
   // Подсчет статистики
-  const adminsCount = employees.filter((e) => e.role === 'admin').length;
-  const consultantsCount = employees.filter((e) => e.role === 'consultant').length;
-  const smmCount = employees.filter((e) => e.role === 'smm').length;
   const blockedCount = employees.filter((e) => !e.is_active).length;
+  const countByRole = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of employees) map.set(e.role_id || '', (map.get(e.role_id || '') || 0) + 1);
+    return map;
+  }, [employees]);
 
-  // Вкладки ролей для DataJournal
-  const employeeTabs: DataJournalTab[] = React.useMemo(() => [
-    { id: 'all', label: 'Все сотрудники', count: totalCount },
-    { id: 'admin', label: 'Администраторы', count: adminsCount },
-    { id: 'consultant', label: 'Консультанты', count: consultantsCount },
-    { id: 'smm', label: 'SMM-операторы', count: smmCount },
-  ], [totalCount, adminsCount, consultantsCount, smmCount]);
+  // Вкладки по ролям для DataJournal (клиентский фильтр)
+  const employeeTabs: DataJournalTab[] = React.useMemo(
+    () => [
+      { id: 'all', label: 'Все сотрудники', icon: Users, count: employees.length },
+      ...roles.map((r) => ({
+        id: r.role_id,
+        label: r.name,
+        icon: r.is_admin ? ShieldCheck : r.base_role === 'smm' ? Sparkles : UserCheck,
+        count: countByRole.get(r.role_id) || 0,
+      })),
+    ],
+    [employees.length, roles, countByRole]
+  );
 
   return (
     <AppLayout
@@ -644,79 +674,114 @@ export default function EmployeesPage() {
               <span>Администрирование пользователей</span>
             </div>
             <h1 className="text-xl lg:text-2xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight mt-1">
-              Реестр сотрудников
+              {pageTab === 'roles' ? 'Роли и доступы' : 'Реестр сотрудников'}
             </h1>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              Управление доступом, ролевой моделью и учетными записями CRM
+              {pageTab === 'roles'
+                ? 'Создание ролей и гибкая настройка прав по каждому модулю'
+                : 'Управление доступом, ролевой моделью и учетными записями CRM'}
             </p>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-            <button
-              type="button"
-              onClick={() => setIsMapOpen(true)}
-              className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
-              title="Места проживания сотрудников на одной карте"
-            >
-              <MapPin className="w-4 h-4 text-rose-500" strokeWidth={2} />
-              <span>Карта сотрудников</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsCreateModalOpen(true)}
-              className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
-            >
-              <Plus className="w-4 h-4" strokeWidth={2} />
-              <span>Добавить сотрудника</span>
-            </button>
+            {/* Вкладки модуля */}
+            <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-2xl border border-zinc-200/40 dark:border-zinc-700/40 h-10">
+              <button
+                type="button"
+                onClick={() => setPageTab('employees')}
+                className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  pageTab === 'employees'
+                    ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                }`}
+                aria-pressed={pageTab === 'employees'}
+              >
+                <Users className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Сотрудники</span>
+              </button>
+              {canSeeRoles && (
+                <button
+                  type="button"
+                  onClick={() => setPageTab('roles')}
+                  className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                    pageTab === 'roles'
+                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                      : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                  aria-pressed={pageTab === 'roles'}
+                >
+                  <ShieldHalf className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>Роли — Доступы</span>
+                </button>
+              )}
+            </div>
+
+            {pageTab === 'employees' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsMapOpen(true)}
+                  className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
+                  title="Места проживания сотрудников на одной карте"
+                >
+                  <MapPin className="w-4 h-4 text-rose-500" strokeWidth={2} />
+                  <span className="hidden sm:inline">Карта сотрудников</span>
+                </button>
+                {canCreate && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newRoleId) setNewRoleId(roles.find((r) => r.code === 'consultant')?.role_id || roles[0]?.role_id || '');
+                      setIsCreateModalOpen(true);
+                    }}
+                    className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
+                  >
+                    <Plus className="w-4 h-4" strokeWidth={2} />
+                    <span>Добавить сотрудника</span>
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
+
+        {pageTab === 'roles' && canSeeRoles && <RolesAccessPanel />}
 
         <EmployeesMapModal isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} />
 
         {/* Карточки оперативной статистики по сотрудникам */}
+        {pageTab === 'employees' && (
         <CollapsibleStats storageKey="employees">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
               <span className="text-[11px] text-zinc-400 font-medium">Всего в штате</span>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">
-                {totalCount}
-              </p>
+              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{employees.length}</p>
             </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Администраторы</span>
-              <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
-                {adminsCount}
-              </p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Консультанты</span>
-              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
-                {consultantsCount}
-              </p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">SMM-операторы</span>
-              <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 font-mono">
-                {smmCount}
-              </p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1 col-span-2 sm:col-span-1">
+            {roles.map((r) => (
+              <div
+                key={r.role_id}
+                className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1"
+              >
+                <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">{r.name}</span>
+                <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">{countByRole.get(r.role_id) || 0}</p>
+              </div>
+            ))}
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
               <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Заблокировано</span>
-              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
-                {blockedCount}
-              </p>
+              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{blockedCount}</p>
             </div>
           </div>
         </CollapsibleStats>
+        )}
 
         {/* Таблица DataJournal */}
+        {pageTab === 'employees' && (
         <DataJournal<EmployeeItem>
-          data={employees}
+          data={visibleEmployees}
           columns={columns}
           keyField="user_id"
           title="Сотрудники"
-          totalCount={totalCount}
+          totalCount={visibleEmployees.length}
           storageKey="employees_journal"
           emptyMessage="Сотрудники не найдены"
           externalSearchQuery={searchQuery}
@@ -724,8 +789,9 @@ export default function EmployeesPage() {
           tabs={employeeTabs}
           activeTab={roleFilter}
           onTabChange={setRoleFilter}
-          onRowClick={(item) => handleOpenEdit(item)}
+          onRowClick={(item) => (canEdit ? handleOpenEdit(item) : undefined)}
         />
+        )}
 
         {/* 1. МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ СОТРУДНИКА */}
         <Modal
@@ -794,17 +860,24 @@ export default function EmployeesPage() {
               <PhoneInput value={newPhoneParts.parts} onChange={newPhoneParts.setParts} size="lg" />
             </FormField>
 
-            <FormField label="Роль в системе CRM" htmlFor="employee-create-role">
+            <FormField
+              label="Роль в системе CRM"
+              htmlFor="employee-create-role"
+              hint={roles.find((r) => r.role_id === newRoleId)?.description || 'Права роли настраиваются во вкладке «Роли — Доступы»'}
+            >
               <Select
                 id="employee-create-role"
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value as UserRole)}
+                value={newRoleId}
+                onChange={(e) => setNewRoleId(e.target.value)}
                 className="font-semibold"
                 size="lg"
+                required
               >
-                <option value="consultant">Продавец-консультант</option>
-                <option value="admin">Администратор</option>
-                <option value="smm">SMM-специалист</option>
+                {roles.map((r) => (
+                  <option key={r.role_id} value={r.role_id}>
+                    {r.name}
+                  </option>
+                ))}
               </Select>
             </FormField>
 
@@ -856,17 +929,24 @@ export default function EmployeesPage() {
               <PhoneInput value={editPhoneParts.parts} onChange={editPhoneParts.setParts} size="lg" />
             </FormField>
 
-            <FormField label="Роль в системе CRM" htmlFor="employee-edit-role">
+            <FormField
+              label="Роль в системе CRM"
+              htmlFor="employee-edit-role"
+              hint={roles.find((r) => r.role_id === editRoleId)?.description || 'Права роли настраиваются во вкладке «Роли — Доступы»'}
+            >
               <Select
                 id="employee-edit-role"
-                value={editRole}
-                onChange={(e) => setEditRole(e.target.value as UserRole)}
+                value={editRoleId}
+                onChange={(e) => setEditRoleId(e.target.value)}
                 className="font-semibold"
                 size="lg"
+                required
               >
-                <option value="consultant">Продавец-консультант</option>
-                <option value="admin">Администратор</option>
-                <option value="smm">SMM-специалист</option>
+                {roles.map((r) => (
+                  <option key={r.role_id} value={r.role_id}>
+                    {r.name}
+                  </option>
+                ))}
               </Select>
             </FormField>
 
@@ -885,12 +965,14 @@ export default function EmployeesPage() {
               <input
                 type="checkbox"
                 checked={editIsActive}
+                disabled={!canDeactivate}
                 onChange={(e) => setEditIsActive(e.target.checked)}
-                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
               />
             </label>
 
             {/* ВСТРОЕННАЯ СЕКЦИЯ ПЕРСОНАЛЬНЫХ СТАВОК (МОТИВАЦИЯ) */}
+            {canManageRates && (
             <div className="pt-4 border-t border-zinc-200/70 dark:border-zinc-800/70 space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center">
@@ -997,6 +1079,7 @@ export default function EmployeesPage() {
                 )}
               </div>
             </div>
+            )}
           </div>
         </Modal>
 

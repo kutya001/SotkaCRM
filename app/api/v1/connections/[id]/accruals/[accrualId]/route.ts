@@ -1,8 +1,29 @@
 import { NextRequest } from 'next/server';
-import { requireRoles, requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission, type AuthContext } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { isConnectionInScope } from '@/lib/services/connections';
 import { revalidatePath } from 'next/cache';
 import type { Database } from '@/types/database.types';
+
+/**
+ * Проверка области видимости подключения, к которому относится проводка:
+ * без «connections.view_all» — только свои подключения.
+ */
+async function checkConnectionScope(
+  ctx: AuthContext,
+  supabase: ReturnType<typeof createAdminClient>,
+  connectionId: string
+): Promise<'ok' | 'not_found' | 'forbidden'> {
+  const { data: conn, error } = await supabase
+    .from('connections')
+    .select('connection_id, manager_id')
+    .eq('connection_id', connectionId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!conn) return 'not_found';
+  return isConnectionInScope(ctx, conn) ? 'ok' : 'forbidden';
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -10,8 +31,17 @@ export async function PATCH(
 ) {
   try {
     const { id, accrualId } = await params;
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    const ctx = await requirePermission('connections.accruals_edit');
+    const supabase = createAdminClient();
     const body = await req.json();
+
+    const scope = await checkConnectionScope(ctx, supabase, id);
+    if (scope === 'not_found') {
+      return apiError('Начисление не найдено или не удалось обновить', 'NOT_FOUND', 404);
+    }
+    if (scope === 'forbidden') {
+      return apiError('Подключение вне вашей области видимости', 'FORBIDDEN', 403);
+    }
 
     const updates: Database['public']['Tables']['connection_accruals']['Update'] = {};
 
@@ -59,7 +89,16 @@ export async function DELETE(
 ) {
   try {
     const { id, accrualId } = await params;
-    const { supabase } = await requireAdmin();
+    const ctx = await requirePermission('connections.accruals_edit');
+    const supabase = createAdminClient();
+
+    const scope = await checkConnectionScope(ctx, supabase, id);
+    if (scope === 'not_found') {
+      return apiError('Подключение не найдено', 'NOT_FOUND', 404);
+    }
+    if (scope === 'forbidden') {
+      return apiError('Подключение вне вашей области видимости', 'FORBIDDEN', 403);
+    }
 
     // Запрещено удалять уже оплаченные начисления
     const { data: existing } = await supabase

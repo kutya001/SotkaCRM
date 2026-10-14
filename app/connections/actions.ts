@@ -1,9 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
-import { requireAuth } from '@/lib/auth/check-role';
-import type { Database, UserRole, ClientLifecycleStatus, ConnectionConfirmationStatus } from '@/types/database.types';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requireAuth, requirePermission } from '@/lib/auth/check-role';
+import { isConnectionInScope } from '@/lib/services/connections';
+import type { UserRole, ClientLifecycleStatus, ConnectionConfirmationStatus } from '@/types/database.types';
 
 export interface ConnectionItem {
   connection_id: string;
@@ -92,10 +93,9 @@ export interface ConnectionsStats {
 }
 
 /**
- * Получение списка закреплений клиентов с учетом ролевой модели (RBAC)
- * admin: видит все закрепления
- * consultant: видит только свои (manager_id = current_user_id)
- * smm: доступ закрыт
+ * Получение списка закреплений клиентов с учетом прав (RBAC)
+ * «connections.menu» — доступ к модулю; «connections.view_all» — все подключения,
+ * без него — только свои (manager_id = current_user_id)
  */
 export async function getConnections(
   params: GetConnectionsParams = {}
@@ -106,17 +106,21 @@ export async function getConnections(
   } catch (err: any) {
     return { connections: [], totalCount: 0, error: err?.message || 'Пользователь не аутентифицирован' };
   }
-  const { profile, supabase } = authCtx;
+  const { profile } = authCtx;
 
-  // Роли SMM доступ к модулю подключений закрыт
-  if (profile.role === 'smm') {
+  if (!authCtx.can('connections.menu')) {
     return {
       connections: [],
       totalCount: 0,
-      currentUserRole: 'smm',
-      error: 'Доступ к реестру подключений запрещен для роли SMM',
+      currentUserRole: profile.role as UserRole,
+      currentUserId: profile.user_id,
+      error: 'Недостаточно прав: доступ к реестру подключений закрыт',
     };
   }
+
+  // Права роли могут превышать базовую RLS-роль: сервисный клиент + явный фильтр области видимости
+  const supabase = createAdminClient();
+  const viewAll = authCtx.canViewAll('connections');
 
   const {
     page = 1,
@@ -155,10 +159,10 @@ export async function getConnections(
     { count: 'exact' }
   );
 
-  // Ограничение видимости для консультанта (строго свои)
-  if (profile.role === 'consultant') {
+  // Ограничение видимости без «connections.view_all» (строго свои)
+  if (!viewAll) {
     query = query.eq('manager_id', profile.user_id);
-  } else if (profile.role === 'admin' && managerId && managerId !== 'all') {
+  } else if (managerId && managerId !== 'all') {
     query = query.eq('manager_id', managerId);
   }
 
@@ -331,20 +335,16 @@ export async function getConnections(
  */
 export async function getConnectionsStats(accrualMonth?: string): Promise<ConnectionsStats> {
   const authCtx = await requireAuth().catch(() => null);
-  if (!authCtx) {
+  if (!authCtx || !authCtx.can('connections.menu')) {
     return { total: 0, newThisMonth: 0, inMaintenance: 0, totalBonusAmount: 0 };
   }
-  const { profile, supabase } = authCtx;
+  const { profile } = authCtx;
 
-  if (profile.role === 'smm') {
-    return { total: 0, newThisMonth: 0, inMaintenance: 0, totalBonusAmount: 0 };
-  }
-
-  let query = (supabase as any)
+  let query = (createAdminClient() as any)
     .from('connections_with_accruals')
     .select('client_status, total_bonuses_accrued, accrual_month, manager_id');
 
-  if (profile.role === 'consultant') {
+  if (!authCtx.canViewAll('connections')) {
     query = query.eq('manager_id', profile.user_id);
   }
 
@@ -383,30 +383,32 @@ export async function getConnectionsStats(accrualMonth?: string): Promise<Connec
 }
 
 /**
- * Изменение статуса сопровождения клиента (строго для роли admin)
+ * Изменение статуса сопровождения клиента (право «connections.edit»)
  */
 export async function updateConnectionClientStatus(
   connectionId: string,
   newStatus: ClientLifecycleStatus
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { success: false, error: 'Пользователь не аутентифицирован' };
+  let ctx;
+  try {
+    ctx = await requirePermission('connections.edit');
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Пользователь не аутентифицирован' };
   }
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('role')
-    .eq('auth_id', user.id)
-    .single();
+  const supabase = createAdminClient();
 
-  if (!profile || profile.role !== 'admin') {
-    return { success: false, error: 'Изменение статуса жизненного цикла доступно только администратору' };
+  const { data: conn, error: connErr } = await supabase
+    .from('connections')
+    .select('connection_id, manager_id')
+    .eq('connection_id', connectionId)
+    .maybeSingle();
+
+  if (connErr || !conn) {
+    return { success: false, error: 'Подключение не найдено' };
+  }
+  if (!isConnectionInScope(ctx, conn)) {
+    return { success: false, error: 'Подключение вне вашей области видимости' };
   }
 
   const { error } = await supabase
@@ -423,18 +425,25 @@ export async function updateConnectionClientStatus(
 }
 
 /**
- * Получение списка расчетных месяцев
+ * Получение списка расчетных месяцев (в области видимости подключений)
  */
 export async function getAccrualMonthsList(): Promise<string[]> {
-  const supabase = await createClient();
+  const currentMonth = new Date().toISOString().substring(0, 7);
+  const months = new Set<string>([currentMonth]);
 
-  const { data } = await supabase
+  const ctx = await requirePermission('connections.menu').catch(() => null);
+  if (!ctx) return Array.from(months);
+
+  let query = createAdminClient()
     .from('connections')
     .select('accrual_month')
     .order('accrual_month', { ascending: false });
 
-  const currentMonth = new Date().toISOString().substring(0, 7);
-  const months = new Set<string>([currentMonth]);
+  if (!ctx.canViewAll('connections')) {
+    query = query.eq('manager_id', ctx.profile.user_id);
+  }
+
+  const { data } = await query;
 
   if (data) {
     data.forEach((row) => {
@@ -451,8 +460,10 @@ export async function getAccrualMonthsList(): Promise<string[]> {
 export async function getActivePlansList(): Promise<
   { plan_id: string; plan_name: string; price: number }[]
 > {
-  const supabase = await createClient();
-  const { data } = await supabase
+  const ctx = await requirePermission('connections.menu').catch(() => null);
+  if (!ctx) return [];
+
+  const { data } = await createAdminClient()
     .from('plans')
     .select('plan_id, plan_name, price')
     .eq('is_active', true)
@@ -466,7 +477,7 @@ export async function getActivePlansList(): Promise<
 }
 
 /**
- * Изменение тарифа и стоимости на подключении (строго admin)
+ * Изменение тарифа и стоимости на подключении (право «connections.edit»)
  * Не изменяет самого продавца в sellers, пересчитывает connection_fee_amount
  */
 export async function updateConnectionTariffAndPrice(
@@ -477,27 +488,8 @@ export async function updateConnectionTariffAndPrice(
   }
 ): Promise<{ success: boolean; error?: string; recalculatedBonus?: number }> {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return { success: false, error: 'Пользователь не аутентифицирован' };
-    }
-
-    const { data: profile } = await supabase
-      .from('users')
-      .select('role')
-      .eq('auth_id', user.id)
-      .single();
-
-    if (!profile || profile.role !== 'admin') {
-      return {
-        success: false,
-        error: 'Редактирование тарифа подключения разрешено только администратору',
-      };
-    }
+    const ctx = await requirePermission('connections.edit');
+    const supabase = createAdminClient();
 
     const { data: conn, error: connErr } = await supabase
       .from('connections')
@@ -507,6 +499,9 @@ export async function updateConnectionTariffAndPrice(
 
     if (connErr || !conn) {
       return { success: false, error: 'Подключение не найдено' };
+    }
+    if (!isConnectionInScope(ctx, conn)) {
+      return { success: false, error: 'Подключение вне вашей области видимости' };
     }
 
     const roundedPrice = Math.round(Number(params.plan_price) * 100) / 100;
@@ -552,8 +547,10 @@ export async function updateConnectionTariffAndPrice(
 export async function getPlanPriceHistory(planId: string): Promise<
   { price_id: string; plan_id: string; price: number; effective_from: string; created_at: string }[]
 > {
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  const ctx = await requirePermission('connections.menu').catch(() => null);
+  if (!ctx) return [];
+
+  const { data, error } = await createAdminClient()
     .from('plan_prices')
     .select('*')
     .eq('plan_id', planId)
@@ -584,7 +581,9 @@ export async function getPlanPriceAndRateOnDate(params: {
   maintenance_percent: number;
   maintenance_amount: number;
 }> {
-  const supabase = await createClient();
+  await requirePermission('connections.menu');
+  // RPC get_plan_price_on_date / get_employee_rate_on_month не зависят от auth.uid() — сервисный клиент
+  const supabase = createAdminClient();
   const pDate = params.date.substring(0, 10);
   const pMonth = params.date.substring(0, 7);
 
@@ -632,8 +631,8 @@ export async function getPlanPriceAndRateOnDate(params: {
 }
 
 /**
- * Обновление подключения задним числом с автоматическим пересчетом (строго admin)
- * Пересчитывает: цену тарифа на дату подключения, ставку куратора на месяц подключения,
+ * Обновление подключения задним числом с автоматическим пересчетом (право «connections.edit»)
+ * Пересчитывает: цену тарифа на дату подключения, ставку консультанта на месяц подключения,
  * начисленный бонус connection_fee_amount и запись сопровождения client_maintenance
  */
 export async function updateConnectionRetroactive(params: {
@@ -650,27 +649,8 @@ export async function updateConnectionRetroactive(params: {
   connection_fee_percent?: number;
 }> {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return { success: false, error: 'Пользователь не аутентифицирован' };
-    }
-
-    const { data: profile } = await supabase
-      .from('users')
-      .select('role')
-      .eq('auth_id', user.id)
-      .single();
-
-    if (!profile || profile.role !== 'admin') {
-      return {
-        success: false,
-        error: 'Редактирование параметров подключения разрешено только администратору',
-      };
-    }
+    const ctx = await requirePermission('connections.edit');
+    const supabase = createAdminClient();
 
     const { data: conn, error: connErr } = await supabase
       .from('connections')
@@ -680,6 +660,9 @@ export async function updateConnectionRetroactive(params: {
 
     if (connErr || !conn) {
       return { success: false, error: 'Подключение не найдено' };
+    }
+    if (!isConnectionInScope(ctx, conn)) {
+      return { success: false, error: 'Подключение вне вашей области видимости' };
     }
 
     const pDate = params.assigned_at.substring(0, 10);

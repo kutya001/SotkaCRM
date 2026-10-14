@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { getEmployees, createEmployee } from '@/app/employees/actions';
 
+/** Список сотрудников: employees.menu */
 export async function GET(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requirePermission('employees.menu');
     const { searchParams } = new URL(req.url);
 
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -37,9 +38,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/** Создание сотрудника: employees.create */
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requirePermission('employees.create');
     const body = await req.json();
 
     const res = await createEmployee(body);

@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { isLeadInScope, leadActorFrom } from '@/lib/leads/status-rules';
 import { DEFAULT_COUNTRY_CODE, fullDigitsFrom } from '@/lib/utils/phone';
 
 export async function GET(
@@ -9,16 +11,20 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireAuth();
+    const ctx = await requirePermission('leads.menu');
 
-    const { data: lead } = await supabase
+    const { data: lead } = await createAdminClient()
       .from('leads')
-      .select('lead_id, phone, country_code, client_name')
+      .select('lead_id, phone, country_code, client_name, created_by, assigned_to')
       .eq('lead_id', id)
       .single();
 
     if (!lead) {
       return apiError('Лид не найден', 'NOT_FOUND', 404);
+    }
+
+    if (!isLeadInScope(leadActorFrom(ctx), lead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
     // Полный номер с кодом страны СНГ из национального номера лида

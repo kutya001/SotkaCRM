@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useUser } from '@/components/auth/AuthProvider';
 import Link from 'next/link';
 import {
   FileSpreadsheet,
@@ -67,7 +68,8 @@ export function PayrollSheetModal({
   months,
 }: PayrollSheetModalProps) {
   const currentMonthStr = new Date().toISOString().substring(0, 7);
-  const isPrivileged = currentUserRole === 'admin' || currentUserRole === 'supervisor';
+  const user = useUser();
+  const isPrivileged = user.canViewAll('payouts') || currentUserRole === 'admin';
 
   const [selectedUserId, setSelectedUserId] = React.useState<string>(
     isPrivileged ? (employees[0]?.user_id || currentUserId) : currentUserId

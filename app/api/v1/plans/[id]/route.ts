@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { updatePlan, deletePlan } from '@/app/plans/actions';
 
+/** Обновление тарифа: plans.manage */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requirePermission('plans.manage');
     const body = await req.json();
 
     const res = await updatePlan(id, body);
@@ -23,13 +24,14 @@ export async function PATCH(
   }
 }
 
+/** Удаление тарифа: plans.manage */
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requirePermission('plans.manage');
 
     const res = await deletePlan(id);
     if (!res.success) {

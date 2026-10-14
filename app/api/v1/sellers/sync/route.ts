@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { syncSellersFromSotka } from '@/app/sellers/actions';
 
@@ -8,7 +8,7 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requirePermission('sellers.sync');
 
     // Без limit синхронизируется весь реестр Sotka HQ (постранично)
     let offset = 0;

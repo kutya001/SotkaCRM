@@ -77,7 +77,7 @@ export function EmployeeBadge({
   return (
     <div
       style={customPillStyle}
-      className={`inline-flex items-center rounded-xl font-medium border transition-all ${
+      className={`inline-flex items-center max-w-full min-w-0 rounded-xl font-medium border transition-all ${
         !isCustom
           ? `${colorCfg.bgLight} ${colorCfg.bgDark} ${colorCfg.borderLight} ${colorCfg.borderDark}`
           : ''
@@ -86,14 +86,14 @@ export function EmployeeBadge({
     >
       <span
         style={customAvatarStyle}
-        className={`rounded-full flex items-center justify-center font-bold shadow-xs ${
+        className={`rounded-full flex items-center justify-center font-bold shadow-xs flex-shrink-0 ${
           !isCustom ? `${colorCfg.dotClass} text-white` : ''
         } ${sizeClasses.avatar}`}
       >
         {initial}
       </span>
       <span
-        className={`truncate font-semibold ${
+        className={`truncate min-w-0 font-semibold ${
           !isCustom
             ? `${colorCfg.textLight} ${colorCfg.textDark}`
             : 'text-zinc-900 dark:text-zinc-100'

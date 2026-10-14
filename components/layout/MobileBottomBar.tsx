@@ -30,16 +30,19 @@ const BOTTOM_NAV_ITEMS: BottomNavItem[] = [
 
 const PROFILE_ITEM: BottomNavItem = { title: 'Профиль', href: '/profile', icon: User, permission: 'profile.menu' };
 
-export function MobileBottomBar(_props: MobileBottomBarProps) {
-  const pathname = usePathname();
+/** Пункты нижней панели по правам роли; если модулей меньше трех — добавляется «Профиль» */
+export function useBottomBarItems(): BottomNavItem[] {
   const user = useUser();
-
-  // Пункты фильтруются по правам роли; если модулей меньше трех — добавляется «Профиль»
-  const items = React.useMemo(() => {
+  return React.useMemo(() => {
     const allowed = BOTTOM_NAV_ITEMS.filter((item) => user.can(item.permission));
     if (allowed.length < 3) allowed.push(PROFILE_ITEM);
     return allowed;
   }, [user]);
+}
+
+export function MobileBottomBar(_props: MobileBottomBarProps) {
+  const pathname = usePathname();
+  const items = useBottomBarItems();
 
   const columnsClass =
     items.length >= 5 ? 'grid-cols-5' : items.length === 4 ? 'grid-cols-4' : items.length === 3 ? 'grid-cols-3' : items.length === 2 ? 'grid-cols-2' : 'grid-cols-1';

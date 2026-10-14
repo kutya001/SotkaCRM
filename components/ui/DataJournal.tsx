@@ -31,6 +31,9 @@ import {
   BadgeCheck,
   XCircle,
   Tags,
+  BarChart3,
+  MoreHorizontal,
+  RefreshCw,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { createPortal } from 'react-dom';
@@ -170,6 +173,11 @@ export interface DataJournalProps<T extends Record<string, any>> {
   tabs?: DataJournalTab[];
   activeTab?: string;
   onTabChange?: (tabId: string) => void;
+  /** Блок статистики модуля: показывается над тулбаром, сворачивается кнопкой тулбара (состояние в localStorage) */
+  stats?: React.ReactNode;
+  /** Обновление списка (стандартная кнопка тулбара) */
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
   enableSelection?: boolean;
   selectedIds?: string[];
   onSelectionChange?: (selectedIds: string[]) => void;
@@ -820,6 +828,23 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
           </td>
         );
       })}
+      {/* Действия строки: кнопка «⋯» открывает то же контекстное меню, что и ПКМ */}
+      <td className="w-10 px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+        {onRowContextMenu && (
+          <button
+            type="button"
+            title="Действия"
+            aria-label="Действия"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRowContextMenu(e, row);
+            }}
+            className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 transition-colors opacity-60 group-hover:opacity-100"
+          >
+            <MoreHorizontal className="w-4 h-4" strokeWidth={2} />
+          </button>
+        )}
+      </td>
     </tr>
   );
 };
@@ -1328,6 +1353,9 @@ export function DataJournal<T extends Record<string, any>>({
   tabs,
   activeTab,
   onTabChange,
+  stats,
+  onRefresh,
+  refreshing = false,
   enableSelection = false,
   selectedIds = [],
   onSelectionChange,
@@ -1974,6 +2002,24 @@ export function DataJournal<T extends Record<string, any>>({
     return () => mq.removeEventListener('change', apply);
   }, []);
   const tabsIconsOnly = tabsCompact || isNarrowViewport;
+
+  // Статистика модуля: свернута/развернута, состояние хранится отдельно для каждого реестра
+  const [statsOpen, setStatsOpen] = React.useState(true);
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`sotka_stats_collapsed_${storageKey}`);
+      if (saved === '1') setStatsOpen(false);
+      else if (saved === '0') setStatsOpen(true);
+    } catch {}
+  }, [storageKey]);
+  const toggleStats = () => {
+    setStatsOpen((prev) => {
+      try {
+        localStorage.setItem(`sotka_stats_collapsed_${storageKey}`, prev ? '1' : '0');
+      } catch {}
+      return !prev;
+    });
+  };
   const toggleTabsCompact = () => {
     setTabsCompact((prev) => {
       try {
@@ -2082,6 +2128,9 @@ export function DataJournal<T extends Record<string, any>>({
         <UrlSearchParamsSync onQuery={handleUrlQueryChange} />
       </React.Suspense>
 
+      {/* 0. Статистика модуля (сворачивается кнопкой тулбара) */}
+      {stats && statsOpen && <div data-journal-stats="">{stats}</div>}
+
       {/* 1. Верхний управляющий тулбар реестра (ЯРУС 3) */}
       <div
         ref={toolbarRef}
@@ -2090,8 +2139,7 @@ export function DataJournal<T extends Record<string, any>>({
         {/* ТАБЛИЧНЫЙ ВИД: Действия + Поиск + Сброс */}
         {viewMode === 'table' ? (
           <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-shrink-0 md:max-w-[50%]">
-            {customActions}
-            {onCreateClick && !customActions && (
+            {onCreateClick && (
               <button
                 type="button"
                 onClick={onCreateClick}
@@ -2102,6 +2150,19 @@ export function DataJournal<T extends Record<string, any>>({
                 <Plus className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.25} />
               </button>
             )}
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={() => void onRefresh()}
+                disabled={refreshing}
+                className="h-9 w-9 md:h-11 md:w-11 rounded-xl border bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 flex items-center justify-center transition-all island-interactive flex-shrink-0 disabled:opacity-60 disabled:cursor-wait"
+                title="Обновить список"
+                aria-label="Обновить список"
+              >
+                <RefreshCw className={`w-4 h-4 text-blue-500 ${refreshing ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+              </button>
+            )}
+            {customActions}
 
             {/* Строка поиска: только если поиск не вынесен в шапку приложения
                 (на экранах < md поиск всегда в MobileHeader) */}
@@ -2131,8 +2192,7 @@ export function DataJournal<T extends Record<string, any>>({
         ) : (
           /* КАРТОЧНЫЙ ВИД: [ Группировка ] [ Фильтры ] [ Поиск ] */
           <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-shrink-0 md:max-w-[55%]">
-            {customActions}
-            {onCreateClick && !customActions && (
+            {onCreateClick && (
               <button
                 type="button"
                 onClick={onCreateClick}
@@ -2143,7 +2203,68 @@ export function DataJournal<T extends Record<string, any>>({
                 <Plus className="w-4 h-4 md:w-5 md:h-5" strokeWidth={2.25} />
               </button>
             )}
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={() => void onRefresh()}
+                disabled={refreshing}
+                className="h-9 w-9 md:h-11 md:w-11 rounded-xl border bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 flex items-center justify-center transition-all island-interactive flex-shrink-0 disabled:opacity-60 disabled:cursor-wait"
+                title="Обновить список"
+                aria-label="Обновить список"
+              >
+                <RefreshCw className={`w-4 h-4 text-blue-500 ${refreshing ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+              </button>
+            )}
+            {customActions}
 
+            {/* [ Поиск ]: только если поиск не вынесен в шапку приложения (на экранах < md — MobileHeader) */}
+            {!hasHeaderSearch && (
+              <div className="relative hidden md:flex w-44 lg:w-56 flex-shrink-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder={searchPlaceholder}
+                  value={effectiveSearch}
+                  onChange={(e) => handleSearchInputChange(e.target.value)}
+                  className="w-full h-11 pl-9 pr-8 text-xs rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                {effectiveSearch && (
+                  <button
+                    type="button"
+                    onClick={clearSearch}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                  >
+                    <X className="w-3.5 h-3.5" strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* По центру (md+): вкладки-фильтры в той же строке, что и действия */}
+        {tabsRow ? <div className="hidden md:flex flex-1 min-w-0 px-1">{tabsRow}</div> : <div className="flex-1" />}
+
+        {/* Справа (стандартный порядок): [Статистика] [Группировка — карточки] [Фильтры] [Колонки] [Таблица / Карточки] */}
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          {stats && (
+            <button
+              type="button"
+              onClick={toggleStats}
+              aria-pressed={statsOpen}
+              className={`h-9 md:h-11 w-9 md:w-11 rounded-xl border flex items-center justify-center transition-all island-interactive flex-shrink-0 ${
+                statsOpen
+                  ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400'
+                  : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
+              }`}
+              title={statsOpen ? 'Скрыть статистику' : 'Показать статистику'}
+              aria-label={statsOpen ? 'Скрыть статистику' : 'Показать статистику'}
+            >
+              <BarChart3 className="w-4 h-4" strokeWidth={1.75} />
+            </button>
+          )}
+          {viewMode === 'cards' && (
+            <>
             {/* [ Группировка: мобильная кнопка Icon-Only с точкой активности и поповером ] */}
             <div className="relative md:hidden flex-shrink-0" ref={mobileGroupByRef}>
               <button
@@ -2239,6 +2360,8 @@ export function DataJournal<T extends Record<string, any>>({
               </select>
             </div>
 
+            </>
+          )}
             {/* [ Фильтры {Icon + Badge} ] */}
             <div className="relative flex-shrink-0">
               <button
@@ -2492,36 +2615,6 @@ export function DataJournal<T extends Record<string, any>>({
               </Modal>
             </div>
 
-            {/* [ Поиск ]: только если поиск не вынесен в шапку приложения (на экранах < md — MobileHeader) */}
-            {!hasHeaderSearch && (
-              <div className="relative hidden md:flex w-44 lg:w-56 flex-shrink-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-                <input
-                  type="text"
-                  placeholder={searchPlaceholder}
-                  value={effectiveSearch}
-                  onChange={(e) => handleSearchInputChange(e.target.value)}
-                  className="w-full h-11 pl-9 pr-8 text-xs rounded-xl bg-white/60 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-                {effectiveSearch && (
-                  <button
-                    type="button"
-                    onClick={clearSearch}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-                  >
-                    <X className="w-3.5 h-3.5" strokeWidth={2} />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* По центру (md+): вкладки-фильтры в той же строке, что и действия */}
-        {tabsRow ? <div className="hidden md:flex flex-1 min-w-0 px-1">{tabsRow}</div> : <div className="flex-1" />}
-
-        {/* Справа: [Колонки] и [Таблица / Карточки] */}
-        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           {/* Меню настройки видимости колонок */}
           <div className="relative flex-shrink-0">
             <button
@@ -2865,6 +2958,8 @@ export function DataJournal<T extends Record<string, any>>({
                       </th>
                     );
                   })}
+                  {/* Действия строки: контекстное меню (ПКМ или кнопка «⋯») */}
+                  <th className="w-10 px-2 py-3 text-center select-none" aria-label="Действия" />
                 </tr>
               </thead>
 
@@ -2873,7 +2968,7 @@ export function DataJournal<T extends Record<string, any>>({
                 {paginatedData.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={orderedColumns.length}
+                      colSpan={orderedColumns.length + (enableSelection ? 1 : 0) + 1}
                       className="px-4 py-16 text-center text-zinc-400"
                     >
                       {emptyMessage}
@@ -2884,7 +2979,7 @@ export function DataJournal<T extends Record<string, any>>({
                     {virtualRows.length > 0 && virtualRows[0].start > 0 && (
                       <tr>
                         <td
-                          colSpan={orderedColumns.length + (enableSelection ? 1 : 0)}
+                          colSpan={orderedColumns.length + (enableSelection ? 1 : 0) + 1}
                           style={{
                             height: `${virtualRows[0].start}px`,
                             padding: 0,
@@ -2928,7 +3023,7 @@ export function DataJournal<T extends Record<string, any>>({
                       totalVirtualSize - virtualRows[virtualRows.length - 1].end > 0 && (
                         <tr>
                           <td
-                            colSpan={orderedColumns.length + (enableSelection ? 1 : 0)}
+                            colSpan={orderedColumns.length + (enableSelection ? 1 : 0) + 1}
                             style={{
                               height: `${totalVirtualSize - virtualRows[virtualRows.length - 1].end}px`,
                               padding: 0,

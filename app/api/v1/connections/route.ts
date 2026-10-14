@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { connectionOwnScopeFilter, loadMaintenanceAssignments } from '@/lib/services/connections';
 
 export async function GET(req: NextRequest) {
   try {
@@ -30,10 +31,11 @@ export async function GET(req: NextRequest) {
       .select('connection_id', { count: 'exact', head: true })
       .eq('confirmation_status', 'pending');
 
-    // Область видимости: без «connections.view_all» — строго свои подключения (manager_id = я)
+    // Область видимости: без «connections.view_all» — свои подключения (подключил) и те, где я сопровождаю (042)
     if (!viewAll) {
-      query = query.eq('manager_id', profile.user_id);
-      pendingQuery = pendingQuery.eq('manager_id', profile.user_id);
+      const scopeFilter = await connectionOwnScopeFilter(profile.user_id);
+      query = query.or(scopeFilter);
+      pendingQuery = pendingQuery.or(scopeFilter);
     } else if (managerId && managerId !== 'all') {
       query = query.eq('manager_id', managerId);
     }
@@ -107,6 +109,19 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Сопровождение по месяцам (042) и список сотрудников для назначения (право «connections.edit»)
+    const assignmentsMap = await loadMaintenanceAssignments(connectionIds);
+    let employees: { user_id: string; full_name: string; login: string; role: string; color: string | null }[] = [];
+    if (ctx.can('connections.edit')) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('user_id, full_name, login, role, color')
+        .eq('is_active', true)
+        .in('role', ['consultant', 'admin', 'supervisor'])
+        .order('full_name');
+      employees = (users || []).map((u) => ({ ...u, color: u.color ?? null }));
+    }
+
     const enriched = (connections || []).map((c: any) => {
       const acc = accrualsMap.get(c.connection_id) || { totalPaid: 0 };
       const bonusConnection = Number(c.bonus_connection_accrued || 0);
@@ -132,6 +147,7 @@ export async function GET(req: NextRequest) {
         manager_user: c.manager_id ? managersMap.get(c.manager_id) || null : null,
         assigned_user: c.assigned_by ? managersMap.get(c.assigned_by) || null : null,
         confirmed_user: c.confirmed_by ? managersMap.get(c.confirmed_by) || null : null,
+        maintenance_assignments: assignmentsMap.get(c.connection_id) || [],
       };
     });
 
@@ -139,6 +155,7 @@ export async function GET(req: NextRequest) {
       items: enriched,
       total: count || 0,
       pending_count: pendingCount || 0,
+      employees,
       page,
       pageSize,
     });

@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { isConnectionInScope } from '@/lib/services/connections';
+import { connectionOwnScopeFilter, isConnectionInScope, loadMaintenanceAssignments, maintenanceConnectionIdsFor } from '@/lib/services/connections';
 
 export async function GET(
   req: NextRequest,
@@ -20,7 +20,7 @@ export async function GET(
       .eq('connection_id', id);
 
     if (!ctx.canViewAll('connections')) {
-      query = query.eq('manager_id', profile.user_id);
+      query = query.or(await connectionOwnScopeFilter(profile.user_id));
     }
 
     const { data: conn, error } = await query.single();
@@ -58,9 +58,12 @@ export async function GET(
       confirmedUser = cu;
     }
 
+    const assignmentsMap = await loadMaintenanceAssignments([conn.connection_id]);
+
     const result = {
       ...conn,
       confirmed_user: confirmedUser,
+      maintenance_assignments: assignmentsMap.get(conn.connection_id) || [],
       bonus_connection: Number(conn.bonus_connection_accrued || 0),
       bonus_maintenance: Number(conn.bonus_maintenance_accrued || 0),
       total_bonuses: Number(conn.total_bonuses_accrued || 0),
@@ -126,7 +129,8 @@ export async function PATCH(
     if (!current) {
       return apiError('Подключение не найдено или не удалось обновить', 'NOT_FOUND', 404);
     }
-    if (!isConnectionInScope(ctx, current)) {
+    const maintenanceIds = ctx.canViewAll('connections') ? [] : await maintenanceConnectionIdsFor(ctx.profile.user_id);
+    if (!isConnectionInScope(ctx, current, maintenanceIds)) {
       return apiError('Подключение вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
@@ -183,7 +187,8 @@ export async function DELETE(
       }
     }
 
-    // 3. Удаление связанных начислений консультантам из обоих регистров
+    // 3. Удаление назначений сопровождения (042) и связанных начислений из обоих регистров
+    await supabase.from('connection_maintenance_assignments').delete().eq('connection_id', id);
     await supabase
       .from('connection_accruals')
       .delete()

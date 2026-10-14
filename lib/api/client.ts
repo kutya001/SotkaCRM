@@ -625,8 +625,27 @@ export const api = {
       invalidateNamespaces('connections', 'payouts', 'profile', 'dashboard', 'analytics');
       return res;
     },
+    /** Сотрудники подключения (042): подключивший (с подтверждением) и сопровождение по месяцам */
+    assignStaff: async (
+      id: string,
+      data: { manager_id?: string | null; maintenance?: { month_index: number; user_id: string | null }[] }
+    ) => {
+      const res = await request<{
+        success: boolean;
+        connectionId: string;
+        managerChanged: boolean;
+        confirmed: boolean;
+        maintenanceUpdated: number;
+        skipped: string[];
+      }>(`/api/v1/connections/${encodeURIComponent(id)}/staff`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+      invalidateNamespaces('connections', 'sellers', 'leads', 'payouts', 'profile', 'dashboard', 'analytics');
+      return res;
+    },
     batch: async (data: {
-      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected';
+      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected' | 'assign_staff';
       connection_ids: string[];
       payload?: {
         months_total?: number;
@@ -634,6 +653,8 @@ export const api = {
         mode?: string;
         month?: string;
         settlement_month?: string;
+        manager_id?: string | null;
+        maintenance?: { month_index: number; user_id: string | null }[];
       };
     }) => {
       const res = await request<any>('/api/v1/connections/batch', {

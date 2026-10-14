@@ -4,11 +4,12 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
-import { setConnectionConfirmation } from '@/lib/services/connections';
+import { assignConnectionStaff, connectionOwnScopeFilter, setConnectionConfirmation } from '@/lib/services/connections';
 
 /** Право на конкретное массовое действие (в дополнение к «connections.bulk») */
 const BATCH_ACTION_PERMISSION: Record<string, string> = {
   confirm_selected: 'connections.confirm',
+  assign_staff: 'connections.edit',
   update_maintenance_months: 'connections.edit',
   accrue_selected: 'connections.accrue',
 };
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
         .from('connections')
         .select('connection_id')
         .in('connection_id', connection_ids)
-        .eq('manager_id', profile.user_id);
+        .or(await connectionOwnScopeFilter(profile.user_id));
       if (ownErr) throw ownErr;
       connection_ids = (ownRows || []).map((r) => r.connection_id);
       if (connection_ids.length === 0) {
@@ -69,6 +70,46 @@ export async function POST(req: NextRequest) {
         skipped_count: skipped.length,
         skipped: skipped.length > 0 ? skipped : undefined,
         message: `Подтверждено подключений: ${confirmed}${skipped.length > 0 ? `, пропущено: ${skipped.length}` : ''}`,
+      });
+    }
+
+    // 0.1. Действие: назначение сотрудников (042) — подключивший (с подтверждением) и сопровождение по месяцам
+    if (action === 'assign_staff') {
+      const managerId = typeof payload?.manager_id === 'string' && payload.manager_id ? payload.manager_id : undefined;
+      const maintenance = Array.isArray(payload?.maintenance)
+        ? (payload.maintenance as { month_index: number; user_id: string | null }[]).filter(
+            (m) => m && Number.isInteger(Number(m.month_index))
+          )
+        : [];
+      if (!managerId && maintenance.length === 0) {
+        return apiError('Укажите подключившего сотрудника или сопровождение по месяцам', 'MISSING_PARAM', 400);
+      }
+      if (managerId && !ctx.can('connections.confirm')) {
+        return apiError('Назначение подключившего подтверждает подключение: требуется право подтверждать подключения', 'FORBIDDEN', 403);
+      }
+      let updated = 0;
+      let confirmed = 0;
+      const skipped: string[] = [];
+      for (const connectionId of connection_ids as string[]) {
+        const res = await assignConnectionStaff({ connectionId, managerId, maintenance, actor: profile });
+        if (!res.success) {
+          skipped.push(`${connectionId}: ${res.error}`);
+          continue;
+        }
+        updated++;
+        if (res.confirmed) confirmed++;
+        skipped.push(...res.skipped.map((r) => `${connectionId}: ${r}`));
+      }
+      return apiSuccess({
+        success: true,
+        action,
+        updated_count: updated,
+        confirmed_count: confirmed,
+        skipped_count: skipped.length,
+        skipped: skipped.length > 0 ? skipped : undefined,
+        message: `Сотрудники назначены: ${updated}${confirmed > 0 ? `, подтверждено подключений: ${confirmed}` : ''}${
+          skipped.length > 0 ? `, пропущено: ${skipped.length}` : ''
+        }`,
       });
     }
 
@@ -159,6 +200,14 @@ export async function POST(req: NextRequest) {
       let connectionBonusesCreated = 0;
       let maintenanceBonusesCreated = 0;
       let maintenanceSkipped = 0;
+
+      // Сопровождающие по месяцам (042): назначение на месяц, иначе подключивший
+      const { data: assignmentRows } = await supabase
+        .from('connection_maintenance_assignments')
+        .select('connection_id, month_index, user_id')
+        .in('connection_id', connection_ids);
+      const maintenanceUserFor = (connectionId: string, monthIndex: number, fallback: string) =>
+        (assignmentRows || []).find((a) => a.connection_id === connectionId && a.month_index === monthIndex)?.user_id || fallback;
 
       // История начислений для правила «сначала подключение, сопровождение — со следующего месяца»
       const { data: historyRows } = await supabase
@@ -263,9 +312,11 @@ export async function POST(req: NextRequest) {
           if (maintOrderError) maintenanceSkipped++;
 
           if (isDue && !maintOrderError) {
+            const monthIndex = currentMaintCount + 1;
+            const maintUser = maintenanceUserFor(conn.connection_id, monthIndex, conn.manager_id);
             const { error: maintInsErr } = await supabase.from('employee_payouts').insert({
-              user_id: conn.manager_id,
-              employee_id: conn.manager_id,
+              user_id: maintUser,
+              employee_id: maintUser,
               connection_id: conn.connection_id,
               seller_phone: conn.seller_phone,
               operation_sign: '+',
@@ -277,15 +328,27 @@ export async function POST(req: NextRequest) {
               actual_date: new Date().toISOString().slice(0, 10),
               payout_date: new Date().toISOString().slice(0, 10),
               status: 'completed',
-              note: `Бонус за сопровождение (${settlementMonth}): ${conn.seller_name || conn.store || conn.seller_phone}`,
-              comment: `Бонус за сопровождение (${settlementMonth}): ${conn.seller_name || conn.store || conn.seller_phone}`,
-              created_by: conn.manager_id,
+              note: `Бонус за сопровождение ${monthIndex} мес. (${settlementMonth}): ${conn.seller_name || conn.store || conn.seller_phone}`,
+              comment: `Бонус за сопровождение ${monthIndex} мес. (${settlementMonth}): ${conn.seller_name || conn.store || conn.seller_phone}`,
+              created_by: maintUser,
             } as any);
 
             if (maintInsErr) {
               maintenanceSkipped++;
               continue;
             }
+            // Назначение месяца подтверждается начислением
+            await supabase.from('connection_maintenance_assignments').upsert(
+              {
+                connection_id: conn.connection_id,
+                month_index: monthIndex,
+                user_id: maintUser,
+                status: 'accrued',
+                accrued_month: settlementMonth,
+                accrued_at: new Date().toISOString(),
+              },
+              { onConflict: 'connection_id,month_index' }
+            );
             accrualHistory.push({
               operation_type: 'accrual_maintenance',
               settlement_month: settlementMonth,

@@ -3,6 +3,24 @@ import type { Database } from '@/types/database.types';
 
 type SellerRow = Database['public']['Tables']['sellers']['Row'];
 
+/**
+ * Область видимости продавцов без права «sellers.view_all» (фильтр PostgREST для .or()):
+ * свои (manager_id = я) и свободные одобренные (manager_id IS NULL AND moderation = 'approved').
+ */
+export function sellersOwnScopeFilter(userId: string): string {
+  return `manager_id.eq.${userId},and(manager_id.is.null,moderation.eq.approved)`;
+}
+
+/** Попадает ли карточка продавца в область видимости сотрудника */
+export function isSellerInScope(
+  ctx: { canViewAll: (module: string) => boolean; profile: { user_id: string } },
+  seller: { manager_id: string | null; moderation: string }
+): boolean {
+  if (ctx.canViewAll('sellers')) return true;
+  if (seller.manager_id === ctx.profile.user_id) return true;
+  return seller.manager_id === null && seller.moderation === 'approved';
+}
+
 /** Безопасно декодирует параметр маршрута (телефон «+996...» может прийти как «%2B996...») */
 function decodeKey(raw: string): string {
   try {
@@ -61,7 +79,7 @@ export const SELLER_SORT_COLUMNS = [
  *
  * Сортировка всегда заканчивается уникальным ключом: без него строки с одинаковым значением
  * (например, одинаковый synced_at у всех продавцов после синхронизации или пустая дата регистрации)
- * возвращаются в произвольном порядке, и после любого UPDATE (назначение куратора) строка
+ * возвращаются в произвольном порядке, и после любого UPDATE (назначение консультанта) строка
  * «перепрыгивала» на другое место.
  * organization_seq — числовой ID организации Sotka HQ (растет с регистрацией), заменяет
  * дату регистрации, если Sotka ее не передала.

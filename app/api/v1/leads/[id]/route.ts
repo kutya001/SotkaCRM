@@ -1,9 +1,17 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requireAuth, requirePermission } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { LeadUpdateSchema, normalizeNullableUuid } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
-import { canEditLeadFields, implicitStatusForAssignment } from '@/lib/leads/status-rules';
+import {
+  canAssignLead,
+  canEditLeadComment,
+  canEditLeadFields,
+  implicitStatusForAssignment,
+  isLeadInScope,
+  leadActorFrom,
+} from '@/lib/leads/status-rules';
 import { DEFAULT_COUNTRY_CODE, digitsOnly, normalizeNational } from '@/lib/utils/phone';
 
 const LEAD_SELECT = `
@@ -18,9 +26,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { supabase, profile } = await requireAuth();
+    const ctx = await requirePermission('leads.menu');
 
-    const { data: lead, error } = await supabase
+    const { data: lead, error } = await createAdminClient()
       .from('leads')
       .select(LEAD_SELECT)
       .eq('lead_id', id)
@@ -30,8 +38,8 @@ export async function GET(
       return apiError('Лид не найден в системе', 'NOT_FOUND', 404);
     }
 
-    if (profile.role === 'consultant' && lead.assigned_to !== profile.user_id) {
-      return apiError('Лид назначен на другого консультанта', 'FORBIDDEN', 403);
+    if (!isLeadInScope(leadActorFrom(ctx), lead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
     return apiSuccess(lead);
@@ -48,16 +56,21 @@ function optionalText(value: unknown): string | null | undefined {
   return trimmed === '' ? null : trimmed;
 }
 
+/** Поля карточки, для изменения которых требуется полное редактирование («leads.edit») */
+const FULL_EDIT_FIELDS = ['client_name', 'phone', 'country_code', 'instagram'] as const;
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const { supabase, profile } = await requireAuth();
+    const ctx = await requireAuth();
+    const actor = leadActorFrom(ctx);
     const body = await req.json();
+    const admin = createAdminClient();
 
-    const { data: existingLead } = await supabase
+    const { data: existingLead } = await admin
       .from('leads')
       .select('lead_id, created_by, assigned_to, status, country_code')
       .eq('lead_id', id)
@@ -67,24 +80,28 @@ export async function PATCH(
       return apiError('Лид не найден', 'NOT_FOUND', 404);
     }
 
-    // Единая матрица ролей: supervisor — только просмотр, smm — свои в Открыт/Обработан,
-    // consultant — свои в Назначен/Подписан, admin — всё
-    if (!canEditLeadFields(profile.role, existingLead, profile.user_id)) {
-      const reason =
-        profile.role === 'supervisor'
-          ? 'Руководитель может только просматривать лиды'
-          : profile.role === 'smm'
-          ? 'SMM-специалист редактирует только свои лиды в статусах «Открыт» и «Обработан»'
-          : profile.role === 'consultant'
-          ? 'Консультант редактирует только свои лиды в статусах «Назначен» и «Подписан»'
-          : 'Недостаточно прав для редактирования лида';
-      return apiError(reason, 'FORBIDDEN', 403);
+    if (!isLeadInScope(actor, existingLead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
+    const fullEdit = canEditLeadFields(actor, existingLead);
+    const commentEdit = canEditLeadComment(actor, existingLead);
+    const wantsFieldEdit = FULL_EDIT_FIELDS.some((f) => body[f] !== undefined);
+    const wantsCommentEdit = body.comment !== undefined;
     const wantsReassign = body.assigned_to !== undefined
       && normalizeNullableUuid(body.assigned_to) !== (existingLead.assigned_to ?? null);
-    if (wantsReassign && profile.role !== 'admin') {
-      return apiError('Назначать ответственного может только администратор', 'FORBIDDEN', 403);
+
+    if (wantsFieldEdit && !fullEdit) {
+      return apiError('Недостаточно прав для редактирования карточки лида', 'FORBIDDEN', 403);
+    }
+    if (wantsCommentEdit && !commentEdit) {
+      return apiError('Недостаточно прав для редактирования комментария лида', 'FORBIDDEN', 403);
+    }
+    if (wantsReassign && !canAssignLead(actor)) {
+      return apiError('Недостаточно прав для назначения ответственного', 'FORBIDDEN', 403);
+    }
+    if (!fullEdit && !commentEdit && !canAssignLead(actor)) {
+      return apiError('Недостаточно прав для редактирования лида', 'FORBIDDEN', 403);
     }
 
     // Статус через этот маршрут не меняется (см. /status: причина отмены, матрица переходов)
@@ -115,13 +132,11 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     };
 
-    // Консультант меняет только комментарий
-    if (profile.role === 'consultant') {
-      if (valid.comment !== undefined) updatePayload.comment = valid.comment;
-    } else {
+    if (wantsCommentEdit && valid.comment !== undefined) updatePayload.comment = valid.comment;
+
+    if (fullEdit) {
       if (valid.client_name !== undefined) updatePayload.client_name = valid.client_name.trim();
       if (valid.instagram !== undefined) updatePayload.instagram = valid.instagram;
-      if (valid.comment !== undefined) updatePayload.comment = valid.comment;
 
       if (valid.phone !== undefined || body.country_code !== undefined) {
         const countryCode = digitsOnly(valid.country_code) || DEFAULT_COUNTRY_CODE;
@@ -130,15 +145,15 @@ export async function PATCH(
           updatePayload.phone = normalizeNational(valid.phone, countryCode);
         }
       }
-
-      if (wantsReassign && valid.assigned_to !== undefined) {
-        updatePayload.assigned_to = valid.assigned_to;
-        const implicit = implicitStatusForAssignment(existingLead.status, valid.assigned_to);
-        if (implicit) updatePayload.status = implicit;
-      }
     }
 
-    const { data: updated, error } = await supabase
+    if (wantsReassign && valid.assigned_to !== undefined) {
+      updatePayload.assigned_to = valid.assigned_to;
+      const implicit = implicitStatusForAssignment(existingLead.status, valid.assigned_to);
+      if (implicit) updatePayload.status = implicit;
+    }
+
+    const { data: updated, error } = await admin
       .from('leads')
       .update(updatePayload as any)
       .eq('lead_id', id)
@@ -160,15 +175,12 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const { supabase, profile } = await requireAuth();
+    const ctx = await requirePermission('leads.delete');
+    const admin = createAdminClient();
 
-    if (profile.role !== 'admin') {
-      return apiError('Исключительное право на удаление лидов имеет только администратор', 'FORBIDDEN', 403);
-    }
-
-    const { data: existingLead } = await supabase
+    const { data: existingLead } = await admin
       .from('leads')
-      .select('lead_id')
+      .select('lead_id, created_by, assigned_to')
       .eq('lead_id', id)
       .single();
 
@@ -176,9 +188,13 @@ export async function DELETE(
       return apiError('Лид не найден', 'NOT_FOUND', 404);
     }
 
-    // Физическое удаление (Hard Delete) для роли admin.
-    // select() возвращает удаленные строки: при запрете RLS удаление не даст ошибки, но вернет 0 строк
-    const { data: deleted, error } = await supabase
+    if (!isLeadInScope(leadActorFrom(ctx), existingLead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
+    }
+
+    // Физическое удаление (Hard Delete): сервисный клиент проходит триггер prevent_lead_delete (миграция 032).
+    // select() возвращает удаленные строки — при 0 строк удаление не состоялось
+    const { data: deleted, error } = await admin
       .from('leads')
       .delete()
       .eq('lead_id', id)

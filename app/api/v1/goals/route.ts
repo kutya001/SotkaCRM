@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { requireAuth, requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { ConnectionPlanSchema } from '@/lib/validations';
@@ -10,18 +10,25 @@ import { PLAN_SELECT, withPlanProgress, type PlanRow, type PlanUserRef as UserRe
 
 export const dynamic = 'force-dynamic';
 
-/** Планы с фактом (RLS: руководство — все, консультант — общие и свои) */
+function db(): SupabaseClient<any> {
+  return createAdminClient() as unknown as SupabaseClient<any>;
+}
+
+/** Планы с фактом: goals.view_all — все, иначе общие и свои персональные */
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
-    if (profile.role === 'smm') return apiError('Модуль планов недоступен для роли SMM', 'FORBIDDEN', 403);
+    const ctx = await requirePermission('goals.menu');
+    const { profile } = ctx;
 
-    const db = supabase as unknown as SupabaseClient<any>;
+    const admin = db();
     const { searchParams } = req.nextUrl;
     const kind = searchParams.get('period_kind');
     const userId = searchParams.get('user_id');
 
-    let query = db.from('connection_plans').select(PLAN_SELECT).order('period_start', { ascending: false }).limit(2000);
+    let query = admin.from('connection_plans').select(PLAN_SELECT).order('period_start', { ascending: false }).limit(2000);
+    if (!ctx.canViewAll('goals')) {
+      query = query.or(`scope.eq.team,user_id.eq.${profile.user_id}`);
+    }
     if (kind) query = query.eq('period_kind', kind);
     if (userId === 'team') query = query.eq('scope', 'team');
     else if (userId) query = query.eq('user_id', userId);
@@ -31,10 +38,9 @@ export async function GET(req: NextRequest) {
 
     const items = await withPlanProgress((data || []) as PlanRow[]);
 
-    // Консультанты для выбора при постановке плана (администратор)
+    // Сотрудники для выбора при постановке плана (и для назначения задач — страница задач переиспользует список)
     let employees: UserRef[] = [];
-    if (profile.role === 'admin' || profile.role === 'supervisor') {
-      const admin = createAdminClient() as unknown as SupabaseClient<any>;
+    if (ctx.canAny(['goals.manage', 'tasks.assign'])) {
       const { data: users } = await admin
         .from('users')
         .select('user_id, full_name, login, role, color, is_active')
@@ -50,18 +56,18 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** Постановка плана администратором; повторная постановка на тот же период обновляет цель */
+/** Постановка плана (goals.manage); повторная постановка на тот же период обновляет цель */
 export async function POST(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { profile } = await requirePermission('goals.manage');
     const body = await req.json().catch(() => ({}));
     const input = ConnectionPlanSchema.parse(body);
 
     const start = normalizePeriodStart(input.period_kind, input.period_date);
     const end = periodEnd(input.period_kind, start);
-    const db = supabase as unknown as SupabaseClient<any>;
+    const admin = db();
 
-    let existing = db
+    let existing = admin
       .from('connection_plans')
       .select('plan_id')
       .eq('scope', input.scope)
@@ -82,8 +88,8 @@ export async function POST(req: NextRequest) {
     };
 
     const { data, error } = found
-      ? await db.from('connection_plans').update(payload).eq('plan_id', found.plan_id).select(PLAN_SELECT).single()
-      : await db.from('connection_plans').insert(payload).select(PLAN_SELECT).single();
+      ? await admin.from('connection_plans').update(payload).eq('plan_id', found.plan_id).select(PLAN_SELECT).single()
+      : await admin.from('connection_plans').insert(payload).select(PLAN_SELECT).single();
     if (error) throw error;
 
     const [item] = await withPlanProgress([data as PlanRow]);

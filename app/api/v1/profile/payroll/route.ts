@@ -1,17 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { computePayrollSheet } from '@/lib/payroll/server';
 import { SETTLEMENT_MONTH_REGEX } from '@/lib/payroll/classify';
 import { PG_UUID_REGEX } from '@/lib/validations';
 
+/** Расчетный листок в профиле: payouts.menu; чужой — payouts.view_all */
 export async function GET(req: NextRequest) {
   try {
-    const { profile, supabase } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к расчетному листку', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('payouts.menu');
+    const { profile } = ctx;
 
     const { searchParams } = new URL(req.url);
     const requestedEmpId = searchParams.get('employeeId') || searchParams.get('userId');
@@ -24,7 +23,7 @@ export async function GET(req: NextRequest) {
     let targetEmployeeId = profile.user_id;
 
     if (requestedEmpId && requestedEmpId !== profile.user_id) {
-      if (profile.role !== 'admin' && profile.role !== 'supervisor') {
+      if (!ctx.canViewAll('payouts')) {
         return apiError('Просмотр расчетного листка других сотрудников запрещен', 'FORBIDDEN', 403);
       }
       if (!PG_UUID_REGEX.test(requestedEmpId)) {
@@ -33,8 +32,8 @@ export async function GET(req: NextRequest) {
       targetEmployeeId = requestedEmpId;
     }
 
-    // Тот же расчет, что в реестре операций по ЗП (lib/payroll), права проверены выше
-    const sheet = await computePayrollSheet(supabase, targetEmployeeId, month);
+    // Тот же расчет, что в реестре операций по ЗП (lib/payroll); область задана выше, выборка — сервисным клиентом
+    const sheet = await computePayrollSheet(createAdminClient(), targetEmployeeId, month);
 
     return apiSuccess(sheet);
   } catch (err) {

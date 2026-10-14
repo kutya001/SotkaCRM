@@ -3,126 +3,25 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  UserCheck,
-  Store,
-  Link2,
-  Banknote,
-  Users,
-  BookOpen,
-  BarChart3,
-  X,
-  LogOut,
-  Layers,
-  ShieldAlert,
-  ShieldCheck,
-  Shield,
-  Receipt,
-  Send,
-  ListTodo,
-  Target,
-} from 'lucide-react';
+import { X, LogOut, Layers, ShieldAlert, ShieldCheck, Shield } from 'lucide-react';
 import { useUser } from '@/components/auth/AuthProvider';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import type { UserRole } from '@/types/database.types';
+import { NAV_ITEMS } from '@/lib/navigation';
+import { ROLE_LABELS } from '@/lib/constants/roles';
 
 interface MobileMenuDrawerProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-interface NavItem {
-  title: string;
-  href: string;
-  icon: React.ElementType;
-  roles: UserRole[];
-}
-
-const ALL_NAV_ITEMS: NavItem[] = [
-  {
-    title: 'Главная',
-    href: '/',
-    icon: LayoutDashboard,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Лиды',
-    href: '/leads',
-    icon: UserCheck,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
-  },
-  {
-    title: 'Продавцы',
-    href: '/sellers',
-    icon: Store,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Подключения',
-    href: '/connections',
-    icon: Link2,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Операции по ЗП',
-    href: '/payouts',
-    icon: Receipt,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
-  },
-  {
-    title: 'Сотрудники',
-    href: '/employees',
-    icon: Users,
-    roles: ['admin', 'supervisor'],
-  },
-  {
-    title: 'Тарифы',
-    href: '/plans',
-    icon: BookOpen,
-    roles: ['admin', 'supervisor'],
-  },
-  {
-    title: 'Аналитика',
-    href: '/analytics',
-    icon: BarChart3,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Задачи',
-    href: '/tasks',
-    icon: ListTodo,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
-  },
-  {
-    title: 'Планы',
-    href: '/goals',
-    icon: Target,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Telegram',
-    href: '/telegram',
-    icon: Send,
-    roles: ['admin'],
-  },
-];
-
 export function MobileMenuDrawer({ isOpen, onClose }: MobileMenuDrawerProps) {
   const pathname = usePathname();
   const user = useUser();
   const effectiveRole = user.role || 'consultant';
 
-  const navItems = ALL_NAV_ITEMS.filter((item) =>
-    item.roles.includes(effectiveRole)
-  );
-
-  const roleLabel: Record<UserRole, string> = {
-    admin: 'Администратор',
-    supervisor: 'Руководитель',
-    consultant: 'Консультант',
-    smm: 'SMM-оператор',
-  };
+  // Разделы меню — по праву «видеть в меню» назначенной роли
+  const navItems = NAV_ITEMS.filter((item) => user.can(item.permission));
 
   const RoleIcon: Record<UserRole, React.ElementType> = {
     admin: ShieldAlert,
@@ -131,8 +30,8 @@ export function MobileMenuDrawer({ isOpen, onClose }: MobileMenuDrawerProps) {
     smm: Shield,
   };
 
-  const currentRoleLabel = roleLabel[effectiveRole] || 'Сотрудник';
-  const CurrentRoleIcon = RoleIcon[effectiveRole] || ShieldCheck;
+  const currentRoleLabel = user.roleName || ROLE_LABELS[effectiveRole] || 'Сотрудник';
+  const CurrentRoleIcon = user.isAdmin ? ShieldAlert : RoleIcon[effectiveRole] || ShieldCheck;
 
   if (!isOpen) return null;
 

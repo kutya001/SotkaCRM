@@ -3,28 +3,10 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  UserCheck,
-  Store,
-  Link2,
-  Banknote,
-  BookOpen,
-  BarChart3,
-  PanelLeftClose,
-  PanelLeftOpen,
-  LogOut,
-  ShieldAlert,
-  ShieldCheck,
-  Shield,
-  Layers,
-  Users,
-  Receipt,
-  Send,
-  ListTodo,
-  Target,
-} from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, LogOut, ShieldAlert, ShieldCheck, Shield, Layers } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
+import { NAV_ITEMS } from '@/lib/navigation';
+import { ROLE_LABELS } from '@/lib/constants/roles';
 
 interface DesktopSidebarProps {
   collapsed: boolean;
@@ -34,82 +16,6 @@ interface DesktopSidebarProps {
   userLogin?: string;
   onSignOut?: () => void;
 }
-
-interface NavItem {
-  title: string;
-  href: string;
-  icon: React.ElementType;
-  roles: UserRole[];
-}
-
-const NAV_ITEMS: NavItem[] = [
-  {
-    title: 'Главная',
-    href: '/',
-    icon: LayoutDashboard,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Лиды',
-    href: '/leads',
-    icon: UserCheck,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
-  },
-  {
-    title: 'Продавцы',
-    href: '/sellers',
-    icon: Store,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Подключения',
-    href: '/connections',
-    icon: Link2,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Операции по ЗП',
-    href: '/payouts',
-    icon: Receipt,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
-  },
-  {
-    title: 'Сотрудники',
-    href: '/employees',
-    icon: Users,
-    roles: ['admin', 'supervisor'],
-  },
-  {
-    title: 'Тарифы',
-    href: '/plans',
-    icon: BookOpen,
-    roles: ['admin', 'supervisor'],
-  },
-  {
-    title: 'Аналитика',
-    href: '/analytics',
-    icon: BarChart3,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Задачи',
-    href: '/tasks',
-    icon: ListTodo,
-    roles: ['admin', 'supervisor', 'consultant', 'smm'],
-  },
-  {
-    title: 'Планы',
-    href: '/goals',
-    icon: Target,
-    roles: ['admin', 'supervisor', 'consultant'],
-  },
-  {
-    title: 'Telegram',
-    href: '/telegram',
-    icon: Send,
-    roles: ['admin'],
-  },
-];
 
 import { useUser } from '@/components/auth/AuthProvider';
 
@@ -125,18 +31,9 @@ export function DesktopSidebar({
   const user = useUser();
   const effectiveRole = userRole || user.role || 'consultant';
   const effectiveName = userName || user.userName || 'Сотрудник CRM';
-  const effectiveLogin = userLogin || user.userLogin || 'user';
 
-  const filteredNavItems = NAV_ITEMS.filter((item) =>
-    item.roles.includes(effectiveRole)
-  );
-
-  const roleLabel: Record<UserRole, string> = {
-    admin: 'Администратор',
-    supervisor: 'Руководитель',
-    consultant: 'Консультант',
-    smm: 'SMM-оператор',
-  };
+  // Разделы меню — по праву «видеть в меню» назначенной роли
+  const filteredNavItems = NAV_ITEMS.filter((item) => user.can(item.permission));
 
   const RoleIcon: Record<UserRole, React.ElementType> = {
     admin: ShieldAlert,
@@ -145,8 +42,8 @@ export function DesktopSidebar({
     smm: Shield,
   };
 
-  const currentRoleLabel = roleLabel[effectiveRole] || 'Сотрудник';
-  const CurrentRoleIcon = RoleIcon[effectiveRole] || ShieldCheck;
+  const currentRoleLabel = user.roleName || ROLE_LABELS[effectiveRole] || 'Сотрудник';
+  const CurrentRoleIcon = user.isAdmin ? ShieldAlert : RoleIcon[effectiveRole] || ShieldCheck;
 
   // Оба варианта (раскрытый / свернутый) рендерятся всегда, видимость выбирает CSS по атрибуту
   // data-sidebar на <html> (классы sidebar-expanded-only / sidebar-collapsed-only) — так

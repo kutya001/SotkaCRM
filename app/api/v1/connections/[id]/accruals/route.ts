@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { isConnectionInScope } from '@/lib/services/connections';
 
 export async function GET(
   req: NextRequest,
@@ -8,7 +10,8 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const { profile, supabase } = await requireAuth();
+    const ctx = await requirePermission('connections.menu');
+    const supabase = createAdminClient();
 
     // 1. Проверяем существование подключения
     const { data: conn, error: connErr } = await supabase
@@ -21,13 +24,9 @@ export async function GET(
       return apiError('Подключение не найдено', 'NOT_FOUND', 404);
     }
 
-    // RBAC: smm не имеет доступа; consultant только к своим
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к начислениям', 'FORBIDDEN', 403);
-    }
-
-    if (profile.role === 'consultant' && conn.manager_id !== profile.user_id) {
-      return apiError('Доступ разрешен только куратору данного подключения', 'FORBIDDEN', 403);
+    // Область видимости: без «connections.view_all» — только свои подключения
+    if (!isConnectionInScope(ctx, conn)) {
+      return apiError('Доступ разрешен только консультанту данного подключения', 'FORBIDDEN', 403);
     }
 
     // 2. Сначала пробуем получить реальные проводки из employee_payouts

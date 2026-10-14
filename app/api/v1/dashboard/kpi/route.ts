@@ -1,21 +1,24 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
+    const { profile, canViewAll } = await requirePermission('dashboard.menu');
+    const admin = createAdminClient();
+    const leadsViewAll = canViewAll('leads');
 
     // Запрашиваем ключевые счетчики параллельно
     const currentMonth = new Date().toISOString().substring(0, 7);
 
     // 1. Попытка вызова высокопроизводительного SQL-агрегата в СУБД (1 раундтрип)
     // RPC доверяет p_user_id/p_role, поэтому доступна только service_role (миграция 029);
-    // параметры берутся из серверного профиля, а не из запроса
-    const { data: rpcData, error: rpcError } = await createAdminClient().rpc('get_dashboard_kpi', {
+    // параметры берутся из серверного профиля, а не из запроса. p_role — только для области
+    // воронки: при праве «leads.view_all» передаем 'admin' (все лиды), иначе базовую роль
+    const { data: rpcData, error: rpcError } = await admin.rpc('get_dashboard_kpi', {
       p_user_id: profile.user_id,
-      p_role: profile.role,
+      p_role: leadsViewAll ? 'admin' : profile.role,
       p_month: currentMonth,
     });
 
@@ -34,19 +37,18 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Fallback: Быстрые параллельные агрегатные запросы
-    let leadsQuery = supabase.from('leads').select('status, assigned_to');
-    if (profile.role === 'consultant') {
-      leadsQuery = leadsQuery.eq('assigned_to', profile.user_id);
-    } else if (profile.role === 'smm') {
-      leadsQuery = leadsQuery.eq('created_by', profile.user_id);
+    // Fallback: быстрые параллельные агрегатные запросы (те же глобальные метрики, что считает RPC;
+    // воронка лидов — в области видимости сотрудника)
+    let leadsQuery = admin.from('leads').select('status, assigned_to');
+    if (!leadsViewAll) {
+      leadsQuery = leadsQuery.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
     }
 
     const [leadsRes, sellersRes, connectionsRes, payoutsRes] = await Promise.all([
       leadsQuery,
-      supabase.from('sellers').select('is_active, balance', { count: 'exact' }),
-      supabase.from('connections').select('connection_id', { count: 'exact', head: true }),
-      supabase.from('employee_payouts').select('amount').eq('accrual_month', currentMonth),
+      admin.from('sellers').select('is_active, balance', { count: 'exact' }),
+      admin.from('connections').select('connection_id', { count: 'exact', head: true }),
+      admin.from('employee_payouts').select('amount').eq('accrual_month', currentMonth),
     ]);
 
     const leads = leadsRes.data || [];

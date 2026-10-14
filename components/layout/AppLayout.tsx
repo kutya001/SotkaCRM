@@ -20,7 +20,7 @@ const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? React.useLayou
 
 /**
  * Регистратор параметров страницы для постоянной оболочки AppShell (корневой layout):
- * поиск, фильтры, кнопка создания и синхронизация. Сам интерфейс (сайдбар, шапки,
+ * поиск, фильтры и кнопка создания. Сам интерфейс (сайдбар, шапки,
  * нижняя панель) больше не монтируется страницей — поэтому не мерцает при переходах.
  */
 export function AppLayout({
@@ -33,8 +33,6 @@ export function AppLayout({
   onCreateClick,
   createTooltip,
   hideFab,
-  onSyncApi,
-  isSyncing,
 }: AppLayoutProps) {
   const shell = useAppShell();
 
@@ -49,8 +47,6 @@ export function AppLayout({
       onCreateClick,
       createTooltip,
       hideFab,
-      onSyncApi,
-      isSyncing,
     });
   }, [
     shell,
@@ -62,8 +58,6 @@ export function AppLayout({
     onCreateClick,
     createTooltip,
     hideFab,
-    onSyncApi,
-    isSyncing,
   ]);
 
   useIsomorphicLayoutEffect(() => {

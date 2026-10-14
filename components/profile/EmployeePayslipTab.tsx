@@ -100,7 +100,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
           </div>
           <div>
             <h3 className="text-sm sm:text-base font-bold text-zinc-900 dark:text-zinc-100">
-              Расчётный листок куратора
+              Расчётный листок консультанта
             </h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               Непрерывный сальдовый расчет начислений и выплат
@@ -255,7 +255,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                 <span className="text-xs font-mono ml-1 text-zinc-400">сом</span>
               </div>
               <span className="text-[10px] text-zinc-500 mt-1 block">
-                {data.closing_balance > 0 ? 'К выплате куратору' : 'Расчеты закрыты'}
+                {data.closing_balance > 0 ? 'К выплате консультанту' : 'Расчеты закрыты'}
               </span>
             </div>
           </div>
@@ -271,7 +271,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      1. Начисления комиссий куратора
+                      1. Начисления комиссий консультанта
                     </h4>
                     <p className="text-[11px] text-zinc-400">
                       Подключения и ежемесячное сопровождение за {formatMonth(data.month)}
@@ -358,7 +358,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                       2. Удержания и штрафы
                     </h4>
                     <p className="text-[11px] text-zinc-400">
-                      Вычеты из баланса куратора за {formatMonth(data.month)}
+                      Вычеты из баланса консультанта за {formatMonth(data.month)}
                     </p>
                   </div>
                 </div>
@@ -417,7 +417,7 @@ export const EmployeePayslipTab: React.FC<EmployeePayslipTabProps> = ({
                       3. Выплаты (ЗП и авансы)
                     </h4>
                     <p className="text-[11px] text-zinc-400">
-                      Перечисления средств на счета куратора за {formatMonth(data.month)}
+                      Перечисления средств на счета консультанта за {formatMonth(data.month)}
                     </p>
                   </div>
                 </div>

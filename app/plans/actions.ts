@@ -1,12 +1,14 @@
 'use server';
 
 import { revalidatePath, revalidateTag, unstable_cache } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requireAnyPermission, requirePermission } from '@/lib/auth/check-role';
 import { PlanUpdateSchema } from '@/lib/validations';
 import { roundMoney } from '@/lib/utils/money';
-import type { Database, UserRole } from '@/types/database.types';
+import type { UserRole } from '@/types/database.types';
+
+/** Чтение тарифов нужно и модулю подключений (выбор тарифа при оформлении) */
+const PLAN_READ_PERMISSIONS = ['plans.menu', 'connections.menu'];
 
 export interface PlanItem {
   plan_id: string;
@@ -63,27 +65,19 @@ const fetchCachedPlans = unstable_cache(
 );
 
 /**
- * Получение каталога тарифов
+ * Получение каталога тарифов (plans.menu или connections.menu)
  */
 export async function getPlans(): Promise<{
   plans: PlanItem[];
   currentUserRole?: UserRole;
   error?: string;
 }> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  let currentUserRole: UserRole = 'consultant';
-  if (user) {
-    const { data: profile } = await supabase
-      .from('users')
-      .select('role')
-      .eq('auth_id', user.id)
-      .single();
-    if (profile) currentUserRole = profile.role as UserRole;
+  let currentUserRole: UserRole;
+  try {
+    const { profile } = await requireAnyPermission(PLAN_READ_PERMISSIONS);
+    currentUserRole = profile.role;
+  } catch (err: any) {
+    return { plans: [], error: err?.message || 'Недостаточно прав' };
   }
 
   const cached = await fetchCachedPlans();
@@ -91,11 +85,7 @@ export async function getPlans(): Promise<{
 }
 
 /**
- * Обновление параметров тарифа (строго admin)
- * При смене price срабатывает триггер audit_plan_price_trigger
- */
-/**
- * Обновление параметров тарифа (строго admin)
+ * Обновление параметров тарифа (plans.manage)
  * При смене price срабатывает триггер audit_plan_price_trigger
  * и фиксируется запись в plan_prices с датой начала действия
  */
@@ -111,7 +101,8 @@ export async function updatePlan(
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { profile } = await requirePermission('plans.manage');
+    const supabase = createAdminClient();
 
     const parsed = PlanUpdateSchema.safeParse(data);
     if (!parsed.success) {
@@ -158,7 +149,7 @@ export async function updatePlan(
 }
 
 /**
- * Создание нового тарифа (строго admin)
+ * Создание нового тарифа (plans.manage)
  */
 export async function createPlan(data: {
   plan_id: string;
@@ -170,7 +161,8 @@ export async function createPlan(data: {
   effective_from?: string; // YYYY-MM-DD
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { profile } = await requirePermission('plans.manage');
+    const supabase = createAdminClient();
 
     if (!data.plan_id || data.plan_id.trim().length < 2) {
       return { success: false, error: 'Идентификатор тарифа должен содержать не менее 2 символов' };
@@ -216,12 +208,16 @@ export async function createPlan(data: {
 }
 
 /**
- * Получение истории периодов цен тарифа из plan_prices
+ * Получение истории периодов цен тарифа из plan_prices (plans.menu или connections.menu)
  */
 export async function getPlanPrices(planId: string): Promise<PlanPriceItem[]> {
-  const supabase = await createClient();
+  try {
+    await requireAnyPermission(PLAN_READ_PERMISSIONS);
+  } catch {
+    return [];
+  }
 
-  const { data, error } = await supabase
+  const { data, error } = await createAdminClient()
     .from('plan_prices')
     .select('*')
     .eq('plan_id', planId)
@@ -239,7 +235,7 @@ export async function getPlanPrices(planId: string): Promise<PlanPriceItem[]> {
 }
 
 /**
- * Добавление или обновление цены тарифа для определенной даты
+ * Добавление или обновление цены тарифа для определенной даты (plans.manage)
  */
 export async function upsertPlanPrice(
   planId: string,
@@ -247,7 +243,8 @@ export async function upsertPlanPrice(
   effectiveFrom: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase, profile } = await requireAdmin();
+    const { profile } = await requirePermission('plans.manage');
+    const supabase = createAdminClient();
 
     if (!planId || !effectiveFrom || price <= 0) {
       return { success: false, error: 'Заполните корректную дату и стоимость' };
@@ -299,14 +296,15 @@ export async function upsertPlanPrice(
 }
 
 /**
- * Удаление записи интервала цены тарифа
+ * Удаление записи интервала цены тарифа (plans.manage)
  */
 export async function deletePlanPrice(
   priceId: string,
   planId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('plans.manage');
+    const supabase = createAdminClient();
 
     // Проверяем, не является ли это единственной ценой тарифа
     const { count } = await supabase
@@ -339,12 +337,16 @@ export async function deletePlanPrice(
 }
 
 /**
- * Получение истории изменений цен тарифа из plans_history
+ * Получение истории изменений цен тарифа из plans_history (plans.menu или connections.menu)
  */
 export async function getPlanHistory(planId: string): Promise<PlanHistoryItem[]> {
-  const supabase = await createClient();
+  try {
+    await requireAnyPermission(PLAN_READ_PERMISSIONS);
+  } catch {
+    return [];
+  }
 
-  const { data, error } = await supabase
+  const { data, error } = await createAdminClient()
     .from('plans_history')
     .select(
       `
@@ -360,12 +362,13 @@ export async function getPlanHistory(planId: string): Promise<PlanHistoryItem[]>
 }
 
 /**
- * Удаление тарифа (строго admin)
+ * Удаление тарифа (plans.manage)
  * Выполняется проверка на использование в таблицах sellers и connections
  */
 export async function deletePlan(planId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('plans.manage');
+    const supabase = createAdminClient();
 
     if (!planId) {
       return { success: false, error: 'Не указан идентификатор тарифа' };
@@ -422,4 +425,3 @@ export async function deletePlan(planId: string): Promise<{ success: boolean; er
     return { success: false, error: err.message || 'Ошибка при удалении тарифа' };
   }
 }
-

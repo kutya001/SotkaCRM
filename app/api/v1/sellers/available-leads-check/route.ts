@@ -1,23 +1,22 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
+    const ctx = await requirePermission('sellers.menu');
+    const { profile } = ctx;
 
-    if (profile.role === 'smm') {
-      return apiSuccess({ has_available_leads: false, available_count: 0 });
-    }
-
-    let query = supabase
+    let query = createAdminClient()
       .from('leads')
       .select('lead_id', { count: 'exact', head: true })
       .is('seller_phone', null)
       .neq('status', 'Отмена');
 
-    if (profile.role === 'consultant') {
-      query = query.eq('assigned_to', profile.user_id);
+    // Область видимости модуля «Лиды»: без «leads.view_all» — только свои лиды
+    if (!ctx.canViewAll('leads')) {
+      query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
     }
 
     const { count, error } = await query;

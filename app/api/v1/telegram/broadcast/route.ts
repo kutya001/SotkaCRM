@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { isTelegramConfigured } from '@/lib/telegram/bot';
 import {
@@ -16,7 +16,7 @@ const ROLES: UserRole[] = ['admin', 'supervisor', 'consultant', 'smm'];
 /** Сколько сотрудников подключили Telegram (по ролям) */
 export async function GET() {
   try {
-    await requireAdmin();
+    await requirePermission('telegram.broadcast');
     const byRole = await countTelegramLinkedByRole();
     const total = Object.values(byRole).reduce((sum, n) => sum + n, 0);
     return apiSuccess({ configured: isTelegramConfigured(), total, by_role: byRole });
@@ -25,10 +25,10 @@ export async function GET() {
   }
 }
 
-/** Рассылка администратора всем подключенным сотрудникам или выбранным ролям */
+/** Рассылка (telegram.broadcast) всем подключенным сотрудникам или выбранным ролям */
 export async function POST(req: NextRequest) {
   try {
-    const { profile } = await requireAdmin();
+    const { profile } = await requirePermission('telegram.broadcast');
 
     if (!isTelegramConfigured()) {
       return apiError('Telegram-бот не настроен: задайте TELEGRAM_BOT_TOKEN', 'TELEGRAM_NOT_CONFIGURED', 503);

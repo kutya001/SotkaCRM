@@ -1,10 +1,9 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
-import { requireAdmin, requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import {
   PayoutSchema,
   PayoutsBatchSchema,
@@ -150,7 +149,7 @@ export interface CreatePayoutInput {
 async function autoHealMissingAccruals(supabase: any): Promise<number> {
   // 1. Попытка вызова быстрой RPC функции из миграции 024
   try {
-    // RPC доступна только service_role (миграция 029); вызывается только для admin/supervisor
+    // RPC доступна только service_role (миграция 029); вызывается только при праве payouts.view_all
     const { data: rpcRes, error: rpcErr } = await (createAdminClient().rpc as any)('sync_missing_connection_accruals');
     if (!rpcErr && rpcRes && (rpcRes as any).synced_count > 0) {
       return (rpcRes as any).synced_count;
@@ -218,32 +217,23 @@ async function autoHealMissingAccruals(supabase: any): Promise<number> {
 }
 
 /**
- * Получение реестра операций по ЗП с учетом ролевой модели (RBAC)
- * admin / supervisor: видят операции всех сотрудников
- * consultant / smm: видят строго свои строки
+ * Получение реестра операций по ЗП с учетом прав (payouts.menu)
+ * payouts.view_all: операции всех сотрудников (с фильтром по сотруднику по запросу)
+ * иначе: строго свои строки (user_id = me или employee_id = me)
  */
 export async function getPayouts(
   params: GetPayoutsParams = {}
 ): Promise<PayoutsResponse> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { payouts: [], totalCount: 0, error: 'Пользователь не аутентифицирован' };
+  let ctx;
+  try {
+    ctx = await requirePermission('payouts.menu');
+  } catch (err: any) {
+    return { payouts: [], totalCount: 0, error: err?.message || 'Пользователь не аутентифицирован' };
   }
-
-  const { data: profile } = await supabase
-    .from('users')
-    .select('user_id, role, full_name')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!profile) {
-    return { payouts: [], totalCount: 0, error: 'Профиль пользователя не найден' };
-  }
+  const { profile } = ctx;
+  const viewAll = ctx.canViewAll('payouts');
+  // Права проверены выше; область видимости накладывается явно в коде
+  const supabase = createAdminClient();
 
   const {
     page = 1,
@@ -271,9 +261,7 @@ export async function getPayouts(
       { count: 'exact' }
     );
 
-  const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
-
-  if (!isPrivileged) {
+  if (!viewAll) {
     query = query.or(`user_id.eq.${profile.user_id},employee_id.eq.${profile.user_id}`);
   } else if (userId && userId !== 'all') {
     query = query.or(`user_id.eq.${userId},employee_id.eq.${userId}`);
@@ -319,7 +307,7 @@ export async function getPayouts(
 
   let { data, count, error } = await query;
 
-  if (isPrivileged && (!data || data.length === 0)) {
+  if (viewAll && (!data || data.length === 0)) {
     const healed = await autoHealMissingAccruals(supabase);
     if (healed > 0) {
       const retry = await query;
@@ -393,7 +381,7 @@ export async function getPayouts(
 /**
  * Сводные показатели по операциям ЗП за расчетный месяц (или за все время):
  * остаток на начало, начислено, удержано, выплачено (включая авансы), остаток на конец.
- * employeeId — фильтр по сотруднику (consultant/smm всегда видят только себя).
+ * employeeId — фильтр по сотруднику (без payouts.view_all сотрудник всегда видит только себя).
  */
 export async function getPayoutsStats(
   accrualMonth?: string,
@@ -401,15 +389,14 @@ export async function getPayoutsStats(
 ): Promise<PayoutsStats> {
   let ctx;
   try {
-    ctx = await requireAuth();
+    ctx = await requirePermission('payouts.menu');
   } catch {
     return EMPTY_PAYOUTS_STATS;
   }
-  const { supabase, profile } = ctx;
+  const { profile } = ctx;
 
-  const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
   let scopeEmployeeId: string | undefined;
-  if (!isPrivileged) {
+  if (!ctx.canViewAll('payouts')) {
     scopeEmployeeId = profile.user_id;
   } else if (employeeId && employeeId !== 'all' && PG_UUID_REGEX.test(employeeId)) {
     scopeEmployeeId = employeeId;
@@ -419,7 +406,8 @@ export async function getPayoutsStats(
 
   let rows;
   try {
-    rows = await fetchSalaryOperationsForSummary(supabase, scopeEmployeeId);
+    // Область видимости задана выше, выборка — сервисным клиентом
+    rows = await fetchSalaryOperationsForSummary(createAdminClient(), scopeEmployeeId);
   } catch (err) {
     console.error('Error loading salary operations summary:', err);
     return EMPTY_PAYOUTS_STATS;
@@ -469,7 +457,7 @@ function categoryForOperationType(
 
 /**
  * Прямое проведение операции по ЗП (повторяет process_employee_payout_atomic из миграции 019).
- * Используется, когда в БД нет актуальной версии RPC. Вызывать только после requireAdmin().
+ * Используется, когда в БД нет актуальной версии RPC. Вызывать только после requirePermission('payouts.create').
  */
 async function insertSalaryOperationDirect(
   adminSupabase: ReturnType<typeof createAdminClient>,
@@ -552,13 +540,13 @@ async function insertSalaryOperationDirect(
 }
 
 /**
- * Создание операции по ЗП (начисление, удержание, штраф или выплата) — строго роль admin
+ * Создание операции по ЗП (начисление, удержание, штраф или выплата) — право payouts.create
  */
 export async function createPayout(
   input: CreatePayoutInput
 ): Promise<{ success: boolean; error?: string; payout_id?: string }> {
   try {
-    const { profile } = await requireAdmin();
+    const { profile } = await requirePermission('payouts.create');
 
     const parsed = PayoutSchema.safeParse(input);
     if (!parsed.success) {
@@ -584,7 +572,7 @@ export async function createPayout(
     const comment = (valid.note || valid.comment || valid.description || '').trim();
     const accrualIds = valid.accrual_ids && valid.accrual_ids.length > 0 ? valid.accrual_ids : undefined;
 
-    // RPC доступна только service_role (миграция 029), права admin проверены выше
+    // RPC доступна только service_role (миграция 029), право payouts.create проверено выше
     const { data, error } = await adminSupabase.rpc('process_employee_payout_atomic', {
       p_user_id: valid.user_id,
       p_accrual_month: effMonth,
@@ -645,30 +633,30 @@ export async function createPayout(
 }
 
 /**
- * Получение расчетного листа сотрудника за месяц
+ * Получение расчетного листа сотрудника за месяц (payouts.menu; чужой лист — payouts.view_all)
  */
 export async function getPayrollSheetAction(employeeId: string, month: string) {
   let ctx;
   try {
-    ctx = await requireAuth();
+    ctx = await requirePermission('payouts.menu');
   } catch (err: any) {
     return { success: false, error: err.message || 'Пользователь не аутентифицирован' };
   }
-  const { supabase, profile } = ctx;
+  const { profile } = ctx;
 
   if (!PG_UUID_REGEX.test(employeeId) || !SETTLEMENT_MONTH_REGEX.test(month)) {
     return { success: false, error: 'Некорректные параметры расчетного листа' };
   }
 
-  // Чужой расчетный лист доступен только admin/supervisor
-  const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
-  if (!isPrivileged && employeeId !== profile.user_id) {
+  // Чужой расчетный лист доступен только с правом payouts.view_all
+  if (employeeId !== profile.user_id && !ctx.canViewAll('payouts')) {
     return { success: false, error: 'Просмотр расчетного листка других сотрудников запрещен' };
   }
 
-  // Расчет в одном месте с итогами реестра (lib/payroll): аванс — выплата, знак — по виду операции
+  // Расчет в одном месте с итогами реестра (lib/payroll): аванс — выплата, знак — по виду операции.
+  // Область (сотрудник) задана выше, выборка — сервисным клиентом.
   try {
-    const sheet = await computePayrollSheet(supabase, employeeId, month);
+    const sheet = await computePayrollSheet(createAdminClient(), employeeId, month);
     return { success: true, sheet };
   } catch (err: any) {
     console.error('Error computing payroll sheet:', err);
@@ -677,13 +665,23 @@ export async function getPayrollSheetAction(employeeId: string, month: string) {
 }
 
 /**
- * Получение неоплаченных начислений сотрудника
+ * Получение неоплаченных начислений сотрудника (payouts.menu; чужие начисления — payouts.view_all)
  */
 export async function getUnpaidAccrualsAction(
   employeeId: string,
   settlementMonth?: string
 ) {
-  const supabase = await createClient();
+  let ctx;
+  try {
+    ctx = await requirePermission('payouts.menu');
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Пользователь не аутентифицирован', accruals: [] };
+  }
+  if (employeeId !== ctx.profile.user_id && !ctx.canViewAll('payouts')) {
+    return { success: false, error: 'Просмотр начислений других сотрудников запрещен', accruals: [] };
+  }
+
+  const supabase = createAdminClient();
   let query = supabase
     .from('connection_accruals')
     .select(`
@@ -718,14 +716,18 @@ export async function getUnpaidAccrualsAction(
 }
 
 /**
- * Получение списка активных сотрудников для селекторов
+ * Получение списка активных сотрудников для селекторов (payouts.menu)
  */
 export async function getEmployeesList(): Promise<
   { user_id: string; full_name: string; role: string; login: string; color?: string }[]
 > {
-  const supabase = await createClient();
+  try {
+    await requirePermission('payouts.menu');
+  } catch {
+    return [];
+  }
 
-  const { data } = await supabase
+  const { data } = await createAdminClient()
     .from('users')
     .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
@@ -735,17 +737,28 @@ export async function getEmployeesList(): Promise<
 }
 
 /**
- * Получение списка доступных расчетных месяцев
+ * Получение списка доступных расчетных месяцев (payouts.menu; без payouts.view_all — по своим операциям)
  */
 export async function getPayoutMonthsList(): Promise<string[]> {
-  const supabase = await createClient();
+  const currentMonth = new Date().toISOString().substring(0, 7);
 
-  const { data } = await supabase
+  let ctx;
+  try {
+    ctx = await requirePermission('payouts.menu');
+  } catch {
+    return [currentMonth];
+  }
+
+  let query = createAdminClient()
     .from('employee_payouts')
     .select('settlement_month, accrual_month')
     .order('settlement_month', { ascending: false });
+  if (!ctx.canViewAll('payouts')) {
+    query = query.or(`user_id.eq.${ctx.profile.user_id},employee_id.eq.${ctx.profile.user_id}`);
+  }
 
-  const currentMonth = new Date().toISOString().substring(0, 7);
+  const { data } = await query;
+
   const months = new Set<string>([currentMonth]);
 
   if (data) {
@@ -759,14 +772,14 @@ export async function getPayoutMonthsList(): Promise<string[]> {
 }
 
 /**
- * Массовое изменение или удаление операций по ЗП — строго роль admin.
+ * Массовое изменение или удаление операций по ЗП — право payouts.bulk плюс payouts.edit / payouts.delete.
  * update: расчетный месяц, дата, кошелек (только для выплат), вид операции (ручные виды), примечание.
  */
 export async function batchPayoutsAction(
   input: unknown
 ): Promise<{ success: boolean; error?: string; updated?: number; deleted?: number; skipped?: number }> {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('payouts.bulk');
 
     const parsed = PayoutsBatchSchema.safeParse(input);
     if (!parsed.success) {
@@ -774,6 +787,10 @@ export async function batchPayoutsAction(
     }
     const batch = parsed.data;
     const ids = Array.from(new Set(batch.ids));
+
+    // Право на само действие: удаление или редактирование операций
+    await requirePermission(batch.action === 'delete' ? 'payouts.delete' : 'payouts.edit');
+    const supabase = createAdminClient();
 
     if (batch.action === 'delete') {
       // Начисления подключений, закрытые этими выплатами, снова становятся неоплаченными

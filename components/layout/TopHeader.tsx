@@ -3,25 +3,15 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Maximize2, Minimize2, RefreshCw, Search, X } from 'lucide-react';
+import { Maximize2, Minimize2, Search, X } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
-import { formatDateTime } from '@/lib/utils/format';
 import type { UserRole } from '@/types/database.types';
-
-/** Отметка синхронизации: ISO → «ДД.ММ.ГГГГ - чч:мм:сс»; старое значение «чч:мм» показывается как есть */
-function formatSyncLabel(value: string | null | undefined): string {
-  if (!value) return '';
-  const formatted = formatDateTime(value);
-  return formatted === '—' ? value : formatted;
-}
+import { useUser } from '@/components/auth/AuthProvider';
 
 interface TopHeaderProps {
   collapsed: boolean;
   userRole?: UserRole;
   userName?: string;
-  onSyncApi?: () => void;
-  isSyncing?: boolean;
-  lastSyncedAt?: string | null;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
   searchPlaceholder?: string;
@@ -50,7 +40,7 @@ const MODULE_TITLES: Record<string, string> = {
 
 const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Админ',
-  supervisor: 'Руководитель',
+  supervisor: 'Учредитель',
   consultant: 'Консультант',
   smm: 'SMM',
 };
@@ -59,9 +49,6 @@ export function TopHeader({
   collapsed,
   userRole = 'admin',
   userName = 'Сотрудник',
-  onSyncApi,
-  isSyncing = false,
-  lastSyncedAt,
   searchQuery = '',
   onSearchChange,
   searchPlaceholder = 'Быстрый поиск по номеру, имени или магазину...',
@@ -71,8 +58,9 @@ export function TopHeader({
   onToggleLayoutWidth,
 }: TopHeaderProps) {
   const pathname = usePathname();
+  const user = useUser();
   const currentTitle = MODULE_TITLES[pathname] || 'SotkaCRM';
-  const lastSyncLabel = formatSyncLabel(lastSyncedAt);
+  const roleCaption = user.roleName || ROLE_LABELS[userRole] || userRole;
 
   return (
     <header
@@ -117,34 +105,8 @@ export function TopHeader({
         )}
       </div>
 
-      {/* 3. Правая часть: системный блок (Синхронизация API, тема, профиль) */}
+      {/* 3. Правая часть: системный блок (ширина, тема, профиль) */}
       <div className="flex items-center gap-2.5 flex-shrink-0">
-        {/* Кнопка синхронизации с API api.sotka.kg (ТОЛЬКО для роли admin) */}
-        {userRole === 'admin' && (
-          <button
-            type="button"
-            onClick={onSyncApi}
-            disabled={isSyncing}
-            className={`min-w-[44px] h-10 px-3.5 rounded-xl flex items-center gap-2 text-xs font-medium border transition-colors island-interactive ${
-              isSyncing
-                ? 'bg-blue-500/10 text-blue-600 border-blue-500/30 cursor-wait'
-                : 'bg-zinc-200/50 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200/50 dark:border-zinc-700/50'
-            }`}
-            title={lastSyncedAt ? `Последняя синхронизация: ${lastSyncLabel}` : 'Запустить синхронизацию с платформой Sotka'}
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
-              strokeWidth={1.75}
-            />
-            <span className="hidden xl:inline">{isSyncing ? 'Синхронизация...' : 'Синхронизация API'}</span>
-            {lastSyncedAt && !isSyncing && (
-              <span suppressHydrationWarning className="text-[10px] text-zinc-400 font-mono hidden 2xl:inline">
-                ({lastSyncLabel})
-              </span>
-            )}
-          </button>
-        )}
-
         {/* Переключатель ширины экрана: Компактный / Широкий экран */}
         {onToggleLayoutWidth && (
           <button
@@ -184,7 +146,7 @@ export function TopHeader({
               {userName}
             </span>
             <span className="text-[10px] text-zinc-500 dark:text-zinc-400 leading-tight">
-              {ROLE_LABELS[userRole] || userRole}
+              {roleCaption}
             </span>
           </div>
           <div className="w-9 h-9 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center text-xs font-bold shadow-sm flex-shrink-0 group-hover:scale-105 transition-transform">

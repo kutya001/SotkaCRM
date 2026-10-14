@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { updateEmployee } from '@/app/employees/actions';
 
+/** Смена цвета сотрудника: employees.edit */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requirePermission('employees.edit');
     const body = await req.json();
 
     const color = body.color;

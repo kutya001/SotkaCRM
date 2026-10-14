@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
-import { requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { isSellerInScope } from '@/lib/services/sellers';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 
 export async function POST(
@@ -10,9 +12,7 @@ export async function POST(
   try {
     const { id } = await params;
     const sellerPhone = decodeURIComponent(id);
-    // Руководитель — только просмотр (решение по матрице ролей)
-    const ctx = await requireRoles(['admin', 'consultant']);
-    const { supabase } = ctx;
+    const ctx = await requirePermission('sellers.link_lead');
     const body = await req.json();
 
     const leadId = body.lead_id;
@@ -20,10 +20,10 @@ export async function POST(
       return apiError('Параметр lead_id обязателен', 'MISSING_LEAD_ID', 400);
     }
 
-    // Проверка продавца: нельзя привязать лид к продавцу с назначенным куратором
-    const { data: sellerCheck, error: sellerCheckErr } = await supabase
+    // Проверка продавца: нельзя привязать лид к продавцу с назначенным консультантом
+    const { data: sellerCheck, error: sellerCheckErr } = await createAdminClient()
       .from('sellers')
-      .select('seller_phone, manager_id')
+      .select('seller_phone, manager_id, moderation')
       .eq('seller_phone', sellerPhone)
       .maybeSingle();
 
@@ -31,16 +31,19 @@ export async function POST(
     if (!sellerCheck) {
       return apiError('Продавец не найден в базе данных Sotka', 'NOT_FOUND', 404);
     }
+    if (!isSellerInScope(ctx, sellerCheck)) {
+      return apiError('Продавец вне вашей области видимости', 'FORBIDDEN', 403);
+    }
     if (sellerCheck.manager_id !== null) {
       return apiError(
-        'Нельзя привязать лид к продавцу с назначенным куратором',
+        'Нельзя привязать лид к продавцу с назначенным консультантом',
         'SELLER_HAS_CURATOR',
         400
       );
     }
 
-    // Атомарная процедура в СУБД с блокировкой FOR UPDATE (права проверяются в хелпере)
-    const res = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone });
+    // Атомарная процедура в СУБД с блокировкой FOR UPDATE (область лида проверяется в хелпере)
+    const res = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone, via: 'seller' });
 
     if (!res.success) {
       return apiError(res.error || 'Ошибка при связывании продавца с лидом', 'LINK_FAILED', 400);

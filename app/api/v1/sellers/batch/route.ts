@@ -1,12 +1,19 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { SellersBatchActionSchema } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { assignSellerManager } from '@/app/sellers/actions';
+
+/** Право на конкретное массовое действие (в дополнение к «sellers.bulk») */
+const BATCH_ACTION_PERMISSION: Record<'change_manager' | 'delete', string> = {
+  change_manager: 'sellers.assign',
+  delete: 'sellers.delete',
+};
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('sellers.bulk');
     const body = await req.json();
 
     const parsed = SellersBatchActionSchema.safeParse(body);
@@ -20,6 +27,8 @@ export async function POST(req: NextRequest) {
     }
 
     const action = parsed.data.action;
+    await requirePermission(BATCH_ACTION_PERMISSION[action]);
+    const supabase = createAdminClient();
     const targetSellerIds = (parsed.data.seller_ids || parsed.data.ids || []) as string[];
     const manager_id = parsed.data.manager_id !== undefined ? parsed.data.manager_id : parsed.data.payload?.manager_id;
 

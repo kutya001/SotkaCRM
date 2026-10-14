@@ -1,14 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
+/** Смена статуса операции: payouts.status */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireAdmin();
+    await requirePermission('payouts.status');
     const body = await req.json();
 
     const status = body.status;
@@ -18,7 +20,7 @@ export async function PATCH(
       return apiError('Статус обязателен для заполнения', 'MISSING_STATUS', 400);
     }
 
-    const { data: updated, error } = await supabase
+    const { data: updated, error } = await createAdminClient()
       .from('employee_payouts')
       .update({
         comment: transactionRef ? `[Транзакция: ${transactionRef}]` : undefined,

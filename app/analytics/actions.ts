@@ -1,7 +1,7 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requirePermission } from '@/lib/auth/check-role';
 import { fetchSalaryOperationsForSummary } from '@/lib/payroll/server';
 import { sumSalaryOperations } from '@/lib/payroll/classify';
 
@@ -32,25 +32,28 @@ export interface AnalyticsSummaryResult {
 }
 
 /**
- * Получение агрегированной сводки KPI и аналитики в одном оптимизированном вызове PostgreSQL RPC get_analytics_summary
+ * Получение агрегированной сводки KPI и аналитики в одном оптимизированном вызове PostgreSQL RPC get_analytics_summary.
+ * Доступ: analytics.menu; область: analytics.view_all — все сотрудники, иначе только свои показатели.
  */
 export async function getAnalyticsSummaryAction(
   startDate?: string,
   endDate?: string
 ): Promise<{ success: boolean; data?: AnalyticsSummaryResult; error?: string }> {
   try {
-    const { profile } = await requireAuth();
-    const supabase = await createClient();
+    const ctx = await requirePermission('analytics.menu');
+    const { profile, supabase } = ctx;
 
-    const isPrivileged = profile.role === 'admin' || profile.role === 'supervisor';
+    const viewAll = ctx.canViewAll('analytics');
     const [rpcRes, salaryRows] = await Promise.all([
+      // RPC опирается на auth.uid() внутри БД — вызывается клиентом пользователя
       supabase.rpc('get_analytics_summary', {
         p_start_date: startDate || undefined,
         p_end_date: endDate || undefined,
       }),
       // Итоги по ЗП — по тем же правилам, что реестр операций (lib/payroll):
-      // RPC считал «выплачено» как все, кроме удержаний, включая начисления
-      fetchSalaryOperationsForSummary(supabase, isPrivileged ? undefined : profile.user_id, {
+      // RPC считал «выплачено» как все, кроме удержаний, включая начисления.
+      // Область задается явно в коде (права проверены выше), выборка — сервисным клиентом.
+      fetchSalaryOperationsForSummary(createAdminClient(), viewAll ? undefined : profile.user_id, {
         from: startDate,
         to: endDate,
       }),

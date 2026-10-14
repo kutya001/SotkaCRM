@@ -1,20 +1,21 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type { SellerModerationStatus } from '@/types/database.types';
-import { applySellersOrder } from '@/lib/services/sellers';
+import { applySellersOrder, sellersOwnScopeFilter } from '@/lib/services/sellers';
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к базе продавцов', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('sellers.menu');
+    const { profile } = ctx;
+    // Права роли могут превышать базовую RLS-роль: сервисный клиент + явный фильтр области видимости
+    const supabase = createAdminClient();
+    const viewAll = ctx.canViewAll('sellers');
 
     const { searchParams } = new URL(req.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
+    const pageSize = Math.min(500, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = searchParams.get('search') || '';
     const moderation = searchParams.get('moderation');
     const isActive = searchParams.get('isActive');
@@ -24,15 +25,14 @@ export async function GET(req: NextRequest) {
 
     let query = supabase.from('sellers').select('*', { count: 'exact' });
 
-    // Изоляция: консультант видит только не назначенных либо своих approved продавцов
-    if (profile.role === 'consultant') {
-      query = query.eq('moderation', 'approved');
+    // Изоляция без «sellers.view_all»: только свои продавцы либо свободные одобренные
+    if (!viewAll) {
       if (managerId === 'unassigned') {
-        query = query.is('manager_id', null);
+        query = query.is('manager_id', null).eq('moderation', 'approved');
       } else if (managerId === profile.user_id || managerId === 'my') {
         query = query.eq('manager_id', profile.user_id);
       } else {
-        query = query.or(`manager_id.is.null,manager_id.eq.${profile.user_id}`);
+        query = query.or(sellersOwnScopeFilter(profile.user_id));
       }
     } else {
       if (moderation && moderation !== 'all') {
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     const { data: sellersData, count, error } = await query;
     if (error) throw error;
 
-    // Обогащаем данными кураторов и связанных лидов
+    // Обогащаем данными консультантов и связанных лидов
     const managerIds = Array.from(
       new Set((sellersData || []).map((s) => s.manager_id).filter((id): id is string => Boolean(id)))
     );
@@ -138,7 +138,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireRoles(['admin', 'supervisor']);
+    await requirePermission('sellers.create');
+    const supabase = createAdminClient();
     const body = await req.json();
 
     const cleanPhone = (body.seller_phone || '').replace(/\D/g, '');

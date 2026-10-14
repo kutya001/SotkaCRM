@@ -4,7 +4,7 @@ import type { AuthContext } from '@/lib/auth/check-role';
 import type { ConnectionConfirmationStatus } from '@/types/database.types';
 
 /**
- * Подключения продавцов к кураторам: назначение куратора и подтверждение администратором.
+ * Подключения продавцов к консультантам: назначение консультанта и подтверждение администратором.
  *
  * Записи в sellers/connections разрешены RLS только администратору, поэтому сервис пишет
  * сервисным клиентом после проверки прав вызывающим маршрутом.
@@ -19,7 +19,16 @@ export type ServiceResult<T> = ({ success: true } & T) | ServiceError;
 
 const fail = (error: string, code: string, status = 400): ServiceError => ({ success: false, error, code, status });
 
-type Actor = Pick<AuthContext['profile'], 'user_id' | 'role'>;
+/** Инициатор операции: достаточно user_id (права проверяет вызывающий маршрут через requirePermission) */
+type Actor = Pick<AuthContext['profile'], 'user_id'> & Partial<Pick<AuthContext['profile'], 'role'>>;
+
+/** Область видимости подключения: без «connections.view_all» — только свои (manager_id = я) */
+export function isConnectionInScope(
+  ctx: { canViewAll: (module: string) => boolean; profile: { user_id: string } },
+  conn: { manager_id: string | null }
+): boolean {
+  return ctx.canViewAll('connections') || conn.manager_id === ctx.profile.user_id;
+}
 
 interface AssignParams {
   sellerPhone: string;
@@ -27,13 +36,13 @@ interface AssignParams {
   actor: Actor;
   /** confirmed — назначение администратором; pending — консультант взял продавца сам */
   confirmation: Extract<ConnectionConfirmationStatus, 'confirmed' | 'pending'>;
-  /** Продавец должен быть без куратора (защита от гонки двух консультантов) */
+  /** Продавец должен быть без консультанта (защита от гонки двух консультантов) */
   expectUnassigned?: boolean;
   /** Только одобренный модерацией продавец (самоназначение консультанта) */
   requireApproved?: boolean;
 }
 
-/** Цена тарифа и ставка куратора на текущую дату */
+/** Цена тарифа и ставка консультанта на текущую дату */
 async function resolvePlanPriceAndRate(
   admin: ReturnType<typeof createAdminClient>,
   planId: string | null,
@@ -69,7 +78,7 @@ async function resolvePlanPriceAndRate(
 }
 
 /**
- * Назначение / снятие куратора продавца с синхронизацией подключения.
+ * Назначение / снятие консультанта продавца с синхронизацией подключения.
  * При managerId = null подключение удаляется (как и прежде — вместе с начислениями по триггеру).
  */
 export async function assignSellerToManager(
@@ -92,16 +101,16 @@ export async function assignSellerToManager(
     return fail('Взять можно только продавца, одобренного модерацией Sotka', 'SELLER_NOT_APPROVED', 409);
   }
 
-  // 1. Куратор в карточке продавца (при expectUnassigned — только если он еще свободен)
+  // 1. Консультант в карточке продавца (при expectUnassigned — только если он еще свободен)
   let updateSeller = admin.from('sellers').update({ manager_id: managerId }).eq('seller_phone', sellerPhone);
   if (expectUnassigned) updateSeller = updateSeller.is('manager_id', null);
   const { data: updatedRows, error: updateErr } = await updateSeller.select('seller_phone');
   if (updateErr) return fail(updateErr.message, 'DB_ERROR', 500);
   if (!updatedRows || updatedRows.length === 0) {
-    return fail('У продавца уже есть куратор', 'SELLER_ALREADY_TAKEN', 409);
+    return fail('У продавца уже есть консультант', 'SELLER_ALREADY_TAKEN', 409);
   }
 
-  // 2. Снятие куратора: подключение удаляется (начисления чистит триггер)
+  // 2. Снятие консультанта: подключение удаляется (начисления чистит триггер)
   if (!managerId) {
     const { error: delErr } = await admin.from('connections').delete().eq('seller_phone', sellerPhone);
     if (delErr) return fail(delErr.message, 'DB_ERROR', 500);
@@ -211,7 +220,7 @@ interface ConfirmationParams {
 /**
  * Подтверждение или отклонение подключения администратором.
  * confirm: только из pending → confirmed (начисление и уведомление — триггеры 035/036).
- * reject: pending → rejected с причиной; куратор у продавца снимается, привязанный лид
+ * reject: pending → rejected с причиной; консультант у продавца снимается, привязанный лид
  * возвращается в «Назначен» (RPC unlink_lead_and_seller).
  */
 export async function setConnectionConfirmation(
@@ -274,7 +283,7 @@ export async function setConnectionConfirmation(
     .eq('confirmation_status', 'pending');
   if (rejectErr) return fail(rejectErr.message, 'DB_ERROR', 500);
 
-  // Привязанный лид возвращается в «Назначен», куратор у продавца снимается
+  // Привязанный лид возвращается в «Назначен», консультант у продавца снимается
   const { data: linkedLead } = await admin
     .from('leads')
     .select('lead_id')

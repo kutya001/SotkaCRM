@@ -290,12 +290,19 @@ export const HexColorSchema = z
   .nullable()
   .optional();
 
+/** Устаревший enum базового профиля (ролевая модель — users.role_id, миграция 040) */
+export const userRoleEnumSchema = z.enum(['admin', 'supervisor', 'consultant', 'smm'], { message: 'Недопустимая роль' });
+
+/** Назначенная роль (roles.role_id); триггер БД синхронизирует устаревший enum */
+const roleIdSchema = z.string().uuid('Некорректный идентификатор роли').optional();
+
 export const employeeSchema = z.object({
   user_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника').optional(),
   login: z.string().min(3, 'Логин должен содержать не менее 3 символов'),
   full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
   phone: fullPhoneSchema,
-  role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
+  role: userRoleEnumSchema,
+  role_id: roleIdSchema,
   is_active: z.boolean().default(true),
   color: HexColorSchema,
 });
@@ -347,7 +354,8 @@ export const createEmployeeSchema = z
     password: z.string().min(6, 'Пароль должен содержать минимум 6 символов'),
     full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа'),
     phone: fullPhoneSchema,
-    role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }),
+    role: userRoleEnumSchema,
+    role_id: roleIdSchema,
     color: HexColorSchema,
   })
   .extend(employeeProfileFieldsSchema.shape)
@@ -357,7 +365,8 @@ export const updateEmployeeSchema = z
   .object({
     full_name: z.string().min(2, 'ФИО должно содержать минимум 2 символа').optional(),
     phone: fullPhoneSchema,
-    role: z.enum(['admin', 'consultant', 'smm'], { message: 'Недопустимая роль' }).optional(),
+    role: userRoleEnumSchema.optional(),
+    role_id: roleIdSchema,
     is_active: z.boolean().optional(),
     color: HexColorSchema,
   })

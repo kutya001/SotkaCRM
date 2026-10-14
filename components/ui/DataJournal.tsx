@@ -1886,10 +1886,12 @@ export function DataJournal<T extends Record<string, any>>({
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [effectiveSearch, columnFilters, pageSize, groupByField]);
+  }, [effectiveSearch, columnFilters, pageSize, groupByField, activeTab]);
 
   const hasActiveFilters = totalActiveFilterCount > 0;
-  const totalRows = hasActiveFilters ? sortedData.length : (totalCount ?? sortedData.length);
+  // Вкладки — клиентский фильтр уже загруженного набора, поэтому при них итог считается по данным
+  const totalRows =
+    hasActiveFilters || (tabs && tabs.length > 0) ? sortedData.length : (totalCount ?? sortedData.length);
   const totalPages = Math.ceil(totalRows / pageSize) || 1;
   const paginatedData = React.useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -1937,13 +1939,21 @@ export function DataJournal<T extends Record<string, any>>({
   >(null);
   const statusDropdownRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Вкладки: компактный режим (только значки) — общая настройка для всех модулей
+  // Вкладки: компактный режим (только значки) — общая настройка для всех модулей;
+  // на экранах < md подписи вкладок скрыты всегда
   const [tabsCompact, setTabsCompact] = React.useState(false);
+  const [isNarrowViewport, setIsNarrowViewport] = React.useState(false);
   React.useEffect(() => {
     try {
       setTabsCompact(localStorage.getItem('datajournal_tabs_compact') === '1');
     } catch {}
+    const mq = window.matchMedia('(max-width: 767px)');
+    const apply = () => setIsNarrowViewport(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
   }, []);
+  const tabsIconsOnly = tabsCompact || isNarrowViewport;
   const toggleTabsCompact = () => {
     setTabsCompact((prev) => {
       try {
@@ -1957,6 +1967,12 @@ export function DataJournal<T extends Record<string, any>>({
   const swipeRef = React.useRef<{ x: number; y: number; at: number } | null>(null);
   const handleSwipeStart = (e: React.TouchEvent) => {
     if (!tabs || tabs.length < 2 || viewMode !== 'cards') return;
+    // Горизонтальная прокрутка (строка вкладок, таблица) и модальные окна не переключают вкладки
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.('[data-no-swipe], .overflow-x-auto, [role="dialog"]')) {
+      swipeRef.current = null;
+      return;
+    }
     const t = e.touches[0];
     swipeRef.current = { x: t.clientX, y: t.clientY, at: Date.now() };
   };
@@ -1973,6 +1989,73 @@ export function DataJournal<T extends Record<string, any>>({
     if (next !== idx) onTabChange(tabs[next].id);
   };
 
+  // Строка вкладок статусов/категорий: на md+ встроена в тулбар, на мобильных — отдельной строкой
+  const tabsRow =
+    tabs && tabs.length > 0 ? (
+      <div
+        data-no-swipe=""
+        className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 w-full min-w-0 whitespace-nowrap"
+      >
+        <button
+          type="button"
+          onClick={toggleTabsCompact}
+          className={`hidden md:flex h-9 w-9 rounded-xl items-center justify-center flex-shrink-0 border transition-all island-interactive ${
+            tabsCompact
+              ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400'
+              : 'bg-white/75 dark:bg-zinc-900/75 border-zinc-200/60 dark:border-zinc-800/60 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+          }`}
+          title={tabsCompact ? 'Показать названия вкладок' : 'Скрыть названия вкладок (только значки)'}
+          aria-label={tabsCompact ? 'Показать названия вкладок' : 'Скрыть названия вкладок'}
+          aria-pressed={tabsCompact}
+        >
+          <Tags className="w-4 h-4" strokeWidth={1.75} />
+        </button>
+        {tabs.map((tab) => {
+          const isActive = (activeTab ?? 'all') === tab.id;
+          const TabIcon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onTabChange && onTabChange(tab.id)}
+              title={tab.count !== undefined ? `${tab.label} (${tab.count})` : tab.label}
+              aria-label={tab.label}
+              aria-pressed={isActive}
+              className={`h-9 ${tabsIconsOnly ? 'px-2.5' : 'px-3.5'} rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all flex-shrink-0 island-interactive border ${
+                isActive
+                  ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent shadow-sm'
+                  : 'bg-white/75 dark:bg-zinc-900/75 border-zinc-200/60 dark:border-zinc-800/60 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-white dark:hover:bg-zinc-800'
+              }`}
+            >
+              {TabIcon ? (
+                <TabIcon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+              ) : tabsIconsOnly ? (
+                <span
+                  className={`w-4 h-4 rounded-md text-[10px] font-bold flex items-center justify-center flex-shrink-0 ${
+                    isActive ? 'bg-white/20 dark:bg-zinc-900/15' : 'bg-zinc-200/80 dark:bg-zinc-800'
+                  }`}
+                >
+                  {tab.label.trim().charAt(0).toUpperCase()}
+                </span>
+              ) : null}
+              {!tabsIconsOnly && <span>{tab.label}</span>}
+              {tab.count !== undefined && (
+                <span
+                  className={`min-w-[18px] h-4.5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                    isActive
+                      ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900'
+                      : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <div className="w-full space-y-4" onTouchStart={handleSwipeStart} onTouchEnd={handleSwipeEnd}>
       <React.Suspense fallback={null}>
@@ -1986,7 +2069,7 @@ export function DataJournal<T extends Record<string, any>>({
       >
         {/* ТАБЛИЧНЫЙ ВИД: Действия + Поиск + Сброс */}
         {viewMode === 'table' ? (
-          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-shrink-0 md:max-w-[50%]">
             {customActions}
             {onCreateClick && !customActions && (
               <button
@@ -2003,7 +2086,7 @@ export function DataJournal<T extends Record<string, any>>({
             {/* Строка поиска: только если поиск не вынесен в шапку приложения
                 (на экранах < md поиск всегда в MobileHeader) */}
             {!hasHeaderSearch && (
-              <div className="relative hidden md:flex flex-1 min-w-[180px] max-w-xs sm:max-w-sm md:max-w-md">
+              <div className="relative hidden md:flex w-48 lg:w-64 flex-shrink-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
                 <input
                   type="text"
@@ -2027,7 +2110,7 @@ export function DataJournal<T extends Record<string, any>>({
           </div>
         ) : (
           /* КАРТОЧНЫЙ ВИД: [ Группировка ] [ Фильтры ] [ Поиск ] */
-          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-shrink-0 md:max-w-[55%]">
             {customActions}
             {onCreateClick && !customActions && (
               <button
@@ -2391,7 +2474,7 @@ export function DataJournal<T extends Record<string, any>>({
 
             {/* [ Поиск ]: только если поиск не вынесен в шапку приложения (на экранах < md — MobileHeader) */}
             {!hasHeaderSearch && (
-              <div className="relative hidden md:flex flex-1 min-w-[160px] max-w-xs sm:max-w-sm">
+              <div className="relative hidden md:flex w-44 lg:w-56 flex-shrink-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
                 <input
                   type="text"
@@ -2414,6 +2497,9 @@ export function DataJournal<T extends Record<string, any>>({
           </div>
         )}
 
+        {/* По центру (md+): вкладки-фильтры в той же строке, что и действия */}
+        {tabsRow ? <div className="hidden md:flex flex-1 min-w-0 px-1">{tabsRow}</div> : <div className="flex-1" />}
+
         {/* Справа: [Колонки] и [Таблица / Карточки] */}
         <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           {/* Меню настройки видимости колонок */}
@@ -2435,7 +2521,7 @@ export function DataJournal<T extends Record<string, any>>({
             </button>
 
             {activeDropdown === 'columns' && (
-              <div className="absolute right-0 top-13 z-50 w-72 p-3.5 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
+              <div className="absolute right-0 top-12 md:top-[52px] z-50 w-72 p-3.5 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
                 <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/60 pb-2">
                   <div>
                     <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 block">
@@ -2596,63 +2682,8 @@ export function DataJournal<T extends Record<string, any>>({
         </div>
       )}
 
-      {/* Горизонтальные вкладки статусов/категорий */}
-      {tabs && tabs.length > 0 && (
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 w-full shrink-0 whitespace-nowrap">
-          <button
-            type="button"
-            onClick={toggleTabsCompact}
-            className={`h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 border transition-all island-interactive ${
-              tabsCompact
-                ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400'
-                : 'bg-white/75 dark:bg-zinc-900/75 border-white/20 dark:border-zinc-800/40 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
-            }`}
-            title={tabsCompact ? 'Показать названия вкладок' : 'Скрыть названия вкладок (только значки)'}
-            aria-label={tabsCompact ? 'Показать названия вкладок' : 'Скрыть названия вкладок'}
-            aria-pressed={tabsCompact}
-          >
-            <Tags className="w-4 h-4" strokeWidth={1.75} />
-          </button>
-          {tabs.map((tab) => {
-            const isActive = (activeTab ?? 'all') === tab.id;
-            const TabIcon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onTabChange && onTabChange(tab.id)}
-                title={tab.label}
-                aria-label={tab.label}
-                className={`h-9 ${tabsCompact ? 'px-2.5' : 'px-3.5'} rounded-xl text-xs font-semibold flex items-center gap-2 transition-all flex-shrink-0 island-interactive ${
-                  isActive
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-sm'
-                    : 'bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-white dark:hover:bg-zinc-800'
-                }`}
-              >
-                {TabIcon ? (
-                  <TabIcon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-                ) : tabsCompact ? (
-                  <span className="w-4 h-4 rounded-md bg-current/15 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-                    {tab.label.trim().charAt(0).toUpperCase()}
-                  </span>
-                ) : null}
-                {!tabsCompact && <span>{tab.label}</span>}
-                {tab.count !== undefined && (
-                  <span
-                    className={`min-w-[18px] h-4.5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
-                      isActive
-                        ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900'
-                        : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
-                    }`}
-                  >
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* Вкладки на экранах < md: отдельная прокручиваемая строка только со значками */}
+      {tabsRow && <div className="md:hidden">{tabsRow}</div>}
 
       {/* 2. Представление данных: Таблица или Карточки */}
       {isClient && viewMode === 'table' ? (

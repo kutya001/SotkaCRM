@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useUser } from '@/components/auth/AuthProvider';
 import {
   Search,
   Store,
@@ -44,6 +45,7 @@ export function LeadSellerMappingModal({
   consultants = [],
 }: LeadSellerMappingModalProps) {
   const { showToast } = useToast();
+  const user = useUser();
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [sellers, setSellers] = React.useState<AvailableSellerItem[]>([]);
@@ -172,7 +174,7 @@ export function LeadSellerMappingModal({
     >
       <div className="space-y-5">
         {/* Выбор ответственного консультанта (для Администратора) */}
-        {currentUserRole === 'admin' && consultants.length > 0 && (
+        {(currentUserRole === 'admin' || user.can('sellers.assign')) && consultants.length > 0 && (
           <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/80 dark:border-zinc-700/60 space-y-1.5">
             <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center justify-between">
               <span className="flex items-center gap-1.5">

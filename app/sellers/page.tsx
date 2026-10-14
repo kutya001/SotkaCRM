@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/Toast';
 import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
 import { Button } from '@/components/ui/Button';
 import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
+import { formatDateTime } from '@/lib/utils/format';
 import { api } from '@/lib/api/client';
 import {
   getSellersStats,
@@ -41,6 +42,8 @@ import {
   UserPlus,
   Hourglass,
   XCircle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
 } from 'lucide-react';
 import { SellerTransactionsTab } from '@/components/sellers/SellerTransactionsTab';
 import { createClient } from '@/lib/supabase/client';
@@ -127,6 +130,15 @@ export default function SellersPage() {
   const confirm = useConfirm();
   const user = useUser();
   const currentUserId = user.profile?.user_id || '';
+  // Права назначенной роли
+  const canAssign = user.can('sellers.assign');
+  const canTake = user.can('sellers.take');
+  const canLinkLead = user.can('sellers.link_lead');
+  const canUnlinkLead = user.can('sellers.unlink_lead');
+  const canDeleteSeller = user.can('sellers.delete');
+  const canBulk = user.can('sellers.bulk');
+  const canSync = user.can('sellers.sync');
+  const canViewAllSellers = user.canViewAll('sellers');
 
   const [sellers, setSellers] = React.useState<SellerItem[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
@@ -144,7 +156,7 @@ export default function SellersPage() {
     assigned: 0,
   });
 
-  // Список кураторов для фильтрации и назначения
+  // Список консультантов для фильтрации и назначения
   const [managers, setManagers] = React.useState<
     { user_id: string; full_name: string; role: string; login: string; color?: string }[]
   >([]);
@@ -220,7 +232,7 @@ export default function SellersPage() {
   // Поиск и Фильтры (ЯРУС 1)
   const [searchQuery, setSearchQuery] = React.useState('');
   const [curatorTab, setCuratorTab] = React.useState<string>(
-    user.role === 'consultant' ? 'my' : 'all'
+    user.canViewAll('sellers') ? 'all' : 'my'
   );
   const [filterActive, setFilterActive] = React.useState<string>('all');
   const [filterManager, setFilterManager] = React.useState<string>('all');
@@ -232,39 +244,39 @@ export default function SellersPage() {
   const [selectedSellerIds, setSelectedSellerIds] = React.useState<string[]>([]);
   const [isBatchLoading, setIsBatchLoading] = React.useState(false);
 
-  // Загрузка начальных данных
+  // Загрузка данных: весь доступный реестр постранично за один раз.
+  // Вкладки и фильтры (консультант, активность, поиск) работают на клиенте без повторных запросов.
   const fetchSellersData = React.useCallback(
-    async (page = 1, search = '', silent = false, tabOverride?: string) => {
+    async (_page = 1, _search = '', silent = false) => {
       if (!silent) {
         setIsLoading(true);
       }
       try {
-        const activeTab = tabOverride !== undefined ? tabOverride : curatorTab;
-        let effectiveManagerId = filterManager;
-        if (activeTab === 'my') {
-          effectiveManagerId = 'my';
-        } else if (activeTab === 'unassigned') {
-          effectiveManagerId = 'unassigned';
-        } else if (activeTab === 'all') {
-          effectiveManagerId = filterManager !== 'all' ? filterManager : 'all';
-        }
-
+        const PAGE_SIZE = 200;
+        const firstPage = api.sellers.getAll({
+          page: 1,
+          pageSize: PAGE_SIZE,
+          moderation: 'all',
+          isActive: 'all',
+          managerId: 'all',
+        });
         const [sellersRes, leadsCheckRes, statsRes, managersRes] = await Promise.all([
-          api.sellers.getAll({
-            page,
-            pageSize: 50,
-            search,
-            moderation: 'all',
-            isActive: filterActive,
-            managerId: effectiveManagerId,
-          }),
+          firstPage,
           api.sellers.checkAvailableLeads().catch(() => ({ has_available_leads: false, available_count: 0 })),
           getSellersStats(),
           getManagersList(),
         ]);
 
-        setSellers(sellersRes.items || []);
-        setTotalCount(sellersRes.total || 0);
+        const items: SellerItem[] = [...(sellersRes.items || [])];
+        const total = sellersRes.total || items.length;
+        for (let page = 2; items.length < total && page <= 50; page++) {
+          const next = await api.sellers.getAll({ page, pageSize: PAGE_SIZE, moderation: 'all', isActive: 'all', managerId: 'all' });
+          if (!next.items || next.items.length === 0) break;
+          items.push(...next.items);
+        }
+
+        setSellers(items);
+        setTotalCount(total);
         setStats(statsRes);
         setManagers(managersRes);
         setHasAvailableLeads(Boolean(leadsCheckRes.has_available_leads));
@@ -282,8 +294,50 @@ export default function SellersPage() {
         }
       }
     },
-    [curatorTab, filterActive, filterManager, router, showToast]
+    [router, showToast]
   );
+
+  // Клиентская фильтрация: вкладка (все / мои / без консультанта), консультант и активность
+  const visibleSellers = React.useMemo(() => {
+    return sellers.filter((s) => {
+      if (curatorTab === 'my' && s.manager_id !== currentUserId) return false;
+      if (curatorTab === 'unassigned' && s.manager_id) return false;
+      if (filterActive !== 'all' && String(Boolean(s.is_active)) !== filterActive) return false;
+      if (filterManager === 'my' && s.manager_id !== currentUserId) return false;
+      if (filterManager === 'unassigned' && s.manager_id) return false;
+      if (filterManager !== 'all' && filterManager !== 'my' && filterManager !== 'unassigned' && s.manager_id !== filterManager) return false;
+      return true;
+    });
+  }, [sellers, curatorTab, currentUserId, filterActive, filterManager]);
+
+  // Синхронизация реестра с Sotka HQ API (только из модуля «Продавцы»)
+  const [isSyncing, setIsSyncing] = React.useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem('crm_last_sotka_sync');
+      if (saved) setLastSyncedAt(saved);
+    } catch {}
+  }, []);
+
+  const handleSyncApi = React.useCallback(async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const data = await api.sellers.syncSotka();
+      const syncedAtIso = new Date().toISOString();
+      setLastSyncedAt(syncedAtIso);
+      try {
+        localStorage.setItem('crm_last_sotka_sync', syncedAtIso);
+      } catch {}
+      showToast(`Синхронизация завершена: ${data.synced_count} продавцов (всего ${data.total_available})`, 'success');
+      await fetchSellersData(1, '', true);
+    } catch (err: any) {
+      showToast(err.message || 'Сбой при обращении к API Sotka', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSyncing, showToast, fetchSellersData]);
 
   const handleBatchManager = async (managerId: string | null, clearSelection: () => void) => {
     if (selectedSellerIds.length === 0) return;
@@ -294,11 +348,11 @@ export default function SellersPage() {
         action: 'change_manager',
         manager_id: managerId,
       });
-      showToast(`Куратор назначен для ${selectedSellerIds.length} продавцов`, 'success');
+      showToast(`Консультант назначен для ${selectedSellerIds.length} продавцов`, 'success');
       clearSelection();
       await fetchSellersData(1, searchQuery, true);
     } catch (err: any) {
-      showToast(err.message || 'Ошибка массового назначения куратора', 'error');
+      showToast(err.message || 'Ошибка массового назначения консультанта', 'error');
     } finally {
       setIsBatchLoading(false);
     }
@@ -331,24 +385,24 @@ export default function SellersPage() {
     }
   };
 
-  // Вкладки категорий кураторства для DataJournal
+  // Вкладки по консультантам для DataJournal
   const sellerTabs: DataJournalTab[] = React.useMemo(() => {
     return [
-      { id: 'all', label: 'Все', icon: Users, count: stats.total },
-      { id: 'my', label: 'Мои продавцы', icon: UserCheck, count: currentUserRole === 'consultant' ? stats.assigned : undefined },
-      { id: 'unassigned', label: 'Без куратора', icon: UserMinus, count: Math.max(0, stats.total - stats.assigned) },
+      { id: 'all', label: 'Все', icon: Users, count: sellers.length },
+      { id: 'my', label: 'Мои продавцы', icon: UserCheck, count: sellers.filter((s) => s.manager_id === currentUserId).length },
+      { id: 'unassigned', label: 'Без консультанта', icon: UserMinus, count: sellers.filter((s) => !s.manager_id).length },
     ];
-  }, [stats, currentUserRole]);
+  }, [sellers, currentUserId]);
 
+  // Вкладка — чистый клиентский фильтр: данные не перезапрашиваются
   const handleTabChange = (tabId: string) => {
     setCuratorTab(tabId);
-    fetchSellersData(1, searchQuery, false, tabId);
   };
 
   React.useEffect(() => {
     if (user.profile) {
-      if (user.role === 'smm') {
-        showToast('Доступ к реестру продавцов запрещен вашей роли', 'error');
+      if (!user.can('sellers.menu')) {
+        showToast('Доступ к реестру продавцов не предусмотрен вашей ролью', 'error');
         router.push('/leads');
         return;
       }
@@ -390,22 +444,23 @@ export default function SellersPage() {
 
     try {
       await api.sellers.update(sellerPhone, { manager_id: managerId });
-      showToast('Куратор назначен. Связь в подключениях синхронизирована', 'success');
+      showToast('Консультант назначен. Связь в подключениях синхронизирована', 'success');
       await fetchSellersData(1, searchQuery, true);
     } catch (err: any) {
       setSellers(previousSellers);
-      showToast(err.message || 'Ошибка при назначении куратора', 'error');
+      showToast(err.message || 'Ошибка при назначении консультанта', 'error');
     }
   };
 
   // Консультант берет свободного одобренного продавца себе (подключение ждет подтверждения администратора)
   const canTakeSeller = React.useCallback(
     (seller: SellerItem) =>
-      currentUserRole === 'consultant' &&
+      canTake &&
+      !canAssign &&
       !seller.manager_id &&
       seller.moderation === 'approved' &&
       !seller.is_deleted_from_source,
-    [currentUserRole]
+    [canTake, canAssign]
   );
 
   const [takingPhone, setTakingPhone] = React.useState<string | null>(null);
@@ -417,7 +472,7 @@ export default function SellersPage() {
         title: 'Взять продавца себе?',
         subtitle: `${seller.seller_name || seller.store} (${formatPhoneDisplay(seller.seller_phone)})`,
         description:
-          'Вы станете куратором продавца. Бонус за подключение будет начислен после подтверждения администратором.',
+          'Вы станете консультантом продавца. Бонус за подключение будет начислен после подтверждения администратором.',
         tone: 'info',
         icon: UserPlus,
         confirmLabel: 'Взять себе',
@@ -427,7 +482,7 @@ export default function SellersPage() {
       setTakingPhone(seller.seller_phone);
       const previousSellers = sellers;
       const me = managers.find((m) => m.user_id === currentUserId);
-      // Оптимистичное обновление: куратор — текущий консультант, подключение ожидает подтверждения
+      // Оптимистичное обновление: консультант — текущий консультант, подключение ожидает подтверждения
       setSellers((prev) =>
         prev.map((s) =>
           s.seller_phone === seller.seller_phone
@@ -473,7 +528,7 @@ export default function SellersPage() {
     [canTakeSeller, confirm, sellers, managers, currentUserId, user.userName, user.userLogin, showToast, fetchSellersData, searchQuery]
   );
 
-  /** Куратор продавца в ячейке/карточке для не-администратора: бейдж, статус подтверждения, «Взять себе» */
+  /** Консультант продавца в ячейке/карточке для не-администратора: бейдж, статус подтверждения, «Взять себе» */
   const renderCuratorReadOnly = React.useCallback(
     (seller: SellerItem, size: 'xs' | 'sm' = 'sm') => {
       if (canTakeSeller(seller)) {
@@ -487,7 +542,7 @@ export default function SellersPage() {
               handleTakeSelf(seller);
             }}
             leftIcon={<UserPlus className="w-3 h-3" strokeWidth={2} />}
-            title="Стать куратором этого продавца (подтверждает администратор)"
+            title="Стать консультантом этого продавца (подтверждает администратор)"
           >
             Взять себе
           </Button>
@@ -619,6 +674,38 @@ export default function SellersPage() {
         },
       },
       {
+        key: 'hq_topups_total',
+        label: 'Пополнения / Списания HQ',
+        width: 175,
+        minWidth: 150,
+        sortable: true,
+        filterable: false,
+        textValue: (row: SellerItem) =>
+          row.hq_tx_synced_at ? `+${Number(row.hq_topups_total) || 0} / -${Number(row.hq_charges_total) || 0}` : '',
+        renderCell: (row: SellerItem) => {
+          if (!row.hq_tx_synced_at) {
+            return <span className="text-[11px] text-zinc-400 italic">нет данных</span>;
+          }
+          const topups = Number(row.hq_topups_total) || 0;
+          const charges = Number(row.hq_charges_total) || 0;
+          return (
+            <div
+              className="flex flex-col gap-0.5 font-mono text-[11px] leading-tight"
+              title={`Транзакции Sotka HQ на ${formatDateTime(row.hq_tx_synced_at)}`}
+            >
+              <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                <ArrowDownToLine className="w-3 h-3" strokeWidth={2} />
+                +{topups.toLocaleString('ru-RU')}
+              </span>
+              <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400">
+                <ArrowUpFromLine className="w-3 h-3" strokeWidth={2} />
+                −{charges.toLocaleString('ru-RU')}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         key: 'plan_name',
         label: 'Тариф',
         width: 120,
@@ -714,7 +801,7 @@ export default function SellersPage() {
       },
       {
         key: 'manager_id',
-        label: 'Куратор',
+        label: 'Консультант',
         width: 190,
         minWidth: 160,
         sortable: true,
@@ -726,7 +813,7 @@ export default function SellersPage() {
           ...managers.map((m) => ({ value: m.user_id, label: m.full_name })),
         ],
         renderCell: (row: SellerItem) => {
-          if (currentUserRole === 'admin') {
+          if (canAssign) {
             return (
               <div className="flex flex-col gap-1">
                 <CuratorSelectDropdown
@@ -775,7 +862,7 @@ export default function SellersPage() {
             );
           }
 
-          if (!row.manager_id && hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) {
+          if (!row.manager_id && hasAvailableLeads && canLinkLead) {
             return (
               <button
                 type="button"
@@ -794,13 +881,13 @@ export default function SellersPage() {
 
           return (
             <span className="text-[11px] text-zinc-400 italic">
-              {row.manager_id ? 'Куратор назначен' : '—'}
+              {row.manager_id ? 'Консультант назначен' : '—'}
             </span>
           );
         },
       },
     ],
-    [currentUserRole, managers, handleAssignManager, hasAvailableLeads, renderCuratorReadOnly]
+    [canAssign, canLinkLead, managers, handleAssignManager, hasAvailableLeads, renderCuratorReadOnly]
   );
 
   // Конфигурация полей для EntityModal
@@ -945,11 +1032,11 @@ export default function SellersPage() {
     },
     {
       name: 'manager_id',
-      label: 'Ответственный куратор',
+      label: 'Ответственный консультант',
       type: 'text',
       immutable: true,
       renderCustomView: (_val: any, data: SellerItem) => {
-        if (currentUserRole === 'admin') {
+        if (canAssign) {
           return (
             <div className="w-full space-y-1.5">
               <CuratorSelectDropdown
@@ -1016,23 +1103,23 @@ export default function SellersPage() {
 
       <div>
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
-          Куратор
+          Консультант
         </label>
         <select
           value={filterManager}
           onChange={(e) => setFilterManager(e.target.value)}
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
-          {currentUserRole === 'consultant' ? (
+          {!canViewAllSellers ? (
             <>
               <option value="all">Все доступные</option>
               <option value="my">● Мои продавцы</option>
-              <option value="unassigned">— Свободные (без куратора) —</option>
+              <option value="unassigned">— Свободные (без консультанта) —</option>
             </>
           ) : (
             <>
-              <option value="all">Все кураторы</option>
-              <option value="unassigned">— Без куратора —</option>
+              <option value="all">Все консультанты</option>
+              <option value="unassigned">— Без консультанта —</option>
               {managers.map((m) => (
                 <option key={m.user_id} value={m.user_id}>
                   ● {m.full_name}
@@ -1047,7 +1134,7 @@ export default function SellersPage() {
         <button
           type="button"
           onClick={() => {
-            setCuratorTab(currentUserRole === 'consultant' ? 'my' : 'all');
+            setCuratorTab(canViewAllSellers ? 'all' : 'my');
             setFilterActive('all');
             setFilterManager('all');
           }}
@@ -1062,16 +1149,35 @@ export default function SellersPage() {
 
   // Контекстные действия тулбара реестра продавцов (ЯРУС 3)
   const sellerActions = (
+    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+      {canSync && (
+        <button
+          type="button"
+          onClick={handleSyncApi}
+          disabled={isSyncing}
+          className={`h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border island-interactive flex-shrink-0 ${
+            isSyncing
+              ? 'bg-blue-500/10 text-blue-600 border-blue-500/30 cursor-wait'
+              : 'bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 border-transparent'
+          }`}
+          title={lastSyncedAt ? `Синхронизация API Sotka HQ. Последняя: ${formatDateTime(lastSyncedAt)}` : 'Запустить синхронизацию с платформой Sotka HQ'}
+          aria-label="Синхронизация API"
+        >
+          <RefreshCw className={`w-4 h-4 flex-shrink-0 ${isSyncing ? 'animate-spin' : ''}`} strokeWidth={1.75} />
+          <span className="hidden md:inline">{isSyncing ? 'Синхронизация...' : 'Синхронизация API'}</span>
+        </button>
+      )}
     <button
       type="button"
-      onClick={() => fetchSellersData()}
+      onClick={() => fetchSellersData(1, '', true)}
       className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
       title="Обновить базу продавцов"
       aria-label="Обновить базу продавцов"
     >
-      <RefreshCw className="w-4 h-4 text-blue-500 flex-shrink-0" strokeWidth={1.75} />
+      <RotateCcw className="w-4 h-4 text-blue-500 flex-shrink-0" strokeWidth={1.75} />
       <span className="hidden md:inline">Обновить</span>
     </button>
+    </div>
   );
 
   // Кастомный рендеринг карточки продавца для мобильных устройств (Card View)
@@ -1201,14 +1307,14 @@ export default function SellersPage() {
           </div>
         </div>
 
-        {/* Назначение куратора и Связанный лид (Мобильный режим) */}
+        {/* Назначение консультанта и Связанный лид (Мобильный режим) */}
         <div className="space-y-2 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
-          {/* Блок Куратора */}
+          {/* Блок Консультанта */}
           <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
             <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-              Куратор:
+              Консультант:
             </span>
-            {currentUserRole === 'admin' ? (
+            {canAssign ? (
               <div className="flex flex-col items-end gap-1 flex-1 max-w-[210px]">
                 <CuratorSelectDropdown
                   value={seller.manager_id}
@@ -1249,7 +1355,7 @@ export default function SellersPage() {
                   </span>
                 </div>
               </div>
-            ) : (!seller.manager_id && hasAvailableLeads && (currentUserRole === 'admin' || currentUserRole === 'consultant')) ? (
+            ) : (!seller.manager_id && hasAvailableLeads && canLinkLead) ? (
               <button
                 type="button"
                 onClick={() => setLinkLeadModal({ isOpen: true, seller })}
@@ -1260,7 +1366,7 @@ export default function SellersPage() {
               </button>
             ) : (
               <span className="text-[11px] text-zinc-400 italic">
-                {seller.manager_id ? 'Куратор назначен' : 'Прямое подключение'}
+                {seller.manager_id ? 'Консультант назначен' : 'Прямое подключение'}
               </span>
             )}
           </div>
@@ -1271,12 +1377,8 @@ export default function SellersPage() {
 
   const renderCustomRowActions = React.useCallback(
     (row: SellerItem) => {
-      const canLink =
-        hasAvailableLeads &&
-        (currentUserRole === 'admin' || currentUserRole === 'consultant') &&
-        !row.linked_lead &&
-        !row.manager_id;
-      const canDelete = currentUserRole === 'admin';
+      const canLink = hasAvailableLeads && canLinkLead && !row.linked_lead && !row.manager_id;
+      const canDelete = canDeleteSeller;
 
       if (!canLink && !canDelete) {
         return null;
@@ -1362,14 +1464,14 @@ export default function SellersPage() {
               </div>
             </div>
 
-            {/* Без куратора */}
+            {/* Без консультанта */}
             <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
               <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
                 <UserMinus className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  Без куратора
+                  Без консультанта
                 </div>
                 <div className="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
                   {Math.max(0, stats.total - stats.assigned)}
@@ -1384,7 +1486,7 @@ export default function SellersPage() {
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  С куратором
+                  С консультантом
                 </div>
                 <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
                   {stats.assigned}
@@ -1418,19 +1520,19 @@ export default function SellersPage() {
           </div>
         ) : (
           <DataJournal
-            data={sellers}
+            data={visibleSellers}
             columns={columns}
             keyField="seller_phone"
             storageKey="sotka_sellers_journal"
             searchPlaceholder="Поиск по имени, телефону или магазину..."
             emptyMessage="Продавцы не найдены. Выполните синхронизацию с Sotka API."
-            totalCount={totalCount}
+            totalCount={visibleSellers.length}
             externalSearchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             tabs={sellerTabs}
             activeTab={curatorTab}
             onTabChange={handleTabChange}
-            enableSelection={currentUserRole === 'admin'}
+            enableSelection={canBulk}
             selectedIds={selectedSellerIds}
             onSelectionChange={setSelectedSellerIds}
             renderBulkActions={(ids, clearSelection) => (
@@ -1447,8 +1549,8 @@ export default function SellersPage() {
                   }}
                   className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer max-w-[170px] truncate"
                 >
-                  <option value="" disabled className="text-zinc-900 bg-white">Назначить куратора...</option>
-                  <option value="null" className="text-zinc-900 bg-white">Без куратора</option>
+                  <option value="" disabled className="text-zinc-900 bg-white">Назначить консультанта...</option>
+                  <option value="null" className="text-zinc-900 bg-white">Без консультанта</option>
                   {managers.map((m) => (
                     <option key={m.user_id} value={m.user_id} className="text-zinc-900 bg-white">
                       {m.full_name}
@@ -1523,19 +1625,13 @@ export default function SellersPage() {
                         )}`
                       );
                     },
-                    unlinkLabel:
-                      currentUserRole === 'admin' || currentUserRole === 'consultant'
-                        ? 'Отвязать лид'
-                        : undefined,
-                    onUnlink:
-                      currentUserRole === 'admin' || currentUserRole === 'consultant'
-                        ? () => setSellerToUnlink(modalState.selectedSeller)
-                        : undefined,
+                    unlinkLabel: canUnlinkLead ? 'Отвязать лид' : undefined,
+                    onUnlink: canUnlinkLead ? () => setSellerToUnlink(modalState.selectedSeller) : undefined,
                   }
                 : undefined
             }
             onDelete={
-              currentUserRole === 'admin' && modalState.selectedSeller?.is_deleted_from_source
+              canDeleteSeller && modalState.selectedSeller?.is_deleted_from_source
                 ? (seller) => setSellerToDelete(seller as SellerItem)
                 : undefined
             }
@@ -1570,7 +1666,7 @@ export default function SellersPage() {
           level={2}
           description={
             <>
-              При отвязке связанный лид вернется в статус <b>«Назначен»</b>, а у данного продавца будет сброшен назначенный куратор.
+              При отвязке связанный лид вернется в статус <b>«Назначен»</b>, а у данного продавца будет сброшен назначенный консультант.
             </>
           }
         />

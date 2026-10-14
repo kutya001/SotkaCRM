@@ -3,7 +3,12 @@ import { requireAuth } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { CancelReasonSchema } from '@/lib/validations';
-import { canChangeLeadStatus, isCancelReasonDbError, isCancelStatus } from '@/lib/leads/status-rules';
+import {
+  canChangeLeadStatus,
+  isCancelReasonDbError,
+  isCancelStatus,
+  leadActorFrom,
+} from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import type { LeadStatus } from '@/types/database.types';
 
@@ -13,8 +18,9 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const { supabase, profile } = await requireAuth();
+    const ctx = await requireAuth();
     const body = await req.json();
+    const admin = createAdminClient();
 
     const { status, cancel_reason } = body as {
       status: LeadStatus;
@@ -25,8 +31,7 @@ export async function PATCH(
       return apiError('Статус обязателен для заполнения', 'MISSING_STATUS', 400);
     }
 
-    // Чтение клиентом пользователя: RLS скрывает чужие лиды консультанта
-    const { data: targetLead } = await supabase
+    const { data: targetLead } = await admin
       .from('leads')
       .select('lead_id, created_by, assigned_to, status')
       .eq('lead_id', id)
@@ -36,7 +41,8 @@ export async function PATCH(
       return apiError('Лид не найден в системе', 'NOT_FOUND', 404);
     }
 
-    const check = canChangeLeadStatus(profile.role, targetLead, profile.user_id, status);
+    // Единые правила: область видимости, право «leads.status.<целевой>», откат — «leads.rollback»
+    const check = canChangeLeadStatus(leadActorFrom(ctx), targetLead, status);
     if (!check.ok) {
       return apiError(check.reason, 'FORBIDDEN', 403);
     }
@@ -58,9 +64,9 @@ export async function PATCH(
       updatePayload.cancel_reason = parsedReason.data;
     }
 
-    // Запись сервисным клиентом: права уже проверены матрицей ролей выше,
+    // Запись сервисным клиентом: права уже проверены правилами выше,
     // RLS остается страховкой для прямых запросов к БД
-    const { data: updated, error } = await createAdminClient()
+    const { data: updated, error } = await admin
       .from('leads')
       .update(updatePayload as any)
       .eq('lead_id', id)

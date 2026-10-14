@@ -46,6 +46,7 @@ export default function PlansPage() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
+  const canManagePlans = user.can('plans.manage');
   const [userName, setUserName] = React.useState(user.userName);
   const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
@@ -369,7 +370,7 @@ export default function PlansPage() {
             <History className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
             <span>Аудит</span>
           </button>
-          {currentUserRole === 'admin' && (
+          {canManagePlans && (
             <button
               onClick={() => setDeleteDialog({ isOpen: true, plan: row })}
               className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
@@ -407,7 +408,7 @@ export default function PlansPage() {
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
       searchPlaceholder="Поиск по названию или описанию тарифа..."
-      onCreateClick={currentUserRole === 'admin' ? handleOpenCreate : undefined}
+      onCreateClick={canManagePlans ? handleOpenCreate : undefined}
       createTooltip="Добавить тариф"
     >
       <div className="space-y-4">
@@ -431,7 +432,7 @@ export default function PlansPage() {
           keyField="plan_id"
           storageKey="plans_journal"
           searchPlaceholder="Поиск по коду или названию тарифа..."
-          onRowClick={currentUserRole === 'admin' ? handleOpenEdit : undefined}
+          onRowClick={canManagePlans ? handleOpenEdit : undefined}
           totalCount={plans.length}
           externalSearchQuery={searchQuery}
           customActions={planActions}
@@ -452,7 +453,7 @@ export default function PlansPage() {
           footerClassName="justify-between"
           footer={
             <>
-              {!editModal.isNew && currentUserRole === 'admin' ? (
+              {!editModal.isNew && canManagePlans ? (
                 <Button
                   variant="dangerSoft"
                   disabled={isSubmitting}
@@ -597,7 +598,7 @@ export default function PlansPage() {
                   </div>
                 </div>
 
-                {currentUserRole === 'admin' && (
+                {canManagePlans && (
                   <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200/70 dark:border-zinc-700/70 space-y-2">
                     <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 block">
                       Добавить / изменить цену с определенной даты
@@ -666,7 +667,7 @@ export default function PlansPage() {
                           <span className="text-[10px] text-zinc-400 font-mono hidden sm:inline">
                             Создано: <FormattedDate date={item.created_at} type="dateTime" />
                           </span>
-                          {currentUserRole === 'admin' && priceItems.length > 1 && (
+                          {canManagePlans && priceItems.length > 1 && (
                             <button
                               type="button"
                               onClick={() => handleDeleteInlinePrice(item.price_id)}

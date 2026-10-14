@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
-import { requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { isLeadInScope, leadActorFrom } from '@/lib/leads/status-rules';
 
 export async function DELETE(
   req: NextRequest,
@@ -20,11 +21,26 @@ export async function POST(
 async function handleUnlink(paramsPromise: Promise<{ id: string }>) {
   try {
     const { id } = await paramsPromise;
-    // Руководитель — только просмотр (решение по матрице ролей)
-    const { supabase } = await requireRoles(['admin']);
+    const ctx = await requirePermission('leads.unlink_seller');
+    const admin = createAdminClient();
 
-    // 1. Попытка вызова атомарной процедуры в СУБД (RPC доступна только service_role)
-    const { data: rpcData, error: rpcErr } = await (createAdminClient().rpc as any)('unlink_lead_and_seller', {
+    // Область видимости проверяется до любой записи (RPC доступна только service_role)
+    const { data: lead, error: leadErr } = await admin
+      .from('leads')
+      .select('lead_id, seller_phone, status, created_by, assigned_to')
+      .eq('lead_id', id)
+      .maybeSingle();
+
+    if (leadErr || !lead) {
+      return apiError('Лид не найден', 'NOT_FOUND', 404);
+    }
+
+    if (!isLeadInScope(leadActorFrom(ctx), lead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
+    }
+
+    // 1. Попытка вызова атомарной процедуры в СУБД
+    const { data: rpcData, error: rpcErr } = await (admin.rpc as any)('unlink_lead_and_seller', {
       p_lead_id: id,
     });
 
@@ -38,16 +54,6 @@ async function handleUnlink(paramsPromise: Promise<{ id: string }>) {
     }
 
     // 2. Резервный механизм (TypeScript fallback при отсутствии RPC в базе)
-    const { data: lead, error: leadErr } = await supabase
-      .from('leads')
-      .select('lead_id, seller_phone, status')
-      .eq('lead_id', id)
-      .maybeSingle();
-
-    if (leadErr || !lead) {
-      return apiError('Лид не найден', 'NOT_FOUND', 404);
-    }
-
     if (!lead.seller_phone) {
       return apiError('Лид не привязан к продавцу', 'NOT_LINKED', 400);
     }
@@ -55,7 +61,7 @@ async function handleUnlink(paramsPromise: Promise<{ id: string }>) {
     const prevSellerPhone = lead.seller_phone;
 
     // Сбрасываем привязку в лиде и переводим в статус "Назначен"
-    const { error: updLeadErr } = await supabase
+    const { error: updLeadErr } = await admin
       .from('leads')
       .update({
         seller_phone: null,
@@ -67,8 +73,8 @@ async function handleUnlink(paramsPromise: Promise<{ id: string }>) {
 
     if (updLeadErr) throw updLeadErr;
 
-    // Сбрасываем назначенного куратора у продавца
-    await supabase
+    // Сбрасываем назначенного консультанта у продавца
+    await admin
       .from('sellers')
       .update({ manager_id: null } as any)
       .eq('seller_phone', prevSellerPhone);

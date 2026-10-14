@@ -107,8 +107,13 @@ export default function PayoutsPage() {
   const currentUserRole: UserRole = user.role;
   const userName = user.userName;
   const userLogin = user.userLogin;
-  const isAdmin = currentUserRole === 'admin';
-  const isPrivileged = currentUserRole === 'admin' || currentUserRole === 'supervisor';
+  // Права назначенной роли
+  const canCreatePayout = user.can('payouts.create');
+  const canEditPayout = user.can('payouts.edit');
+  const canDeletePayout = user.can('payouts.delete');
+  const canBulkPayouts = user.can('payouts.bulk');
+  const isAdmin = canEditPayout || canDeletePayout;
+  const isPrivileged = user.canViewAll('payouts');
 
   // Статистика
   const [stats, setStats] = React.useState<PayoutsStats>({
@@ -166,8 +171,8 @@ export default function PayoutsPage() {
   const [isDeletingPayout, setIsDeletingPayout] = React.useState(false);
 
   const handleDeletePayout = async (payout: PayoutItem) => {
-    if (currentUserRole !== 'admin') {
-      showToast('Удаление операций по ЗП разрешено только администраторам', 'error');
+    if (!canDeletePayout) {
+      showToast('Удаление операций по ЗП не предусмотрено вашей ролью', 'error');
       return;
     }
     setIsDeletingPayout(true);
@@ -237,7 +242,6 @@ export default function PayoutsPage() {
           pageSize: 500,
           accrualMonth: monthFilter,
           category: selectedCategory !== 'all' ? selectedCategory : undefined,
-          tab: selectedTab !== 'all' ? selectedTab : undefined,
           userId: employeeFilter,
           bypassCache: true,
         }),
@@ -259,13 +263,20 @@ export default function PayoutsPage() {
     } finally {
       if (seq === requestSeqRef.current) setIsLoading(false);
     }
-  }, [selectedMonth, selectedCategory, selectedTab, selectedEmployee, showToast]);
+  }, [selectedMonth, selectedCategory, selectedEmployee, showToast]);
 
   React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // При смене фильтров выбор строк сбрасывается: выбранные операции могли исчезнуть из списка
+  // Вкладка вида операции — клиентский фильтр уже загруженного списка (без повторного запроса)
+  const visiblePayouts = React.useMemo(() => {
+    if (selectedTab === 'all') return payouts;
+    const kind = selectedTab === 'accruals' ? 'accrual' : selectedTab === 'deductions' ? 'deduction' : 'payout';
+    return payouts.filter((p) => classifySalaryOperation(p) === kind);
+  }, [payouts, selectedTab]);
+
+  // При смене фильтров и вкладки выбор строк сбрасывается: выбранные операции могли исчезнуть из списка
   React.useEffect(() => {
     setSelectedIds([]);
   }, [selectedMonth, selectedCategory, selectedTab, selectedEmployee]);
@@ -781,7 +792,7 @@ export default function PayoutsPage() {
 
   const renderCustomRowActions = React.useCallback(
     (row: PayoutItem) => {
-      if (currentUserRole !== 'admin') return null;
+      if (!canDeletePayout) return null;
       return (
         <button
           type="button"
@@ -796,7 +807,7 @@ export default function PayoutsPage() {
         </button>
       );
     },
-    [currentUserRole]
+    [canDeletePayout]
   );
 
   return (
@@ -809,7 +820,7 @@ export default function PayoutsPage() {
       searchPlaceholder="Поиск по сотруднику, виду операции или примечанию..."
       filterCount={activeFilterCount}
       filterContent={filterContent}
-      onCreateClick={currentUserRole === 'admin' ? () => setIsCreateOpen(true) : undefined}
+      onCreateClick={canCreatePayout ? () => setIsCreateOpen(true) : undefined}
       createTooltip="Оформить операцию по ЗП"
     >
       <div className="space-y-4">
@@ -929,7 +940,7 @@ export default function PayoutsPage() {
 
         {/* Универсальный реестр DataJournal */}
         <DataJournal<PayoutItem>
-          data={payouts}
+          data={visiblePayouts}
           columns={columns}
           keyField="payout_id"
           storageKey="salary_operations_journal"
@@ -939,7 +950,7 @@ export default function PayoutsPage() {
           externalSearchQuery={searchQuery}
           customActions={payoutActions}
           customRowActions={renderCustomRowActions}
-          enableSelection={isAdmin}
+          enableSelection={canBulkPayouts}
           selectedIds={selectedIds}
           onSelectionChange={setSelectedIds}
           renderBulkActions={(ids) => (

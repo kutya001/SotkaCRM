@@ -2947,3 +2947,22 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 ### 29.3. Восстановление пароля через Telegram (`telegram_password_resets`)
 * Колонки: `id`, `user_id → users`, `code_hash` (SHA-256 от кода, идентификатора и секрета), `attempts`, `created_at`, `expires_at`, `used_at`. Доступ только `service_role`.
 * Логика (`lib/telegram/password-reset.ts`): код из 6 цифр действует 10 минут, не чаще раза в минуту, 5 попыток; запрос со страницы входа (`POST /api/v1/auth/password-reset/request`, нейтральный ответ без раскрытия логина) или командой `/password` в боте; подтверждение `POST /api/v1/auth/password-reset/confirm` меняет пароль через Supabase Auth Admin API и уведомляет сотрудника в Telegram.
+
+---
+
+## 30. Спецификация Миграции 040 (`040_roles_and_permissions.sql`)
+
+### 30.1. Ролевая модель (`roles`, `role_permissions`, `users.role_id`)
+* `roles`: `role_id`, `code` (латиница, уникален), `name`, `description`, `base_role user_role` (базовый профиль данных для RLS и статистических RPC), `is_system` (не удаляется), `is_admin` (полный доступ: все права всегда, включая добавленные позже), `sort_order`, `created_at`, `updated_at`.
+* `role_permissions (role_id, permission)`: права роли — ключи каталога `lib/auth/permissions-catalog.ts` (вид «модуль.действие»: `leads.menu`, `leads.view_all`, `leads.create`, `leads.status.<Статус>`, `leads.rollback`, `sellers.assign`, `connections.confirm`, `payouts.view_all`, `employees.roles` и т. д.; всего ~75 ключей по 12 модулям).
+* Системные роли по умолчанию (редактируемые): **Администратор** (`admin`, `is_admin`, базовый профиль `admin`), **Учредитель** (`founder`, `supervisor`: все меню и просмотр всех данных, задачи, планы), **Консультант** (`consultant`), **СММ** (`smm`). Права созданы из `DEFAULT_ROLE_PERMISSIONS`.
+* `users.role_id → roles`. Бэкфилл по enum `users.role` (admin → admin, supervisor → founder, smm → smm, иначе consultant).
+* Триггер `trg_users_sync_role` (BEFORE INSERT OR UPDATE OF role, role_id): при назначении роли enum `role` принимает `roles.base_role`; вставка без `role_id` (RPC `create_crm_user`) выводит роль из enum; изменение только enum старым кодом переводит на системную роль этого профиля. `trg_roles_base_role_changed` (AFTER UPDATE OF base_role) переносит новый базовый профиль на сотрудников роли. `trg_roles_guard_delete` запрещает удалять системные роли и роли с сотрудниками.
+* Представление `employees` дополнено колонкой `role_id` (в конце).
+* Функции: `get_current_user_permissions()` → `TEXT[]` (`{'*'}` для полного доступа), `has_permission(p_key TEXT)` → `BOOLEAN` (SECURITY DEFINER, для `authenticated`/`service_role`).
+* RLS: `roles`/`role_permissions` читают все сотрудники, пишет только базовый профиль `admin` (API пишет через `service_role` после проверки права `employees.roles`).
+* Семантика области данных: право `<модуль>.view_all` открывает все записи модуля, без него — только свои (назначенные/созданные). Проверки выполняет API (`requirePermission`, `ctx.canViewAll`) и клиент (`useUser().can`); RLS и статистические RPC продолжают работать по базовому профилю `users.role`.
+* API ролей: `GET /api/v1/roles` (роли с правами и числом сотрудников), `POST /api/v1/roles`, `PATCH|DELETE /api/v1/roles/[id]`; `GET /api/v1/auth/me` отдает `permissions`, `role_id`, `role_name`, `is_admin`. Защита: нельзя снять `employees.roles` со своей роли; базовый профиль роли с полным доступом всегда `admin`.
+
+### 30.2. Итоги транзакций Sotka HQ (`sellers`)
+* `hq_topups_total NUMERIC(14,2)`, `hq_charges_total NUMERIC(14,2)`, `hq_tx_synced_at TIMESTAMPTZ` — суммы пополнений и списаний из детальной карточки организации Sotka HQ. Обновляются при синхронизации реестра (в пределах бюджета времени, сначала давно не обновлявшиеся) и при открытии вкладки «Транзакции Sotka HQ» в карточке продавца. Показываются колонкой «Пополнения / Списания HQ» в реестре продавцов.

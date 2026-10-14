@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
-
-    if (profile.role === 'smm') {
-      return apiError('У роли SMM отсутствует доступ к подключениям', 'FORBIDDEN', 403);
-    }
+    const ctx = await requirePermission('connections.menu');
+    const { profile } = ctx;
+    // Права роли могут превышать базовую RLS-роль: сервисный клиент + явный фильтр области видимости
+    const supabase = createAdminClient();
+    const viewAll = ctx.canViewAll('connections');
 
     const { searchParams } = new URL(req.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -29,7 +30,8 @@ export async function GET(req: NextRequest) {
       .select('connection_id', { count: 'exact', head: true })
       .eq('confirmation_status', 'pending');
 
-    if (profile.role === 'consultant') {
+    // Область видимости: без «connections.view_all» — строго свои подключения (manager_id = я)
+    if (!viewAll) {
       query = query.eq('manager_id', profile.user_id);
       pendingQuery = pendingQuery.eq('manager_id', profile.user_id);
     } else if (managerId && managerId !== 'all') {
@@ -147,7 +149,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireRoles(['admin', 'supervisor']);
+    const { profile } = await requirePermission('connections.create');
+    const supabase = createAdminClient();
     const body = await req.json();
 
     const sellerPhone = (body.seller_phone || '').replace(/\D/g, '');
@@ -177,7 +180,7 @@ export async function POST(req: NextRequest) {
       client_status: body.client_status || 'новый',
       maintenance_months_limit: Number(body.maintenance_months_limit) || 3,
       maintenance_months_accrued: 0,
-      // Создано администратором/руководителем — подтверждения не требует
+      // Создано вручную сотрудником с правом «connections.create» — подтверждения не требует
       confirmation_status: 'confirmed' as const,
       confirmed_by: profile.user_id,
       confirmed_at: nowIso,
@@ -191,7 +194,7 @@ export async function POST(req: NextRequest) {
 
     if (error) throw error;
 
-    // Куратор получает уведомление о подключении и автоматическом начислении
+    // Консультант получает уведомление о подключении и автоматическом начислении
     scheduleTelegramDispatch();
     return apiSuccess(newConn, 201);
   } catch (err) {

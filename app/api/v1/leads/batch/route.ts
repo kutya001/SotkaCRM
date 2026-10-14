@@ -1,13 +1,24 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { CancelReasonSchema, LeadsBatchActionSchema } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
-import { implicitStatusForAssignment, isCancelReasonDbError, isCancelStatus } from '@/lib/leads/status-rules';
+import {
+  canAssignLead,
+  canChangeLeadStatus,
+  implicitStatusForAssignment,
+  isCancelReasonDbError,
+  isCancelStatus,
+  isLeadInScope,
+  leadActorFrom,
+} from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function POST(req: NextRequest) {
   try {
-    const { supabase } = await requireAdmin();
+    const ctx = await requirePermission('leads.bulk');
+    const actor = leadActorFrom(ctx);
+    const admin = createAdminClient();
     const body = await req.json();
 
     const parsed = LeadsBatchActionSchema.safeParse(body);
@@ -26,9 +37,35 @@ export async function POST(req: NextRequest) {
     const cancelReason = parsed.data.cancel_reason ?? parsed.data.payload?.cancel_reason;
     const assigned_to = parsed.data.assigned_to !== undefined ? parsed.data.assigned_to : parsed.data.payload?.assigned_to;
 
+    // Текущее состояние выбранных лидов: права и область видимости проверяются по каждому лиду
+    const { data: currentLeads, error: readError } = await admin
+      .from('leads')
+      .select('lead_id, status, created_by, assigned_to')
+      .in('lead_id', targetLeadIds);
+
+    if (readError) throw readError;
+
+    const leads = currentLeads || [];
+    const outOfScope = leads.filter((l) => !isLeadInScope(actor, l)).map((l) => l.lead_id);
+    if (outOfScope.length > 0) {
+      return apiError('Часть выбранных лидов вне вашей области видимости', 'FORBIDDEN', 403, {
+        denied_ids: outOfScope,
+      });
+    }
+
     if (action === 'change_status') {
       if (!status) {
         return apiError('Не указан новый статус для обновления', 'MISSING_PARAM', 400);
+      }
+
+      // Лиды, уже находящиеся в целевом статусе, пропускаются; для остальных — проверка перехода
+      const toChange = leads.filter((l) => l.status !== status);
+      const denied = toChange
+        .map((l) => ({ id: l.lead_id, check: canChangeLeadStatus(actor, l, status) }))
+        .filter((d) => !d.check.ok);
+      if (denied.length > 0) {
+        const first = denied[0].check as { ok: false; reason: string };
+        return apiError(first.reason, 'FORBIDDEN', 403, { denied_ids: denied.map((d) => d.id) });
       }
 
       const updates: Record<string, unknown> = {
@@ -48,43 +85,45 @@ export async function POST(req: NextRequest) {
         updates.cancel_reason = parsedReason.data;
       }
 
-      const { data, error } = await supabase
-        .from('leads')
-        .update(updates as any)
-        .in('lead_id', targetLeadIds)
-        .select('lead_id, status');
+      const ids = toChange.map((l) => l.lead_id);
+      let affected: { lead_id: string; status: string }[] = [];
+      if (ids.length > 0) {
+        const { data, error } = await admin
+          .from('leads')
+          .update(updates as any)
+          .in('lead_id', ids)
+          .select('lead_id, status');
 
-      if (error) {
-        if (isCancelReasonDbError(error)) {
-          return apiError('Для перевода лидов в статус «Отмена» укажите причину', 'CANCEL_REASON_REQUIRED', 422);
+        if (error) {
+          if (isCancelReasonDbError(error)) {
+            return apiError('Для перевода лидов в статус «Отмена» укажите причину', 'CANCEL_REASON_REQUIRED', 422);
+          }
+          throw error;
         }
-        throw error;
+        affected = data || [];
       }
 
       scheduleTelegramDispatch();
       return apiSuccess({
         success: true,
         action,
-        affected_count: data?.length || 0,
+        affected_count: affected.length,
         status,
         ids: targetLeadIds,
       });
     }
 
     if (action === 'change_assigned') {
+      if (!canAssignLead(actor)) {
+        return apiError('Недостаточно прав для назначения ответственного', 'FORBIDDEN', 403);
+      }
+
       const normalizedAssignedTo = assigned_to || null;
 
       // Косвенная смена статуса зависит от текущего статуса каждого лида
-      const { data: currentLeads, error: readError } = await supabase
-        .from('leads')
-        .select('lead_id, status')
-        .in('lead_id', targetLeadIds);
-
-      if (readError) throw readError;
-
       const nowIso = new Date().toISOString();
       const groups = new Map<string, string[]>();
-      for (const lead of currentLeads || []) {
+      for (const lead of leads) {
         const implicit = implicitStatusForAssignment(lead.status, normalizedAssignedTo) || '';
         const list = groups.get(implicit) || [];
         list.push(lead.lead_id);
@@ -96,7 +135,7 @@ export async function POST(req: NextRequest) {
         const updates: Record<string, unknown> = { assigned_to: normalizedAssignedTo, updated_at: nowIso };
         if (implicitStatus) updates.status = implicitStatus;
 
-        const { data, error } = await supabase
+        const { data, error } = await admin
           .from('leads')
           .update(updates as any)
           .in('lead_id', ids)
@@ -117,22 +156,30 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'delete') {
-      // Физическое удаление (admin): разрешено триггером check_lead_deletion_permission
-      // и политикой leads_delete_policy (миграция 032)
-      const { data: deleted, error } = await supabase
-        .from('leads')
-        .delete()
-        .in('lead_id', targetLeadIds)
-        .select('lead_id');
+      if (!ctx.can('leads.delete')) {
+        return apiError('Недостаточно прав для удаления лидов', 'FORBIDDEN', 403);
+      }
 
-      if (error) throw error;
+      // Физическое удаление: сервисный клиент проходит триггер prevent_lead_delete (миграция 032)
+      const ids = leads.map((l) => l.lead_id);
+      let deleted: { lead_id: string }[] = [];
+      if (ids.length > 0) {
+        const { data, error } = await admin
+          .from('leads')
+          .delete()
+          .in('lead_id', ids)
+          .select('lead_id');
+
+        if (error) throw error;
+        deleted = data || [];
+      }
 
       scheduleTelegramDispatch();
       return apiSuccess({
         success: true,
         action,
-        affected_count: deleted?.length || 0,
-        ids: (deleted || []).map((l) => l.lead_id),
+        affected_count: deleted.length,
+        ids: deleted.map((l) => l.lead_id),
       });
     }
 

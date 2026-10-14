@@ -68,7 +68,7 @@ interface PlanForm {
 export default function GoalsPage() {
   const { showToast } = useToast();
   const user = useUser();
-  const isAdmin = user.role === 'admin';
+  const isAdmin = user.can('goals.manage');
   const today = todayISODate();
 
   const [items, setItems] = React.useState<PlanItem[]>([]);
@@ -480,7 +480,7 @@ export default function GoalsPage() {
             </FormField>
             {!editor.plan && (
               <ModalCallout tone="info">
-                Если план на этот период уже есть, цель будет обновлена. Факт считается по подтвержденным подключениям с датой назначения куратора внутри периода.
+                Если план на этот период уже есть, цель будет обновлена. Факт считается по подтвержденным подключениям с датой назначения консультанта внутри периода.
               </ModalCallout>
             )}
           </div>

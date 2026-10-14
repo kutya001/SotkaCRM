@@ -6,6 +6,7 @@ import { cookies } from 'next/headers';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requirePermission } from '@/lib/auth/check-role';
 import type { UserRole } from '@/types/database.types';
 
 export interface AuthState {
@@ -18,7 +19,10 @@ export interface CreateUserInput {
   password: string;
   full_name: string;
   phone?: string;
+  /** Базовый профиль (устаревший enum); при наличии role_id enum выводится триггером из роли */
   role: UserRole;
+  /** Назначенная роль (roles.role_id) */
+  role_id?: string;
 }
 
 /**
@@ -123,31 +127,16 @@ export async function signOut() {
 }
 
 /**
- * Создание учетной записи нового сотрудника (строго для роли admin).
+ * Создание учетной записи нового сотрудника (право employees.create).
  * Выполняется без запроса email у пользователя, связывая логин с auth.users.
  */
 export async function createCrmUser(
   input: CreateUserInput
 ): Promise<{ success: boolean; userId?: string; error?: string }> {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { success: false, error: 'Пользователь не аутентифицирован' };
-  }
-
-  // Проверка роли текущего пользователя
-  const { data: currentProfile } = await supabase
-    .from('users')
-    .select('role, is_active')
-    .eq('auth_id', user.id)
-    .single();
-
-  if (!currentProfile || currentProfile.role !== 'admin' || !currentProfile.is_active) {
-    return { success: false, error: 'Создание пользователей доступно только администратору' };
+  try {
+    await requirePermission('employees.create');
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Недостаточно прав для создания сотрудников' };
   }
 
   if (!input.login || input.login.trim().length < 3) {
@@ -162,8 +151,9 @@ export async function createCrmUser(
     return { success: false, error: 'Укажите полное ФИО сотрудника' };
   }
 
-  // create_crm_user (SECURITY DEFINER) доступна только service_role — права admin проверены выше
-  const { data: createdUserId, error: rpcError } = await createAdminClient().rpc('create_crm_user', {
+  // create_crm_user (SECURITY DEFINER) доступна только service_role — право employees.create проверено выше
+  const adminClient = createAdminClient();
+  const { data: createdUserId, error: rpcError } = await adminClient.rpc('create_crm_user', {
     p_login: input.login.trim(),
     p_password: input.password,
     p_full_name: input.full_name.trim(),
@@ -173,6 +163,23 @@ export async function createCrmUser(
 
   if (rpcError) {
     return { success: false, error: rpcError.message };
+  }
+
+  // Назначенная роль: RPC знает только устаревший enum, role_id проставляем отдельно
+  // (триггер trg_users_sync_role синхронизирует enum с base_role роли)
+  if (input.role_id && createdUserId) {
+    const { error: roleErr } = await adminClient
+      .from('users')
+      .update({ role_id: input.role_id })
+      .eq('user_id', createdUserId);
+    if (roleErr) {
+      revalidatePath('/', 'layout');
+      return {
+        success: false,
+        userId: createdUserId,
+        error: `Сотрудник создан, но роль не назначена: ${roleErr.message}`,
+      };
+    }
   }
 
   revalidatePath('/', 'layout');

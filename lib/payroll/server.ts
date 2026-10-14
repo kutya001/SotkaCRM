@@ -75,7 +75,7 @@ export interface PayrollSheet {
 
 /**
  * Расчетный лист сотрудника за месяц.
- * Вызывать только после проверки прав (сотрудник видит свой лист, admin/supervisor — любой).
+ * Вызывать только после проверки прав (сотрудник видит свой лист, payouts.view_all — любой).
  */
 export async function computePayrollSheet(
   client: Client,

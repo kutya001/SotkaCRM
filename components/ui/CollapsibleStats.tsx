@@ -8,7 +8,7 @@ interface CollapsibleStatsProps {
   /** Ключ localStorage: состояние запоминается отдельно для каждого модуля */
   storageKey: string;
   title?: string;
-  /** Краткая сводка, видимая в свернутом состоянии (например, «30 активных · 41 без куратора») */
+  /** Краткая сводка, видимая в свернутом состоянии (например, «30 активных · 41 без консультанта») */
   summary?: React.ReactNode;
   defaultCollapsed?: boolean;
   children: React.ReactNode;

@@ -1,62 +1,73 @@
-import type { LeadStatus, UserRole } from '@/types/database.types';
+import type { LeadStatus } from '@/types/database.types';
+import { hasPermission } from '../auth/permissions.ts';
+import { isLeadStatusRollback } from '../auth/permissions-catalog.ts';
 
 /**
- * Единые правила смены статусов лидов по ролям. Используются и интерфейсом
- * (какие статусы предлагать), и API (что разрешить), чтобы они не расходились.
+ * Единые правила работы с лидами по правам доступа (каталог lib/auth/permissions-catalog).
+ * Используются и интерфейсом (какие статусы предлагать), и API (что разрешить), чтобы они не расходились.
  *
- * - admin: любой переход, включая возврат из «Отмена»
- * - supervisor: только просмотр
- * - smm: свои лиды; Открыт ↔ Обработан, из обоих — в «Отмена»
- * - consultant: свои лиды; из «Назначен» — в «Подписан» или «Отмена»
- * Перевод в «Отмена» для всех ролей требует причину.
+ * - область видимости: «leads.view_all» или свой лид (назначен мне либо создан мной);
+ * - смена статуса: «leads.status.<целевой>» и, для отката назад, «leads.rollback»;
+ * - редактирование карточки: «leads.edit»; только комментарий: «leads.edit» или «leads.comment»;
+ * - назначение ответственного: «leads.assign».
+ * Полный доступ («*») проходит все проверки. Перевод в «Отмена» для всех требует причину.
  */
 
 export const LEAD_STATUSES: readonly LeadStatus[] = ['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'];
 
 export const CANCELLED_STATUS: LeadStatus = 'Отмена';
 
-export interface LeadAccessInfo {
-  status: LeadStatus | string;
+/** Субъект проверки: сотрудник и права его роли */
+export interface LeadActor {
+  userId: string;
+  permissions: string[];
+}
+
+export interface LeadScopeInfo {
   created_by?: string | null;
   assigned_to?: string | null;
 }
 
+export interface LeadAccessInfo extends LeadScopeInfo {
+  status: LeadStatus | string;
+}
+
 export type LeadStatusCheck = { ok: true } | { ok: false; reason: string };
+
+/** Построение субъекта из серверного AuthContext (или любого объекта с profile.user_id и permissions) */
+export function leadActorFrom(ctx: { permissions: string[]; profile: { user_id: string } }): LeadActor {
+  return { userId: ctx.profile.user_id, permissions: ctx.permissions };
+}
 
 export function isCancelStatus(status: string | null | undefined): boolean {
   return status === CANCELLED_STATUS;
 }
 
-const SMM_TRANSITIONS: Partial<Record<string, LeadStatus[]>> = {
-  Открыт: ['Обработан', 'Отмена'],
-  Обработан: ['Открыт', 'Отмена'],
-};
+/** Лид в области видимости сотрудника: «leads.view_all» либо назначен ему / создан им */
+export function isLeadInScope(actor: LeadActor, lead: LeadScopeInfo): boolean {
+  if (hasPermission(actor.permissions, 'leads.view_all')) return true;
+  return (
+    (Boolean(lead.assigned_to) && lead.assigned_to === actor.userId) ||
+    (Boolean(lead.created_by) && lead.created_by === actor.userId)
+  );
+}
 
-const CONSULTANT_TRANSITIONS: Partial<Record<string, LeadStatus[]>> = {
-  Назначен: ['Подписан', 'Отмена'],
-};
+function canReachStatus(actor: LeadActor, from: LeadStatus | string, to: LeadStatus): boolean {
+  if (!hasPermission(actor.permissions, `leads.status.${to}`)) return false;
+  if (isLeadStatusRollback(from, to) && !hasPermission(actor.permissions, 'leads.rollback')) return false;
+  return true;
+}
 
-/** Статусы, в которые роль может перевести данный лид (без текущего) */
-export function allowedLeadTransitions(role: UserRole, lead: LeadAccessInfo, userId: string): LeadStatus[] {
-  switch (role) {
-    case 'admin':
-      return LEAD_STATUSES.filter((s) => s !== lead.status);
-    case 'smm':
-      if (!lead.created_by || lead.created_by !== userId) return [];
-      return SMM_TRANSITIONS[lead.status] || [];
-    case 'consultant':
-      if (!lead.assigned_to || lead.assigned_to !== userId) return [];
-      return CONSULTANT_TRANSITIONS[lead.status] || [];
-    default:
-      return [];
-  }
+/** Статусы, в которые сотрудник может перевести данный лид (без текущего) */
+export function allowedLeadTransitions(actor: LeadActor, lead: LeadAccessInfo): LeadStatus[] {
+  if (!isLeadInScope(actor, lead)) return [];
+  return LEAD_STATUSES.filter((s) => s !== lead.status && canReachStatus(actor, lead.status, s));
 }
 
 /** Проверка конкретного перехода с понятной причиной отказа */
 export function canChangeLeadStatus(
-  role: UserRole,
+  actor: LeadActor,
   lead: LeadAccessInfo,
-  userId: string,
   target: LeadStatus | string
 ): LeadStatusCheck {
   if (!LEAD_STATUSES.includes(target as LeadStatus)) {
@@ -65,49 +76,25 @@ export function canChangeLeadStatus(
   if (target === lead.status) {
     return { ok: false, reason: 'Лид уже находится в этом статусе' };
   }
-
-  switch (role) {
-    case 'admin':
-      return { ok: true };
-    case 'supervisor':
-      return { ok: false, reason: 'Руководитель может только просматривать лиды' };
-    case 'smm': {
-      if (!lead.created_by || lead.created_by !== userId) {
-        return { ok: false, reason: 'SMM-специалист может менять статус только своих лидов' };
-      }
-      if (isCancelStatus(lead.status)) {
-        return { ok: false, reason: 'Вернуть лид из статуса «Отмена» может только администратор' };
-      }
-      if (!(SMM_TRANSITIONS[lead.status] || []).includes(target as LeadStatus)) {
-        return {
-          ok: false,
-          reason: 'SMM-специалисту доступны статусы «Открыт», «Обработан» и «Отмена»; остальные ставит администратор',
-        };
-      }
-      return { ok: true };
-    }
-    case 'consultant': {
-      if (!lead.assigned_to || lead.assigned_to !== userId) {
-        return { ok: false, reason: 'Консультант может менять статус только своих лидов' };
-      }
-      if (isCancelStatus(lead.status)) {
-        return { ok: false, reason: 'Вернуть лид из статуса «Отмена» может только администратор' };
-      }
-      if (!(CONSULTANT_TRANSITIONS[lead.status] || []).includes(target as LeadStatus)) {
-        return {
-          ok: false,
-          reason: 'Консультант переводит лид только из «Назначен» в «Подписан» или «Отмена»',
-        };
-      }
-      return { ok: true };
-    }
-    default:
-      return { ok: false, reason: 'Недостаточно прав для смены статуса' };
+  if (!isLeadInScope(actor, lead)) {
+    return { ok: false, reason: 'Можно менять статус только своих лидов' };
   }
+  if (!hasPermission(actor.permissions, `leads.status.${target}`)) {
+    return { ok: false, reason: `Недостаточно прав для перевода лида в статус «${target}»` };
+  }
+  if (isLeadStatusRollback(lead.status, target) && !hasPermission(actor.permissions, 'leads.rollback')) {
+    return {
+      ok: false,
+      reason: isCancelStatus(lead.status)
+        ? 'Недостаточно прав для возврата лида из статуса «Отмена»'
+        : 'Недостаточно прав для отката лида на более ранний этап воронки',
+    };
+  }
+  return { ok: true };
 }
 
 /**
- * Косвенная смена статуса при назначении ответственного (только администратор):
+ * Косвенная смена статуса при назначении ответственного:
  * назначение из «Открыт»/«Обработан» → «Назначен»; снятие из «Назначен» → «Обработан».
  */
 export function implicitStatusForAssignment(
@@ -125,16 +112,20 @@ export function isCancelReasonDbError(err: unknown): boolean {
   return Boolean(e && (e.hint === 'cancel_reason_required' || /cancel_reason_required/.test(e.message || '')));
 }
 
-/** Может ли роль редактировать поля лида (имя, телефон, комментарий) */
-export function canEditLeadFields(role: UserRole, lead: LeadAccessInfo, userId: string): boolean {
-  switch (role) {
-    case 'admin':
-      return true;
-    case 'smm':
-      return lead.created_by === userId && (lead.status === 'Открыт' || lead.status === 'Обработан');
-    case 'consultant':
-      return lead.assigned_to === userId && (lead.status === 'Назначен' || lead.status === 'Подписан');
-    default:
-      return false;
-  }
+/** Полное редактирование карточки лида (имя, телефон, Instagram и прочие поля) */
+export function canEditLeadFields(actor: LeadActor, lead: LeadScopeInfo): boolean {
+  return isLeadInScope(actor, lead) && hasPermission(actor.permissions, 'leads.edit');
+}
+
+/** Редактирование комментария (полное редактирование либо отдельное право на комментарий) */
+export function canEditLeadComment(actor: LeadActor, lead: LeadScopeInfo): boolean {
+  return (
+    isLeadInScope(actor, lead) &&
+    (hasPermission(actor.permissions, 'leads.edit') || hasPermission(actor.permissions, 'leads.comment'))
+  );
+}
+
+/** Назначение и снятие ответственного консультанта */
+export function canAssignLead(actor: LeadActor): boolean {
+  return hasPermission(actor.permissions, 'leads.assign');
 }

@@ -1,10 +1,10 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { setConnectionConfirmation } from '@/lib/services/connections';
 
 /**
- * Подтверждение / отклонение подключения администратором.
+ * Подтверждение / отклонение подключения (право «connections.confirm»).
  * body: { action: 'confirm' | 'reject', reason?: string } — причина обязательна при reject.
  */
 export async function PATCH(
@@ -13,7 +13,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const { profile } = await requireAdmin();
+    const { profile } = await requirePermission('connections.confirm');
     const body = await req.json().catch(() => ({}));
 
     const action = body?.action;
@@ -37,7 +37,7 @@ export async function PATCH(
       connection_id: res.connectionId,
       confirmation_status: res.confirmationStatus,
       seller_phone: res.sellerPhone,
-      message: action === 'confirm' ? 'Подключение подтверждено, бонус начислен куратору' : 'Подключение отклонено',
+      message: action === 'confirm' ? 'Подключение подтверждено, бонус начислен консультанту' : 'Подключение отклонено',
     });
   } catch (err) {
     return handleApiError(err);

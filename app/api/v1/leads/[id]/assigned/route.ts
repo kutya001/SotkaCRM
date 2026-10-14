@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { normalizeNullableUuid } from '@/lib/validations';
-import { implicitStatusForAssignment } from '@/lib/leads/status-rules';
+import { implicitStatusForAssignment, isLeadInScope, leadActorFrom } from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function PATCH(
@@ -11,19 +12,24 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const { supabase } = await requireAdmin();
+    const ctx = await requirePermission('leads.assign');
     const body = await req.json();
+    const admin = createAdminClient();
 
     const assignedTo = normalizeNullableUuid(body.assigned_to);
 
-    const { data: currentLead } = await supabase
+    const { data: currentLead } = await admin
       .from('leads')
-      .select('status')
+      .select('status, created_by, assigned_to')
       .eq('lead_id', id)
       .single();
 
     if (!currentLead) {
       return apiError('Лид не найден', 'NOT_FOUND', 404);
+    }
+
+    if (!isLeadInScope(leadActorFrom(ctx), currentLead)) {
+      return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
     const updates: Record<string, unknown> = {
@@ -37,7 +43,7 @@ export async function PATCH(
       updates.status = implicitStatus;
     }
 
-    const { data: updated, error } = await supabase
+    const { data: updated, error } = await admin
       .from('leads')
       .update(updates as any)
       .eq('lead_id', id)

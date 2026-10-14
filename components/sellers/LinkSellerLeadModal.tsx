@@ -115,7 +115,7 @@ export function LinkSellerLeadModal({
       open={isOpen}
       onClose={onClose}
       title="Связать продавца с лидом"
-      subtitle="Назначение куратора и расчет выплаты (подтверждает администратор)"
+      subtitle="Назначение консультанта и расчет выплаты (подтверждает администратор)"
       icon={Link2}
       tone="info"
       size="lg"
@@ -271,7 +271,7 @@ export function LinkSellerLeadModal({
           <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 space-y-0.5">
             <p className="font-semibold">Что произойдет при привязке:</p>
             <p className="text-[11px] text-amber-600 dark:text-amber-400">
-              Куратор продавца станет: <strong>{selectedLead.assigned_user?.full_name || 'Текущий администратор'}</strong>.
+              Консультант продавца станет: <strong>{selectedLead.assigned_user?.full_name || 'Текущий администратор'}</strong>.
               Лид перейдет в статус «Подписан». В модуле подключений рассчитается выплата.
             </p>
           </div>

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { requireRoles } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { findSellerByKey } from '@/lib/services/sellers';
@@ -21,8 +21,9 @@ export async function POST(
 async function handleUnlinkFromSeller(paramsPromise: Promise<{ id: string }>) {
   try {
     const { id } = await paramsPromise;
-    // Руководитель — только просмотр (решение по матрице ролей)
-    const { supabase } = await requireRoles(['admin']);
+    await requirePermission('sellers.unlink_lead');
+    // Запись в sellers/leads после проверки права — сервисным клиентом
+    const supabase = createAdminClient();
 
     // 1. Поиск продавца по organization_id или seller_phone
     const seller = await findSellerByKey(supabase, id, ['seller_phone', 'seller_name', 'manager_id'] as const);
@@ -48,7 +49,7 @@ async function handleUnlinkFromSeller(paramsPromise: Promise<{ id: string }>) {
       return apiSuccess({
         success: true,
         seller_phone: seller.seller_phone,
-        message: 'Куратор продавца сброшен (привязанный лид не был обнаружен)',
+        message: 'Консультант продавца сброшен (привязанный лид не был обнаружен)',
       });
     }
 

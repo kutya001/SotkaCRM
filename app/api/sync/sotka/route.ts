@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient as createServerSupabase } from '@/lib/supabase/server';
+import { requirePermission, PermissionError } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   authenticateSotkaAdmin,
@@ -55,7 +55,7 @@ async function handleSync(request: Request) {
       );
     }
 
-    // 1. Проверка прав: Bearer CRON_SECRET (для Vercel Cron) или активная сессия администратора
+    // 1. Проверка прав: Bearer CRON_SECRET (для Vercel Cron) или активная сессия с правом «sellers.sync»
     const authHeader = request.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
     const isCronAuthorized = Boolean(
@@ -63,29 +63,22 @@ async function handleSync(request: Request) {
     );
 
     if (!isCronAuthorized) {
-      const userSupabase = await createServerSupabase();
-      const {
-        data: { user },
-        error: userError,
-      } = await userSupabase.auth.getUser();
-
-      if (userError || !user) {
+      try {
+        await requirePermission('sellers.sync');
+      } catch (authErr: any) {
+        if (authErr instanceof PermissionError) {
+          return NextResponse.json(
+            { error: 'Доступ запрещен. Запуск синхронизации требует право «Запускать синхронизацию API Sotka HQ».' },
+            { status: 403 }
+          );
+        }
+        const msg: string = authErr?.message || '';
+        if (msg.includes('заблокирована')) {
+          return NextResponse.json({ error: msg }, { status: 403 });
+        }
         return NextResponse.json(
           { error: 'Требуется авторизация.' },
           { status: 401 }
-        );
-      }
-
-      const { data: profile } = await userSupabase
-        .from('users')
-        .select('role, is_active')
-        .eq('auth_id', user.id)
-        .single();
-
-      if (!profile || profile.role !== 'admin' || !profile.is_active) {
-        return NextResponse.json(
-          { error: 'Доступ запрещен. Запуск синхронизации разрешен исключительно роли «admin».' },
-          { status: 403 }
         );
       }
     }
@@ -97,7 +90,7 @@ async function handleSync(request: Request) {
 
     // 3. Выгрузка продавцов
     // ИНВАРИАНТ: manager_id — локальное назначение CRM, в upsert не передается,
-    // поэтому ON CONFLICT DO UPDATE не затирает куратора существующих продавцов
+    // поэтому ON CONFLICT DO UPDATE не затирает консультанта существующих продавцов
 
     // Справочник тарифов для предотвращения нарушения foreign key sellers_plan_id_fkey
     const { data: dbPlans } = await adminSupabase

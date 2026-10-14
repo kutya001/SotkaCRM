@@ -9,7 +9,6 @@ import { MobileBottomBar } from '@/components/layout/MobileBottomBar';
 import { FAB } from '@/components/layout/FAB';
 import { useToast } from '@/components/ui/Toast';
 import { useUser } from '@/components/auth/AuthProvider';
-import { api } from '@/lib/api/client';
 import { Plus } from 'lucide-react';
 
 /**
@@ -35,8 +34,6 @@ export interface ShellPageConfig {
   onCreateClick?: () => void;
   createTooltip?: string;
   hideFab?: boolean;
-  onSyncApi?: () => void;
-  isSyncing?: boolean;
 }
 
 interface AppShellContextValue {
@@ -54,7 +51,6 @@ const BARE_ROUTES = ['/login', '/docs'];
 
 export const SIDEBAR_STORAGE_KEY = 'sotka_sidebar_collapsed';
 export const LAYOUT_WIDTH_STORAGE_KEY = 'sotka_crm_layout_width';
-const LAST_SYNC_STORAGE_KEY = 'crm_last_sotka_sync';
 
 /**
  * Инлайн-скрипт для <head>/<body> корневого layout: выставляет атрибуты сайдбара и ширины
@@ -81,16 +77,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Состояние для React-логики (подсказки, иконки); ширины рисует CSS по атрибутам <html>
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [layoutWidth, setLayoutWidth] = React.useState<'compact' | 'wide'>('wide');
-  const [internalSyncing, setInternalSyncing] = React.useState(false);
-  const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
 
   React.useLayoutEffect(() => {
     setSidebarCollapsed(readHtmlFlag('data-sidebar', 'collapsed'));
     setLayoutWidth(readHtmlFlag('data-layout', 'compact') ? 'compact' : 'wide');
-    try {
-      const saved = localStorage.getItem(LAST_SYNC_STORAGE_KEY);
-      if (saved) setLastSyncedAt(saved);
-    } catch {}
   }, []);
 
   // Переходы ширины включаются только после первой отрисовки (без анимации при загрузке)
@@ -124,36 +114,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, [showToast]);
 
-  const handleSync = React.useCallback(async () => {
-    if (pageConfig?.onSyncApi) {
-      pageConfig.onSyncApi();
-      return;
-    }
-    if (pageConfig?.isSyncing || internalSyncing) return;
-    setInternalSyncing(true);
-    try {
-      const data = await api.sellers.syncSotka();
-      // Хранится ISO-отметка: отображение «ДД.ММ.ГГГГ - чч:мм:сс» делает TopHeader
-      const syncedAtIso = new Date().toISOString();
-      setLastSyncedAt(syncedAtIso);
-      try {
-        localStorage.setItem(LAST_SYNC_STORAGE_KEY, syncedAtIso);
-      } catch {}
-      showToast(`Синхронизация завершена: ${data.synced_count} продавцов (всего ${data.total_available})`, 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Сбой при обращении к API Sotka', 'error');
-    } finally {
-      setInternalSyncing(false);
-    }
-  }, [pageConfig, internalSyncing, showToast]);
-
   const isBare = BARE_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
   if (isBare) {
     return <AppShellContext.Provider value={contextValue}>{children}</AppShellContext.Provider>;
   }
 
   const role = user.role;
-  const canCreate = role !== 'consultant' && role !== 'supervisor';
+  // Кнопку создания показывает страница, уже проверившая право; на /leads без регистрации — по праву
+  const canCreate = Boolean(pageConfig?.onCreateClick) || (pathname === '/leads' && user.can('leads.create'));
   const onCreateClick = pageConfig?.onCreateClick;
   const createTooltip = pageConfig?.createTooltip || 'Добавить';
   const hideFab = pageConfig?.hideFab ?? false;
@@ -184,9 +152,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed={sidebarCollapsed}
           userRole={role}
           userName={user.userName}
-          onSyncApi={handleSync}
-          isSyncing={Boolean(pageConfig?.isSyncing) || internalSyncing}
-          lastSyncedAt={lastSyncedAt}
           searchQuery={pageConfig?.searchQuery}
           onSearchChange={pageConfig?.onSearchChange}
           searchPlaceholder={pageConfig?.searchPlaceholder}

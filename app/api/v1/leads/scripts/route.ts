@@ -1,11 +1,11 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import salesScriptsData from '@/data/sales-scripts.json';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth();
+    await requirePermission('leads.scripts');
     const { searchParams } = new URL(req.url);
     const stage = searchParams.get('stage');
 

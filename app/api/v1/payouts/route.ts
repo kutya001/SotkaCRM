@@ -1,11 +1,13 @@
 import { NextRequest } from 'next/server';
-import { requireAuth, requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { getPayouts, createPayout } from '@/app/payouts/actions';
 
+/** Реестр операций по ЗП: payouts.menu; payouts.view_all — все сотрудники, иначе только свои */
 export async function GET(req: NextRequest) {
   try {
-    const { profile } = await requireAuth();
+    const ctx = await requirePermission('payouts.menu');
+    const { profile } = ctx;
 
     const { searchParams } = new URL(req.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -18,20 +20,15 @@ export async function GET(req: NextRequest) {
     const operationType = searchParams.get('operationType') || undefined;
     const operationSign = searchParams.get('operationSign') || undefined;
 
-    // Строгая ролевая изоляция выплат:
-    // admin и supervisor видят абсолютно все операции системы без фильтров по сотруднику по умолчанию
-    // consultant и smm видят ТОЛЬКО свои выплаты
-    const roleLower = (profile.role || '').toLowerCase();
-    const isPrivileged = roleLower === 'admin' || roleLower === 'supervisor';
-
+    // Строгая изоляция выплат: без payouts.view_all сотрудник видит ТОЛЬКО свои операции
     let targetUserId: string | undefined = undefined;
-    if (!isPrivileged) {
-      if (requestedUserId && requestedUserId !== profile.user_id) {
+    if (!ctx.canViewAll('payouts')) {
+      if (requestedUserId && requestedUserId !== 'all' && requestedUserId !== profile.user_id) {
         return apiError('Просмотр чужих выплат запрещен ролевой моделью', 'FORBIDDEN', 403);
       }
       targetUserId = profile.user_id;
     } else {
-      // Для администратора: если параметр не задан или равен 'all', фильтр по сотруднику НЕ накладывается
+      // Если параметр не задан или равен 'all', фильтр по сотруднику НЕ накладывается
       if (requestedUserId && requestedUserId !== 'all' && requestedUserId.trim() !== '') {
         targetUserId = requestedUserId.trim();
       } else {
@@ -66,9 +63,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/** Создание операции по ЗП: payouts.create */
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requirePermission('payouts.create');
     const body = await req.json();
 
     const res = await createPayout(body);

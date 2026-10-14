@@ -1,16 +1,16 @@
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(req: NextRequest) {
   try {
-    const { supabase, profile } = await requireAuth();
+    const { profile, canViewAll } = await requirePermission('dashboard.menu');
 
-    let query = supabase.from('leads').select('status');
-    if (profile.role === 'consultant') {
-      query = query.eq('assigned_to', profile.user_id);
-    } else if (profile.role === 'smm') {
-      query = query.eq('created_by', profile.user_id);
+    let query = createAdminClient().from('leads').select('status');
+    // Область данных: без «leads.view_all» — только свои лиды
+    if (!canViewAll('leads')) {
+      query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
     }
 
     const { data: leads, error } = await query;

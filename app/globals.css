@@ -152,3 +152,12 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(161, 161, 170, 0.5);
 }
+
+/* Горизонтальные строки вкладок без видимой полосы прокрутки */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

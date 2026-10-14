@@ -1,8 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
-import { requireAdmin, requireAuth, requireRoles } from '@/lib/auth/check-role';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requireAuth, requirePermission, type AuthContext } from '@/lib/auth/check-role';
 import type { Database, UserRole, SellerModerationStatus, ConnectionConfirmationStatus } from '@/types/database.types';
 import {
   authenticateSotkaAdmin,
@@ -12,13 +12,14 @@ import {
 } from '@/lib/services/sotka-api';
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 import { assignSellerToManager } from '@/lib/services/connections';
-import { applySellersOrder, findSellerByKey } from '@/lib/services/sellers';
+import { applySellersOrder, findSellerByKey, isSellerInScope, sellersOwnScopeFilter } from '@/lib/services/sellers';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import {
   normalizeSotkaSeller,
   resolveSotkaPlan,
   parseDateToISO,
   extractSellerDetailRegisteredAt,
+  normalizeSellerTransactions,
   type NormalizedSotkaSeller,
   type SotkaSellerDetail,
   type SotkaSellerOverviewItem,
@@ -30,6 +31,8 @@ const SYNC_TIME_BUDGET_MS = 20_000;
 /** Сколько детальных карточек Sotka запрашивать за один запуск для дозаполнения даты регистрации */
 const DETAIL_BACKFILL_LIMIT = 40;
 const DETAIL_BACKFILL_CONCURRENCY = 5;
+/** Обновление итогов транзакций Sotka HQ: сначала давно не обновлявшиеся, в пределах бюджета времени */
+const HQ_TOTALS_REFRESH_LIMIT = 120;
 
 export interface LinkedLeadInfo {
   lead_id: string;
@@ -57,6 +60,10 @@ export interface SellerItem {
   last_activity: string | null;
   manager_id: string | null;
   synced_at: string;
+  /** Итоги транзакций Sotka HQ (миграция 040): пополнения, списания и момент обновления */
+  hq_topups_total?: number | null;
+  hq_charges_total?: number | null;
+  hq_tx_synced_at?: string | null;
   manager_user?: {
     user_id: string;
     full_name: string;
@@ -103,6 +110,24 @@ export interface SellersStats {
 }
 
 /**
+ * Запрос свободных лидов для привязки к продавцу в области видимости модуля «Лиды»:
+ * без «leads.view_all» — только назначенные сотруднику или созданные им
+ */
+function availableLeadsCountQuery(ctx: Pick<AuthContext, 'canViewAll' | 'profile'>) {
+  const admin = createAdminClient();
+  let query = admin
+    .from('leads')
+    .select('lead_id', { count: 'exact', head: true })
+    .is('seller_phone', null)
+    .neq('status', 'Отмена');
+
+  if (!ctx.canViewAll('leads')) {
+    query = query.or(`assigned_to.eq.${ctx.profile.user_id},created_by.eq.${ctx.profile.user_id}`);
+  }
+  return query;
+}
+
+/**
  * Получение списка продавцов с пагинацией, фильтрацией, связанным лидом и изоляцией
  */
 export async function getSellers(params: GetSellersParams = {}): Promise<SellersResponse> {
@@ -112,18 +137,22 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
   } catch (err: any) {
     return { sellers: [], totalCount: 0, error: err?.message || 'Пользователь не аутентифицирован' };
   }
-  const { profile, supabase } = authCtx;
+  const { profile } = authCtx;
 
-  // Роли SMM доступ к базе продавцов строго запрещен
-  if (profile.role === 'smm') {
+  // Доступ к реестру продавцов — право «sellers.menu»
+  if (!authCtx.can('sellers.menu')) {
     return {
       sellers: [],
       totalCount: 0,
-      currentUserRole: 'smm',
+      currentUserRole: profile.role as UserRole,
       currentUserId: profile.user_id,
-      error: 'Доступ к реестру продавцов запрещен для роли SMM',
+      error: 'Недостаточно прав: доступ к реестру продавцов закрыт',
     };
   }
+
+  // Права роли могут превышать базовую RLS-роль: читаем сервисным клиентом с явным фильтром области
+  const supabase = createAdminClient();
+  const viewAll = authCtx.canViewAll('sellers');
 
   const {
     page = 1,
@@ -158,20 +187,17 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     { count: 'exact' }
   );
 
-  // СТРОГАЯ ИЗОЛЯЦИЯ: Консультант видит только не назначенных продавцов либо назначенных на него,
-  // и СТРОГО только одобренных продавцов (moderation = 'approved')
-  if (profile.role === 'consultant') {
-    query = query.eq('moderation', 'approved');
-
+  // СТРОГАЯ ИЗОЛЯЦИЯ без «sellers.view_all»: только свои продавцы либо свободные одобренные
+  if (!viewAll) {
     if (managerId === 'unassigned') {
-      query = query.is('manager_id', null);
+      query = query.is('manager_id', null).eq('moderation', 'approved');
     } else if (managerId === profile.user_id || managerId === 'my') {
       query = query.eq('manager_id', profile.user_id);
     } else {
-      query = query.or(`manager_id.is.null,manager_id.eq.${profile.user_id}`);
+      query = query.or(sellersOwnScopeFilter(profile.user_id));
     }
   } else {
-    // Для администратора и руководителя доступен произвольный фильтр по модерации
+    // С правом «видеть всех» доступен произвольный фильтр по модерации и консультанту
     if (moderation && moderation !== 'all') {
       query = query.eq('moderation', moderation as SellerModerationStatus);
     }
@@ -179,6 +205,8 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
     if (managerId && managerId !== 'all') {
       if (managerId === 'unassigned') {
         query = query.is('manager_id', null);
+      } else if (managerId === 'my') {
+        query = query.eq('manager_id', profile.user_id);
       } else {
         query = query.eq('manager_id', managerId);
       }
@@ -206,20 +234,10 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
   const to = from + pageSize - 1;
   query = query.range(from, to);
 
-  // Параллельная проверка наличия свободных лидов для привязки
-  let availableLeadsQuery = supabase
-    .from('leads')
-    .select('lead_id', { count: 'exact', head: true })
-    .is('seller_phone', null)
-    .neq('status', 'Отмена');
-
-  if (profile.role === 'consultant') {
-    availableLeadsQuery = availableLeadsQuery.eq('assigned_to', profile.user_id);
-  }
-
+  // Параллельная проверка наличия свободных лидов для привязки (в области видимости лидов)
   const [{ data: sellersData, count, error }, { count: availableLeadsCount }] = await Promise.all([
     query,
-    availableLeadsQuery,
+    availableLeadsCountQuery(authCtx),
   ]);
 
   const hasAvailableLeads = (availableLeadsCount || 0) > 0;
@@ -320,23 +338,12 @@ export async function getSellers(params: GetSellersParams = {}): Promise<Sellers
 export async function checkAvailableLeadsExist(): Promise<boolean> {
   try {
     const authCtx = await requireAuth();
-    const { profile, supabase } = authCtx;
 
-    if (profile.role === 'smm') {
+    if (!authCtx.can('sellers.menu')) {
       return false;
     }
 
-    let query = supabase
-      .from('leads')
-      .select('lead_id', { count: 'exact', head: true })
-      .is('seller_phone', null)
-      .neq('status', 'Отмена');
-
-    if (profile.role === 'consultant') {
-      query = query.eq('assigned_to', profile.user_id);
-    }
-
-    const { count, error } = await query;
+    const { count, error } = await availableLeadsCountQuery(authCtx);
     if (error) {
       console.error('Ошибка проверки наличия доступных лидов:', error);
       return false;
@@ -354,7 +361,7 @@ export async function checkAvailableLeadsExist(): Promise<boolean> {
  */
 export async function getSellersStats(): Promise<SellersStats> {
   const authCtx = await requireAuth().catch(() => null);
-  if (!authCtx) {
+  if (!authCtx || !authCtx.can('sellers.menu')) {
     return {
       total: 0,
       active: 0,
@@ -363,9 +370,9 @@ export async function getSellersStats(): Promise<SellersStats> {
       assigned: 0,
     };
   }
-  const { supabase } = authCtx;
+  const { supabase, profile } = authCtx;
 
-  // Вызов SQL-агрегата get_sellers_kpi_stats (с изолированным расчетом)
+  // Вызов SQL-агрегата get_sellers_kpi_stats (изолированный расчет по auth.uid() — клиент пользователя)
   try {
     const { data: rpcStats, error: rpcError } = await supabase.rpc('get_sellers_kpi_stats');
     if (!rpcError && rpcStats) {
@@ -382,9 +389,14 @@ export async function getSellersStats(): Promise<SellersStats> {
     console.warn('RPC get_sellers_kpi_stats недоступен, fallback на агрегацию:', rpcErr);
   }
 
-  const { data, error } = await supabase
+  // Резервная агрегация: сервисный клиент с явным фильтром области видимости
+  let fallbackQuery = createAdminClient()
     .from('sellers')
     .select('is_active, moderation, balance, manager_id');
+  if (!authCtx.canViewAll('sellers')) {
+    fallbackQuery = fallbackQuery.or(sellersOwnScopeFilter(profile.user_id));
+  }
+  const { data, error } = await fallbackQuery;
 
   if (error || !data) {
     return {
@@ -418,16 +430,16 @@ export async function getSellersStats(): Promise<SellersStats> {
 }
 
 /**
- * Получение списка сотрудников для назначения куратором
+ * Получение списка сотрудников для назначения консультантом
  */
 export async function getManagersList(): Promise<
   { user_id: string; full_name: string; role: string; login: string; color?: string }[]
 > {
   const authCtx = await requireAuth().catch(() => null);
-  if (!authCtx) return [];
-  const { supabase } = authCtx;
+  if (!authCtx || !authCtx.can('sellers.menu')) return [];
 
-  const { data, error } = await supabase
+  // Справочник сотрудников для назначения (базовый enum здесь — данные, а не решение о доступе)
+  const { data, error } = await createAdminClient()
     .from('users')
     .select('user_id, full_name, role, login, color')
     .eq('is_active', true)
@@ -435,7 +447,7 @@ export async function getManagersList(): Promise<
     .order('full_name', { ascending: true });
 
   if (error) {
-    console.error('Ошибка при получении списка кураторов:', error);
+    console.error('Ошибка при получении списка консультантов:', error);
     return [];
   }
 
@@ -443,8 +455,8 @@ export async function getManagersList(): Promise<
 }
 
 /**
- * Назначение/изменение куратора продавца с автоматической фиксацией связи в connections
- * и расчетом вознаграждения для зарплат и выплат (только для роли admin)
+ * Назначение/изменение консультанта продавца с автоматической фиксацией связи в connections
+ * и расчетом вознаграждения для зарплат и выплат (право «sellers.assign»)
  * Поддерживает сброс обратно на null ("Не назначен")
  */
 export async function assignSellerManager(
@@ -452,18 +464,20 @@ export async function assignSellerManager(
   managerId: string | null
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { profile } = await requireAdmin();
+    const ctx = await requirePermission('sellers.assign');
+    const { profile } = ctx;
 
     if (!sellerPhone) {
       return { success: false, error: 'Не указан номер телефона продавца' };
     }
 
-    // Назначение администратором — подключение сразу подтверждено (миграция 037)
+    // Подключение сразу подтверждено, если у назначающего есть право подтверждать (миграция 037);
+    // иначе ожидает подтверждения
     const res = await assignSellerToManager({
       sellerPhone,
       managerId,
       actor: profile,
-      confirmation: 'confirmed',
+      confirmation: ctx.can('connections.confirm') ? 'confirmed' : 'pending',
     });
     if (!res.success) {
       return { success: false, error: res.error };
@@ -476,7 +490,7 @@ export async function assignSellerManager(
     revalidatePath('/');
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Ошибка назначения куратора' };
+    return { success: false, error: err.message || 'Ошибка назначения консультанта' };
   }
 }
 
@@ -504,9 +518,10 @@ export async function getAvailableLeadsForSellerLinking(
   error?: string;
 }> {
   try {
-    const { supabase, profile } = await requireRoles(['admin', 'supervisor', 'consultant']);
+    const ctx = await requirePermission('sellers.menu');
+    const { profile } = ctx;
 
-    let query = supabase
+    let query = createAdminClient()
       .from('leads')
       .select(`
         lead_id,
@@ -521,8 +536,9 @@ export async function getAvailableLeadsForSellerLinking(
       .is('seller_phone', null)
       .neq('status', 'Отмена');
 
-    if (profile.role === 'consultant') {
-      query = query.eq('assigned_to', profile.user_id);
+    // Область видимости модуля «Лиды»: без «leads.view_all» — только свои
+    if (!ctx.canViewAll('leads')) {
+      query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
     }
 
     if (onlySigned) {
@@ -550,36 +566,38 @@ export async function getAvailableLeadsForSellerLinking(
 }
 
 /**
- * Ручное связывание продавца с лидом администратором/консультантом с автоматическим
- * назначением куратора из лида и мгновенным расчетом выплат в connections
+ * Ручное связывание продавца с лидом (право «sellers.link_lead») с автоматическим
+ * назначением консультанта из лида и мгновенным расчетом выплат в connections
  */
 export async function linkSellerToLeadAction(
   sellerPhone: string,
   leadId: string
 ): Promise<{ success: boolean; error?: string; connectionFeeAmount?: number }> {
   try {
-    // Руководитель — только просмотр (решение по матрице ролей)
-    const ctx = await requireRoles(['admin', 'consultant']);
-    const { supabase } = ctx;
+    const ctx = await requirePermission('sellers.link_lead');
 
     if (!sellerPhone || !leadId) {
       return { success: false, error: 'Не указан продавец или лид' };
     }
 
-    const { data: sellerCheck } = await supabase
+    const { data: sellerCheck } = await createAdminClient()
       .from('sellers')
-      .select('seller_phone, manager_id')
+      .select('seller_phone, manager_id, moderation')
       .eq('seller_phone', sellerPhone)
       .maybeSingle();
+
+    if (sellerCheck && !isSellerInScope(ctx, sellerCheck)) {
+      return { success: false, error: 'Продавец вне вашей области видимости' };
+    }
 
     if (sellerCheck && sellerCheck.manager_id !== null) {
       return {
         success: false,
-        error: 'У продавца уже назначен куратор. Чтобы привязать лид, сначала снимите куратора',
+        error: 'У продавца уже назначен консультант. Чтобы привязать лид, сначала снимите консультанта',
       };
     }
 
-    const result = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone });
+    const result = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone, via: 'seller' });
 
     if (!result.success) {
       return { success: false, error: result.error || 'Ошибка при связывании продавца с лидом' };
@@ -605,7 +623,7 @@ export async function linkSellerToLeadAction(
  * Синхронизация реестра продавцов из внешнего Sotka HQ API
  * GET /api/private/v1/admin/sellers-overview/?offset={offset}&limit={limit}
  * Пакетный upsert в Supabase таблицу 'sellers' по seller_phone
- * с сохранением существующих привязок кураторов (manager_id).
+ * с сохранением существующих привязок консультантов (manager_id).
  *
  * Без limit выгружает весь реестр постранично (по 200 — максимум API);
  * с limit — только одну порцию начиная с offset.
@@ -623,7 +641,9 @@ export async function syncSellersFromSotka(
 }> {
   let token = '';
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('sellers.sync');
+    // Запись в sellers/plans разрешена RLS только администратору — после проверки права пишем сервисным клиентом
+    const supabase = createAdminClient();
     const startedAt = Date.now();
 
     // 1. Авторизация во внешнем API Sotka
@@ -660,7 +680,7 @@ export async function syncSellersFromSotka(
     }
 
     // 3. manager_id — локальное назначение CRM: в upsert не передается,
-    // поэтому ON CONFLICT DO UPDATE не затирает куратора существующих продавцов
+    // поэтому ON CONFLICT DO UPDATE не затирает консультанта существующих продавцов
 
     // 4. Справочник тарифов (защита foreign key constraint sellers_plan_id_fkey)
     const { data: dbPlans } = await supabase
@@ -857,6 +877,46 @@ export async function syncSellersFromSotka(
       savedCount += chunk.length;
     }
 
+    // 7.1. Итоги транзакций Sotka HQ (пополнения / списания) из детальной карточки продавца.
+    // Обновляются в пределах бюджета времени, сначала самые давно не обновлявшиеся:
+    // остальные дозаполняются при следующих синхронизациях или при открытии вкладки транзакций.
+    try {
+      const { data: staleRows } = await supabase
+        .from('sellers')
+        .select('seller_phone, organization_id, hq_tx_synced_at')
+        .not('organization_id', 'is', null)
+        .in('seller_phone', phones)
+        .order('hq_tx_synced_at', { ascending: true, nullsFirst: true })
+        .limit(HQ_TOTALS_REFRESH_LIMIT);
+      const queue = (staleRows || []).filter((r) => r.organization_id);
+      let refreshed = 0;
+      for (let i = 0; i < queue.length; i += DETAIL_BACKFILL_CONCURRENCY) {
+        if (Date.now() - startedAt > SYNC_TIME_BUDGET_MS) break;
+        await Promise.all(
+          queue.slice(i, i + DETAIL_BACKFILL_CONCURRENCY).map(async (row) => {
+            try {
+              const detail = await fetchSellerDetail(token, row.organization_id as string);
+              const totals = normalizeSellerTransactions(detail?.transactions);
+              const { error: totalsErr } = await supabase
+                .from('sellers')
+                .update({
+                  hq_topups_total: totals.total_topups,
+                  hq_charges_total: totals.total_charges,
+                  hq_tx_synced_at: new Date().toISOString(),
+                } as any)
+                .eq('seller_phone', row.seller_phone);
+              if (!totalsErr) refreshed++;
+            } catch (txErr: any) {
+              console.warn(`[syncSellersFromSotka] Итоги транзакций организации ${row.organization_id} недоступны:`, txErr?.message);
+            }
+          })
+        );
+      }
+      console.log(`[Sellers Sync] Итоги транзакций Sotka HQ обновлены: ${refreshed} из ${queue.length}`);
+    } catch (hqErr: any) {
+      console.warn('[syncSellersFromSotka] Не удалось обновить итоги транзакций Sotka HQ:', hqErr?.message);
+    }
+
     // 8. Выявление продавцов, удаленных во внешнем Sotka HQ API (Soft-delete).
     // Только если выгружен весь список Sotka: при частичной синхронизации (offset/limit)
     // все продавцы вне порции ошибочно помечались бы удаленными.
@@ -942,7 +1002,7 @@ export async function getSellerDetailFromSotka(
   organizationId: number | string
 ): Promise<{ success: boolean; detail?: SotkaSellerDetail; error?: string }> {
   try {
-    await requireAdmin();
+    await requirePermission('sellers.sync');
     const token = await authenticateSotkaAdmin();
     const detail = await fetchSellerDetail(token, organizationId);
     return { success: true, detail };
@@ -955,13 +1015,14 @@ export async function getSellerDetailFromSotka(
 }
 
 /**
- * Безвозвратное удаление продавца администратором системы (с каскадной очисткой связок)
+ * Безвозвратное удаление продавца (право «sellers.delete») с каскадной очисткой связок
  */
 export async function deleteSellerPermanently(
   sellerPhoneOrId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { supabase } = await requireAdmin();
+    await requirePermission('sellers.delete');
+    const supabase = createAdminClient();
 
     // 1. Находим продавца (в sellers нет колонки seller_id: ищем по organization_id или телефону)
     const seller = await findSellerByKey(supabase, sellerPhoneOrId, ['seller_phone'] as const);

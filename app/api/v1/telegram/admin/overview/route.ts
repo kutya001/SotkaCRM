@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getTelegramBotInfo, getTelegramWebhookSecret, isTelegramConfigured, telegramCall } from '@/lib/telegram/bot';
@@ -37,7 +37,7 @@ interface WebhookInfo {
 /** Сводка модуля Telegram: бот, вебхук, очередь, привязки сотрудников */
 export async function GET() {
   try {
-    await requireAdmin();
+    await requirePermission('telegram.manage');
     const admin = db();
     const configured = isTelegramConfigured();
 

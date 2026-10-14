@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/check-role';
+import { requireAnyPermission, requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { getEmployeeRates, upsertEmployeeRate } from '@/app/rates/actions';
 
-export async function GET(req: NextRequest) {
+/** Ставки сотрудников: rates.manage или employees.menu */
+export async function GET(_req: NextRequest) {
   try {
-    await requireAdmin();
+    await requireAnyPermission(['rates.manage', 'employees.menu']);
     const res = await getEmployeeRates();
     if (res.error) {
       return apiError(res.error, 'FETCH_RATES_ERROR', 400);
@@ -16,9 +17,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/** Сохранение ставки: rates.manage */
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requirePermission('rates.manage');
     const body = await req.json();
 
     const res = await upsertEmployeeRate(body);

@@ -959,6 +959,7 @@ export type Database = {
           gender: string | null
           inn: string | null
           is_active: boolean
+          last_active_at: string | null
           latitude: number | null
           login: string
           longitude: number | null
@@ -978,6 +979,7 @@ export type Database = {
           gender?: string | null
           inn?: string | null
           is_active?: boolean
+          last_active_at?: string | null
           latitude?: number | null
           login: string
           longitude?: number | null
@@ -997,6 +999,7 @@ export type Database = {
           gender?: string | null
           inn?: string | null
           is_active?: boolean
+          last_active_at?: string | null
           latitude?: number | null
           login?: string
           longitude?: number | null
@@ -1028,6 +1031,7 @@ export type Database = {
           phone: string | null
           role: Database["public"]["Enums"]["user_role"] | null
           role_id: string | null
+          last_active_at: string | null
           user_id: string | null
         }
         Insert: {
@@ -1040,6 +1044,7 @@ export type Database = {
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
           role_id?: string | null
+          last_active_at?: string | null
           user_id?: string | null
         }
         Update: {
@@ -1052,6 +1057,7 @@ export type Database = {
           phone?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
           role_id?: string | null
+          last_active_at?: string | null
           user_id?: string | null
         }
         Relationships: []

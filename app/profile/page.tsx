@@ -31,11 +31,25 @@ import { FormField, Input, Select } from '@/components/ui/Field';
 import { TelegramCard } from '@/components/profile/TelegramCard';
 import { DEFAULT_EMPLOYEE_COLOR, getEmployeeColorConfig } from '@/lib/constants/colors';
 import {
+  EmployeeProfileFields,
+  EMPTY_EMPLOYEE_PROFILE,
+  GENDER_LABELS,
+  ageFromBirthDate,
+  employeeProfileToForm,
+  employeeProfileToPayload,
+  mapLinkForCoordinates,
+  type EmployeeProfileFormValue,
+} from '@/components/employees/EmployeeProfileFields';
+import {
   User,
   ShieldCheck,
   Shield,
   Phone,
   Calendar,
+  Activity,
+  MapPin,
+  Fingerprint,
+  FileText,
   LogOut,
   Sun,
   Moon,
@@ -108,7 +122,23 @@ export default function ProfilePage() {
   }, [user]);
   const [editColor, setEditColor] = React.useState<string>(DEFAULT_EMPLOYEE_COLOR);
   const [editIsActive, setEditIsActive] = React.useState(true);
+  const [editProfileFields, setEditProfileFields] = React.useState<EmployeeProfileFormValue>(EMPTY_EMPLOYEE_PROFILE);
   const [isSavingProfile, setIsSavingProfile] = React.useState(false);
+
+  // Проверка анкеты до отправки (сервер проверяет те же правила)
+  const validateProfileFields = (value: EmployeeProfileFormValue): string | null => {
+    if (value.inn && !/^\d{14}$/.test(value.inn)) return 'ИНН должен состоять из 14 цифр';
+    const hasLat = value.latitude.trim() !== '';
+    const hasLon = value.longitude.trim() !== '';
+    if (hasLat !== hasLon) return 'Укажите и широту, и долготу (или очистите оба поля)';
+    if (hasLat) {
+      const lat = Number(value.latitude.replace(',', '.'));
+      const lon = Number(value.longitude.replace(',', '.'));
+      if (!Number.isFinite(lat) || Math.abs(lat) > 90) return 'Широта должна быть числом от −90 до 90';
+      if (!Number.isFinite(lon) || Math.abs(lon) > 180) return 'Долгота должна быть числом от −180 до 180';
+    }
+    return null;
+  };
 
   // Модальное окно смены пароля
   const [isPasswordModalOpen, setIsPasswordModalOpen] = React.useState(false);
@@ -201,6 +231,7 @@ export default function ProfilePage() {
     setEditRoleId(profile.role_id || '');
     setEditColor(profile.color || DEFAULT_EMPLOYEE_COLOR);
     setEditIsActive(profile.is_active);
+    setEditProfileFields(employeeProfileToForm(profile));
     setIsEditModalOpen(true);
   };
 
@@ -214,16 +245,25 @@ export default function ProfilePage() {
       showToast('Укажите корректный номер телефона для выбранной страны', 'error');
       return;
     }
+    const profileFieldsError = validateProfileFields(editProfileFields);
+    if (profileFieldsError) {
+      showToast(profileFieldsError, 'error');
+      return;
+    }
 
+    // Роль и активность отправляет только сотрудник с правом редактировать других
+    const canEditAccess = user.can('employees.edit');
     setIsSavingProfile(true);
     try {
       const res = await updateProfileData({
         full_name: editFullName.trim(),
         phone: editPhoneParts.full,
-        role: rolesList.find((r) => r.role_id === editRoleId)?.base_role || editRole,
-        role_id: editRoleId || undefined,
+        ...(canEditAccess && editRoleId
+          ? { role: rolesList.find((r) => r.role_id === editRoleId)?.base_role || editRole, role_id: editRoleId }
+          : {}),
+        ...(canEditAccess ? { is_active: editIsActive } : {}),
         color: editColor,
-        is_active: editIsActive,
+        ...employeeProfileToPayload(editProfileFields),
         targetUserId: activeViewingUserId,
       });
 
@@ -377,8 +417,15 @@ export default function ProfilePage() {
                 )}
               </div>
               {profile?.created_at && (
-                <p className="text-[11px] text-zinc-400 pt-0.5">
-                  В системе с <FormattedDate date={profile.created_at} type="date" />
+                <p className="text-[11px] text-zinc-400 pt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  <span>
+                    В системе с <FormattedDate date={profile.created_at} type="date" />
+                  </span>
+                  <span className="flex items-center gap-1" title="Последняя активность в CRM">
+                    <Activity className="w-3 h-3 text-emerald-500" strokeWidth={2} />
+                    Последняя активность:{' '}
+                    {profile.last_active_at ? <FormattedDate date={profile.last_active_at} type="dateTime" /> : 'нет данных'}
+                  </span>
                 </p>
               )}
             </div>
@@ -462,6 +509,90 @@ export default function ProfilePage() {
           </div>
         </div>
 
+
+        {/* Анкета сотрудника */}
+        {profile && (
+          <div className="p-5 sm:p-6 rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-500" strokeWidth={1.75} />
+                Анкета сотрудника
+              </h2>
+              <button
+                type="button"
+                onClick={openEditModal}
+                className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                Изменить
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
+              <div className="flex items-start gap-2">
+                <MapPin className="w-3.5 h-3.5 text-rose-500 mt-0.5 flex-shrink-0" strokeWidth={1.75} />
+                <div className="min-w-0">
+                  <span className="text-[10px] text-zinc-400 block">Адрес проживания</span>
+                  {profile.address || (profile.latitude !== null && profile.longitude !== null) ? (
+                    <span className="text-zinc-800 dark:text-zinc-200 break-words">
+                      {profile.address || `${profile.latitude}, ${profile.longitude}`}
+                      {profile.latitude !== null && profile.longitude !== null && (
+                        <a
+                          href={mapLinkForCoordinates(Number(profile.latitude), Number(profile.longitude))}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-1.5 text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          на карте
+                        </a>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-zinc-400">не указан</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Fingerprint className="w-3.5 h-3.5 text-zinc-400 mt-0.5 flex-shrink-0" strokeWidth={1.75} />
+                <div>
+                  <span className="text-[10px] text-zinc-400 block">ИНН</span>
+                  <span className="font-mono text-zinc-800 dark:text-zinc-200">{profile.inn || 'не указан'}</span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Calendar className="w-3.5 h-3.5 text-zinc-400 mt-0.5 flex-shrink-0" strokeWidth={1.75} />
+                <div>
+                  <span className="text-[10px] text-zinc-400 block">Дата рождения</span>
+                  <span className="text-zinc-800 dark:text-zinc-200">
+                    {profile.birth_date ? (
+                      <>
+                        <FormattedDate date={profile.birth_date} type="dateOnly" />
+                        {ageFromBirthDate(profile.birth_date) !== null && (
+                          <span className="text-zinc-400"> • {ageFromBirthDate(profile.birth_date)} лет</span>
+                        )}
+                      </>
+                    ) : (
+                      'не указана'
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <User className="w-3.5 h-3.5 text-zinc-400 mt-0.5 flex-shrink-0" strokeWidth={1.75} />
+                <div>
+                  <span className="text-[10px] text-zinc-400 block">Пол</span>
+                  <span className="text-zinc-800 dark:text-zinc-200">
+                    {profile.gender === 'male' || profile.gender === 'female' ? GENDER_LABELS[profile.gender] : 'не указан'}
+                  </span>
+                </div>
+              </div>
+              {profile.bio && (
+                <div className="sm:col-span-2">
+                  <span className="text-[10px] text-zinc-400 block">О себе</span>
+                  <p className="text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap leading-snug">{profile.bio}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Telegram-уведомления (только для своего профиля) */}
         {!activeViewingUserId && <TelegramCard />}
@@ -739,7 +870,7 @@ export default function ProfilePage() {
           subtitle={profile?.login ? `@${profile.login}` : undefined}
           icon={Edit3}
           tone="info"
-          size="md"
+          size="xl"
           busy={isSavingProfile}
           formId={PROFILE_FORM_ID}
           onSubmit={handleSaveProfile}
@@ -809,6 +940,14 @@ export default function ProfilePage() {
             )}
 
             <ColorPicker value={editColor} onChange={setEditColor} label="Цвет индикатора сотрудника" />
+
+            <div className="pt-3 border-t border-zinc-200/70 dark:border-zinc-800/70 space-y-3">
+              <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">Анкета сотрудника</h4>
+              <p className="text-[11px] text-zinc-400">
+                Роль, персональные ставки и активность аккаунта меняет только сотрудник с правами модуля «Сотрудники».
+              </p>
+              <EmployeeProfileFields value={editProfileFields} onChange={setEditProfileFields} />
+            </div>
           </div>
         </Modal>
 

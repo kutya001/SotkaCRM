@@ -522,6 +522,20 @@ export default function EmployeesPage() {
       ),
     },
     {
+      key: 'last_active_at',
+      label: 'Последняя активность',
+      type: 'datetime',
+      sortable: true,
+      renderCell: (item: EmployeeItem) =>
+        item.last_active_at ? (
+          <span className="text-xs text-zinc-600 dark:text-zinc-300 font-mono whitespace-nowrap">
+            <FormattedDate date={item.last_active_at} type="dateTime" />
+          </span>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        ),
+    },
+    {
       key: 'telegram_username',
       label: 'Telegram',
       width: 140,

@@ -20,6 +20,8 @@ import {
   Shield,
   Receipt,
   Send,
+  ListTodo,
+  Target,
 } from 'lucide-react';
 import { useUser } from '@/components/auth/AuthProvider';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
@@ -84,6 +86,18 @@ const ALL_NAV_ITEMS: NavItem[] = [
     title: 'Аналитика',
     href: '/analytics',
     icon: BarChart3,
+    roles: ['admin', 'supervisor', 'consultant'],
+  },
+  {
+    title: 'Задачи',
+    href: '/tasks',
+    icon: ListTodo,
+    roles: ['admin', 'supervisor', 'consultant', 'smm'],
+  },
+  {
+    title: 'Планы',
+    href: '/goals',
+    icon: Target,
     roles: ['admin', 'supervisor', 'consultant'],
   },
   {

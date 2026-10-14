@@ -2925,3 +2925,25 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * `trg_cleanup_connection_payouts` переведен в `BEFORE DELETE ON connections`: начисления куратора (`employee_payouts` с `connection_id` подключения: `accrual_connection`/`accrual_maintenance` и прочие со знаком `+`) и строки `connection_accruals` удаляются до того, как внешний ключ `employee_payouts.connection_id ON DELETE SET NULL` обнулит ссылку (в варианте AFTER очистка не находила записи).
 * `trg_seller_cascade_cleanup` (`BEFORE DELETE ON sellers`, `fn_seller_cascade_cleanup()`): лиды продавца отвязываются (`seller_phone = NULL`, «Подписан» → «Назначен»), подключения удаляются (с начислениями по триггеру выше), остатки начислений по `seller_phone` удаляются.
 * `trg_seller_manager_removed` (`AFTER UPDATE OF manager_id ON sellers`, `fn_seller_manager_removed()`): снятие куратора (`manager_id → NULL`) удаляет подключения продавца, кроме `rejected` (остаются как история отклонения). Срабатывает для всех путей: снятие в карточке продавца, отвязка лида, удаление подключения.
+
+---
+
+## 29. Спецификация Миграции 039 (`039_tasks_and_connection_plans.sql`)
+
+### 29.1. Задачи сотрудников (`tasks`)
+* Колонки: `task_id`, `title`, `description`, `status` (CHECK: Открыт / Назначен / Выполнен / Отложен / Отмена), `priority` (low / normal / high), `assigned_to → users`, `created_by → users`, `due_date DATE`, `completed_at`, `result_note`, `created_at`, `updated_at`.
+* Триггер `trg_tasks_before_write`: назначение ответственного из «Открыт» → «Назначен», снятие из «Назначен» → «Открыт»; «Выполнен» фиксирует `completed_at`.
+* Триггер `trg_telegram_on_task_assigned` (`AFTER INSERT OR UPDATE OF assigned_to`): уведомление ответственному «Вам назначена задача» / «Вам переназначена задача» (вид `tasks` в `telegram_prefs`; самоназначение не уведомляется).
+* RLS: `admin`/`supervisor` — все задачи и любые переходы; остальные видят свои (ответственный или автор), ставят задачи только себе, переназначать не могут (WITH CHECK). Удаление — администратор или автор.
+* Правила переходов в приложении: `lib/tasks/rules.ts`. Просрочка — `due_date < сегодня` при незакрытом статусе.
+
+### 29.2. Планы по подключениям (`connection_plans`)
+* Колонки: `plan_id`, `scope` (personal / team), `user_id` (NULL для общего), `period_kind` (daily / weekly / monthly / quarterly / half_year / yearly), `period_start`, `period_end` (исключительно), `target_count > 0`, `note`, `created_by`, `created_at`, `updated_at`.
+* Уникальность: один план на сотрудника (или общий) за период данного вида (`uq_connection_plans_period`). Повторная постановка через API обновляет цель.
+* Факт считается в API (`/api/v1/goals`): подтвержденные подключения (`confirmation_status = confirmed`) с датой назначения куратора (`assigned_at`, пояс Asia/Bishkek) внутри периода; персональные — по `manager_id`, общие — все.
+* RLS: `admin`/`supervisor` видят все; `consultant` — общие и свои; пишет только `admin`.
+* Нормализация начала периода и подписи: `lib/plans/periods.ts`.
+
+### 29.3. Восстановление пароля через Telegram (`telegram_password_resets`)
+* Колонки: `id`, `user_id → users`, `code_hash` (SHA-256 от кода, идентификатора и секрета), `attempts`, `created_at`, `expires_at`, `used_at`. Доступ только `service_role`.
+* Логика (`lib/telegram/password-reset.ts`): код из 6 цифр действует 10 минут, не чаще раза в минуту, 5 попыток; запрос со страницы входа (`POST /api/v1/auth/password-reset/request`, нейтральный ответ без раскрытия логина) или командой `/password` в боте; подтверждение `POST /api/v1/auth/password-reset/confirm` меняет пароль через Supabase Auth Admin API и уведомляет сотрудника в Telegram.

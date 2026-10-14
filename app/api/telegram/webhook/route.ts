@@ -8,6 +8,7 @@ import {
   sendTelegramMessage,
 } from '@/lib/telegram/bot';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { requestPasswordResetByChat } from '@/lib/telegram/password-reset';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +32,19 @@ const HELP_TEXT =
   '<b>SotkaCRM</b>\n' +
   'Этот бот присылает уведомления сотрудникам CRM: начисления и выплаты, новые подключения, назначенные лиды, сообщения администратора.\n\n' +
   'Чтобы подключить уведомления, откройте в CRM <b>Профиль → Telegram</b> и нажмите «Подключить» — бот откроется с кодом привязки.\n\n' +
-  'Команды:\n/status — состояние подключения\n/stop — отключить уведомления';
+  'Команды:\n/status — состояние подключения\n/password — код для восстановления пароля\n/stop — отключить уведомления';
+
+async function handlePassword(chatId: number) {
+  const res = await requestPasswordResetByChat(chatId);
+  if (res.status === 'sent') return; // код уже отправлен в чат
+  const text =
+    res.status === 'too_soon'
+      ? 'Код уже отправлен. Запросить новый можно через минуту.'
+      : res.status === 'inactive'
+      ? 'Учетная запись в CRM заблокирована — обратитесь к администратору.'
+      : 'Чат не привязан к сотруднику CRM. Подключите Telegram в CRM: Профиль → Telegram.';
+  await reply(chatId, `❌ ${escapeTelegramHtml(text)}`);
+}
 
 async function reply(chatId: number, html: string) {
   try {
@@ -151,6 +164,8 @@ export async function POST(req: NextRequest) {
       await reply(chatId, was ? 'Уведомления отключены. Подключить снова: CRM → Профиль → Telegram.' : 'Чат не был привязан к CRM.');
     } else if (cmd === '/status') {
       await handleStatus(chatId);
+    } else if (cmd === '/password' || cmd === '/reset') {
+      await handlePassword(chatId);
     } else {
       await reply(chatId, HELP_TEXT);
     }

@@ -9,12 +9,13 @@ import {
 } from './bot';
 import type { UserRole } from '@/types/database.types';
 
-export type TelegramKind = 'payroll' | 'connections' | 'leads' | 'broadcast' | 'system';
+export type TelegramKind = 'payroll' | 'connections' | 'leads' | 'tasks' | 'broadcast' | 'system';
 
 export const TELEGRAM_KIND_LABELS: Record<Exclude<TelegramKind, 'system'>, string> = {
   payroll: 'Операции по ЗП: начисления, удержания, выплаты',
   connections: 'Подтвержденные и отклоненные подключения',
   leads: 'Назначенные лиды',
+  tasks: 'Назначенные задачи',
   broadcast: 'Сообщения администратора',
 };
 
@@ -22,6 +23,7 @@ export interface TelegramPrefs {
   payroll: boolean;
   connections: boolean;
   leads: boolean;
+  tasks: boolean;
   broadcast: boolean;
 }
 
@@ -29,6 +31,7 @@ export const DEFAULT_TELEGRAM_PREFS: TelegramPrefs = {
   payroll: true,
   connections: true,
   leads: true,
+  tasks: true,
   broadcast: true,
 };
 
@@ -38,6 +41,7 @@ export function normalizeTelegramPrefs(raw: unknown): TelegramPrefs {
     payroll: src.payroll !== false,
     connections: src.connections !== false,
     leads: src.leads !== false,
+    tasks: src.tasks !== false,
     broadcast: src.broadcast !== false,
   };
 }

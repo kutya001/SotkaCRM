@@ -376,3 +376,73 @@ export const LeadUpdateSchema = z
   .refine(phonePartsRefine.check, phonePartsRefine.message);
 
 
+
+// ---------------------------------------------------------------------------
+// Задачи сотрудников (миграция 039)
+// ---------------------------------------------------------------------------
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата должна быть в формате ГГГГ-ММ-ДД');
+
+const optionalIsoDate = z.preprocess(
+  (v) => (v === '' || v === undefined ? null : v),
+  isoDate.nullable()
+);
+
+const optionalText = (max: number) =>
+  z.preprocess((v) => (typeof v === 'string' ? v.trim() : v), z.string().max(max).nullable().optional());
+
+export const TaskStatusSchema = z.enum(['Открыт', 'Назначен', 'Выполнен', 'Отложен', 'Отмена'], {
+  message: 'Недопустимый статус задачи',
+});
+
+export const TaskPrioritySchema = z.enum(['low', 'normal', 'high'], { message: 'Недопустимый приоритет' });
+
+export const TaskCreateSchema = z.object({
+  title: z.string().trim().min(2, 'Название не короче 2 символов').max(200, 'Название не длиннее 200 символов'),
+  description: optionalText(5000),
+  assigned_to: z.string().regex(PG_UUID_REGEX, 'Неверный идентификатор сотрудника').nullable().optional(),
+  due_date: optionalIsoDate.optional(),
+  priority: TaskPrioritySchema.default('normal'),
+});
+
+export const TaskUpdateSchema = z
+  .object({
+    title: z.string().trim().min(2).max(200).optional(),
+    description: optionalText(5000),
+    assigned_to: z.string().regex(PG_UUID_REGEX, 'Неверный идентификатор сотрудника').nullable().optional(),
+    due_date: optionalIsoDate.optional(),
+    priority: TaskPrioritySchema.optional(),
+    status: TaskStatusSchema.optional(),
+    result_note: optionalText(2000),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'Нет полей для обновления' });
+
+// ---------------------------------------------------------------------------
+// Планы по подключениям (миграция 039)
+// ---------------------------------------------------------------------------
+export const PlanPeriodKindSchema = z.enum(['daily', 'weekly', 'monthly', 'quarterly', 'half_year', 'yearly'], {
+  message: 'Недопустимый вид периода',
+});
+
+export const ConnectionPlanSchema = z
+  .object({
+    scope: z.enum(['personal', 'team'], { message: 'Недопустимый тип плана' }),
+    user_id: z.string().regex(PG_UUID_REGEX, 'Неверный идентификатор сотрудника').nullable().optional(),
+    period_kind: PlanPeriodKindSchema,
+    /** Любая дата внутри периода — начало нормализуется на сервере */
+    period_date: isoDate,
+    target_count: z.coerce.number().int('Целое число').min(1, 'План не меньше 1').max(100000),
+    note: optionalText(500),
+  })
+  .refine((v) => (v.scope === 'team' ? !v.user_id : Boolean(v.user_id)), {
+    path: ['user_id'],
+    error: () => 'Для персонального плана укажите сотрудника, для общего — не указывайте',
+  });
+
+export const ConnectionPlanUpdateSchema = z
+  .object({
+    target_count: z.coerce.number().int().min(1).max(100000).optional(),
+    note: optionalText(500),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: 'Нет полей для обновления' });

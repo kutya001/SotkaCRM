@@ -46,7 +46,7 @@ export function MobileBottomBar(_props: MobileBottomBarProps) {
 
   return (
     <nav
-      className={`lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl border-t border-zinc-200/80 dark:border-zinc-800/80 grid ${columnsClass} h-16 safe-area-bottom pb-[env(safe-area-inset-bottom)] px-1 shadow-lg`}
+      className={`lg:hidden fixed left-3 right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 rounded-2xl island-glass shadow-md grid ${columnsClass} h-16 px-1`}
     >
       {items.map((item) => {
         const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);

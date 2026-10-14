@@ -29,10 +29,12 @@ import {
   updateConnectionRetroactive,
   type ConnectionItem,
   type ConnectionsStats,
+  type ConnectionEmployeeOption,
 } from './actions';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { AccrueBonusesModal } from '@/components/connections/AccrueBonusesModal';
 import { ConnectionAccrualsSection } from '@/components/connections/ConnectionAccrualsSection';
+import { ConnectionStaffModal, type StaffSelection } from '@/components/connections/ConnectionStaffModal';
 import {
   Link2,
   Phone,
@@ -53,6 +55,7 @@ import {
   Hourglass,
   XCircle,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { ClientLifecycleStatus, ConnectionConfirmationStatus, UserRole } from '@/types/database.types';
@@ -228,6 +231,11 @@ export default function ConnectionsPage() {
     }
   };
 
+  // Сотрудники подключения (042): подключил + сопровождение по месяцам
+  const [employees, setEmployees] = React.useState<ConnectionEmployeeOption[]>([]);
+  const [staffModal, setStaffModal] = React.useState<{ open: boolean; connections: ConnectionItem[] }>({ open: false, connections: [] });
+  const [isStaffSaving, setIsStaffSaving] = React.useState(false);
+
   // Массовые действия для администратора (Bulk Operations)
   const [selectedConnectionIds, setSelectedConnectionIds] = React.useState<string[]>([]);
   const [isBatchLoading, setIsBatchLoading] = React.useState(false);
@@ -368,6 +376,7 @@ export default function ConnectionsPage() {
       setConnections(items);
       setTotalCount(total);
       setPendingCount(Number(res.pending_count) || 0);
+      setEmployees((res.employees || []) as ConnectionEmployeeOption[]);
       setStats(statsRes);
       setAccrualMonths(monthsRes);
       setActivePlans(plansRes);
@@ -447,6 +456,50 @@ export default function ConnectionsPage() {
       fetchData();
     } catch (err: any) {
       showToast(err.message || 'Не удалось отклонить подключение', 'error');
+    }
+  };
+
+  // Назначение сотрудников (042): одно подключение — PATCH /staff, несколько — массовое действие
+  const openStaffModal = React.useCallback(
+    (targets: ConnectionItem[]) => {
+      if (targets.length === 0) return;
+      setStaffModal({ open: true, connections: targets });
+    },
+    []
+  );
+
+  const handleStaffSubmit = async (selection: StaffSelection) => {
+    const targets = staffModal.connections;
+    if (targets.length === 0) return;
+    setIsStaffSaving(true);
+    try {
+      if (targets.length === 1) {
+        const res = await api.connections.assignStaff(targets[0].connection_id, selection);
+        const parts: string[] = [];
+        if (res.managerChanged) parts.push('подключивший изменен');
+        if (res.confirmed) parts.push('подключение подтверждено');
+        if (res.maintenanceUpdated > 0) parts.push(`сопровождение: ${res.maintenanceUpdated} мес.`);
+        showToast(parts.length > 0 ? `Сотрудники назначены: ${parts.join(', ')}` : 'Изменений нет', 'success');
+        if (res.skipped.length > 0) showToast(res.skipped.join('; '), 'info');
+        if (selectedConnection?.connection_id === targets[0].connection_id) {
+          const fresh = await api.connections.getById(targets[0].connection_id, { bypassCache: true });
+          setSelectedConnection((prev) => (prev ? { ...prev, ...fresh } : prev));
+        }
+      } else {
+        const res = await api.connections.batch({
+          action: 'assign_staff',
+          connection_ids: targets.map((c) => c.connection_id),
+          payload: { manager_id: selection.manager_id, maintenance: selection.maintenance },
+        });
+        showToast(res.message || 'Сотрудники назначены', 'success');
+        setSelectedConnectionIds([]);
+      }
+      setStaffModal({ open: false, connections: [] });
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось назначить сотрудников', 'error');
+    } finally {
+      setIsStaffSaving(false);
     }
   };
 
@@ -700,7 +753,7 @@ export default function ConnectionsPage() {
       },
       {
         key: 'manager_user',
-        label: 'Консультант',
+        label: 'Подключил',
         width: 180,
         minWidth: 150,
         sortable: true,
@@ -719,6 +772,41 @@ export default function ConnectionsPage() {
               color={row.manager_user.color}
               size="sm"
             />
+          );
+        },
+      },
+      {
+        key: 'maintenance_assignments',
+        label: 'Сопровождает',
+        width: 200,
+        minWidth: 170,
+        sortable: false,
+        filterable: false,
+        renderCell: (row) => {
+          const total = Math.max(1, Number(row.maintenance_months_total || row.maintenance_months_limit || 2));
+          const months = Array.from({ length: Math.min(total, 4) }, (_, i) => i + 1);
+          return (
+            <div className="flex flex-col gap-0.5 min-w-0">
+              {months.map((index) => {
+                const a = row.maintenance_assignments?.find((x) => x.month_index === index);
+                const person = a?.user || (a ? null : row.manager_user) || null;
+                const isDefault = !a;
+                return (
+                  <div key={index} className="flex items-center gap-1.5 min-w-0 text-[11px]">
+                    <span className="w-4 text-right font-mono text-zinc-400 flex-shrink-0">{index}</span>
+                    <span className={`truncate ${isDefault ? 'text-zinc-500 dark:text-zinc-400' : 'font-semibold text-zinc-800 dark:text-zinc-200'}`}>
+                      {person?.full_name || (isDefault ? 'подключивший' : 'сотрудник')}
+                    </span>
+                    {a?.status === 'accrued' ? (
+                      <Check className="w-3 h-3 text-emerald-500 flex-shrink-0" strokeWidth={2.5} aria-label="Начислено" />
+                    ) : a ? (
+                      <Hourglass className="w-3 h-3 text-amber-500 flex-shrink-0" strokeWidth={2} aria-label="Ждет начисления" />
+                    ) : null}
+                  </div>
+                );
+              })}
+              {total > 4 && <span className="text-[10px] text-zinc-400 pl-5">+{total - 4} мес.</span>}
+            </div>
           );
         },
       },
@@ -1022,6 +1110,15 @@ export default function ConnectionsPage() {
               />
             </>
           )}
+          {canEdit && (
+            <JournalMenuItem
+              icon={Users}
+              label="Сотрудники подключения…"
+              tone="info"
+              title="Кто подключил и кто сопровождает по месяцам"
+              onClick={() => openStaffModal([row])}
+            />
+          )}
           {hasPhone && (
             <JournalMenuItem icon={Phone} label="Позвонить" href={telHref(row.seller_phone)} title="Позвонить продавцу" />
           )}
@@ -1037,7 +1134,7 @@ export default function ConnectionsPage() {
         </>
       );
     },
-    [canConfirm, canDelete, confirmingId, handleConfirmConnection]
+    [canConfirm, canDelete, canEdit, confirmingId, handleConfirmConnection, openStaffModal]
   );
 
   // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
@@ -1099,6 +1196,18 @@ export default function ConnectionsPage() {
           onSelectionChange={setSelectedConnectionIds}
           renderBulkActions={(ids, clearSelection) => (
             <div className="flex items-center gap-2">
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={isBatchLoading || isStaffSaving}
+                  onClick={() => openStaffModal(connections.filter((c) => ids.includes(c.connection_id)))}
+                  className="h-8 px-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Назначить подключившего (с подтверждением) и сопровождающих по месяцам"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Сотрудники ({ids.length})</span>
+                </button>
+              )}
               <button
                 type="button"
                 disabled={isBatchLoading}
@@ -1236,7 +1345,7 @@ export default function ConnectionsPage() {
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-1 min-w-0">
                   <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
-                    Консультант
+                    Подключил
                   </span>
                   <div className="pt-0.5 min-w-0 max-w-full">
                     {selectedConnection.manager_user ? (
@@ -1288,6 +1397,46 @@ export default function ConnectionsPage() {
                       </span>
                     </>
                   )}
+                </div>
+              </div>
+
+              {/* Сопровождение по месяцам (042) */}
+              <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Сопровождает по месяцам</span>
+                  {canEdit && (
+                    <Button size="sm" variant="outline" onClick={() => openStaffModal([selectedConnection])} leftIcon={<Users className="w-3 h-3" strokeWidth={1.75} />}>
+                      Назначить
+                    </Button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {Array.from(
+                    { length: Math.max(1, Number(selectedConnection.maintenance_months_total || selectedConnection.maintenance_months_limit || 2)) },
+                    (_, i) => i + 1
+                  ).map((index) => {
+                    const a = selectedConnection.maintenance_assignments?.find((x) => x.month_index === index);
+                    const person = a?.user || (a ? null : selectedConnection.manager_user) || null;
+                    return (
+                      <div key={index} className="flex items-center gap-2 text-xs min-w-0">
+                        <span className="w-14 flex-shrink-0 text-[11px] text-zinc-500">{index}-й мес.</span>
+                        {person ? (
+                          <EmployeeBadge name={person.full_name} color={person.color} size="xs" />
+                        ) : (
+                          <span className="text-zinc-400">—</span>
+                        )}
+                        {a?.status === 'accrued' ? (
+                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                            начислено {a.accrued_month ? formatMonth(a.accrued_month) : ''}
+                          </span>
+                        ) : a ? (
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-nowrap">ждет начисления</span>
+                        ) : (
+                          <span className="text-[10px] text-zinc-400 whitespace-nowrap">по умолчанию</span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1649,6 +1798,17 @@ export default function ConnectionsPage() {
             />
           </FormField>
         </Modal>
+
+        {/* 9. Сотрудники подключения: подключил + сопровождение по месяцам (042) */}
+        <ConnectionStaffModal
+          open={staffModal.open}
+          onClose={() => setStaffModal({ open: false, connections: [] })}
+          connections={staffModal.connections}
+          employees={employees}
+          canConfirm={canConfirm}
+          busy={isStaffSaving}
+          onSubmit={handleStaffSubmit}
+        />
 
         {/* 8. Диалог массового начисления бонусов выбранным */}
         <Modal

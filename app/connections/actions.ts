@@ -64,6 +64,26 @@ export interface ConnectionItem {
     role: string;
     color?: string;
   } | null;
+  /** Сопровождение по месяцам (042): без записи месяц сопровождает подключивший */
+  maintenance_assignments?: MaintenanceAssignmentItem[];
+}
+
+export interface ConnectionEmployeeOption {
+  user_id: string;
+  full_name: string;
+  login: string;
+  role: string;
+  color: string | null;
+}
+
+export interface MaintenanceAssignmentItem {
+  month_index: number;
+  user_id: string;
+  /** planned — назначено, ждет начисления; accrued — начислено (подтверждено начислением) */
+  status: 'planned' | 'accrued';
+  accrued_month: string | null;
+  assigned_at: string;
+  user: ConnectionEmployeeOption | null;
 }
 
 export interface GetConnectionsParams {

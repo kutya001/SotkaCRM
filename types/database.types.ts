@@ -814,6 +814,48 @@ export type Database = {
           },
         ]
       }
+      connection_maintenance_assignments: {
+        Row: {
+          id: string
+          connection_id: string
+          month_index: number
+          user_id: string
+          assigned_by: string | null
+          assigned_at: string
+          status: "planned" | "accrued"
+          accrued_month: string | null
+          accrued_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          connection_id: string
+          month_index: number
+          user_id: string
+          assigned_by?: string | null
+          assigned_at?: string
+          status?: "planned" | "accrued"
+          accrued_month?: string | null
+          accrued_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          connection_id?: string
+          month_index?: number
+          user_id?: string
+          assigned_by?: string | null
+          assigned_at?: string
+          status?: "planned" | "accrued"
+          accrued_month?: string | null
+          accrued_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       roles: {
         Row: {
           base_role: Database["public"]["Enums"]["user_role"]

@@ -2991,3 +2991,23 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 * `POST /api/v1/connections/batch` действие `assign_staff` (`connections.bulk` + `connections.edit`, с `manager_id` — ещё `connections.confirm`): те же поля для списка подключений.
 * `GET /api/v1/connections` и `GET /api/v1/connections/[id]`: `maintenance_assignments[]` (месяц, сотрудник, статус, месяц начисления) и `employees[]` для выбора (при праве `connections.edit`). Область видимости без `connections.view_all`: свои подключения (подключил) и те, где сотрудник назначен на сопровождение (`connectionOwnScopeFilter`, `lib/services/connections.ts`).
 * Модуль «Подключения»: колонки «Подключил» и «Сопровождает» (по месяцам, ✓ — начислено, ⌛ — ждет начисления), пункт меню строки «Сотрудники подключения…», массовое действие «Сотрудники (N)», блок «Сопровождает по месяцам» в карточке; окно `ConnectionStaffModal` («Не менять» / «Как у подключившего» / сотрудник).
+
+## 33. Спецификация Миграции 043 (`043_connection_participants.sql`)
+
+### 33.1. Несколько сотрудников в подключении
+* Таблица `connection_participants`: `id`, `connection_id → connections` (каскад), `user_id → users`, `added_by`, `added_at`; уникальность `(connection_id, user_id)`. Участники подключения = `connections.manager_id` (основной, он же консультант продавца) + строки таблицы; всего не более трех (ограничение API).
+* `connection_participants_of(p_connection_id)` → `UUID[]` (основной первым, далее по порядку добавления). `connection_split_amount(p_total, p_n, p_i)` — доля i из n (копейки не теряются: последняя доля добирает остаток).
+* Бонус за подключение делится поровну: `fn_connection_auto_accrual` (подтверждение) создает по проводке на каждого участника («… (доля i/n)»); RPC `accrue_connection_bonuses_v2` / `accrue_selected_connections` в режиме подключения — так же.
+* `connection_resync_connection_accruals(p_connection_id)`: пересчет неоплаченных долей по текущему составу (новым участникам — доля, выбывшим — снимается, остальным — новая доля; оплаченные доли не трогаются; если начисления еще нет — ничего не делает). Вызывается триггерами `trg_connection_participants_changed` (INSERT/DELETE в `connection_participants`) и `trg_connection_manager_changed` (смена `manager_id`, заменяет логику 042).
+* Telegram: `trg_telegram_on_participant_added` — участнику «Вы добавлены в подключение» (число участников, кто добавил).
+
+### 33.2. Сопровождение несколькими сотрудниками
+* `connection_maintenance_assignments`: несколько строк на месяц; уникальность `(connection_id, month_index, user_id)` (`uq_conn_maint_month_user`, старое `uq_connection_maintenance_month` снято). `connection_maintenance_managers(p_connection_id, p_month_index)` → `UUID[]`: назначенные на месяц, иначе все участники подключения; `connection_maintenance_manager` (042) возвращает первого.
+* `connection_accruals`: несколько начислений на месяц — по сотруднику; уникальность `(connection_id, accrual_type, settlement_month, employee_id)` (`uq_conn_accrual_employee`, старое `uq_conn_accrual` снято). `fn_sync_conn_accrual_to_employee_payout` сопоставляет проводку журнала ЗП по сотруднику (удаление/изменение строки реестра затрагивает только его долю).
+* RPC сопровождения (`accrue_connection_bonuses_v2`, `accrue_selected_connections`, `run_maintenance_billing`) начисляют каждому сопровождающему месяца его долю ставки сопровождения и отмечают назначения `accrued`. Счетчик начисленных месяцев — по уникальным месяцам.
+
+### 33.3. API и интерфейс
+* `PATCH /api/v1/connections/[id]/staff`: `{ participants?: uuid[] (1..3, первый — основной), maintenance?: [{ month_index, user_ids: uuid[] (0..3; пустой — все участники) }] }`. Администратор (`connections.edit`, для участников — ещё `connections.confirm`): любой состав, назначение участников подтверждает подключение. Участник подключения (без `connections.edit`): только исключение — состав и наборы месяцев должны быть подмножеством текущих и непустыми; добавлять нельзя. Месяцы со статусом `accrued` не меняются.
+* `POST /api/v1/connections/batch` действие `assign_staff`: `payload.participants` / `payload.maintenance[].user_ids` (совместимо: `manager_id`, `user_id`).
+* `GET /api/v1/connections`, `GET /api/v1/connections/[id]`: `participants[]`; `maintenance_assignments[]` — несколько записей на месяц. Область видимости без `connections.view_all`: свои (основной), участник, сопровождающий.
+* Модуль «Подключения»: колонка «Участники» (доли 1/n), «Сопровождает» (составы по месяцам), окно `ConnectionStaffModal` с выбором до трех сотрудников чипами; режим участника — только снятие. Пункт меню и кнопка в карточке доступны администратору и участникам.

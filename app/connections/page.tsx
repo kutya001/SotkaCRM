@@ -459,7 +459,18 @@ export default function ConnectionsPage() {
     }
   };
 
-  // Назначение сотрудников (042): одно подключение — PATCH /staff, несколько — массовое действие
+  // Участник подключения (043): основной или добавленный — может исключать участников/сопровождающих
+  const isParticipantOf = React.useCallback(
+    (conn: ConnectionItem) => {
+      const me = user.profile?.user_id;
+      if (!me) return false;
+      if (conn.manager_id === me) return true;
+      return (conn.participants || []).some((p) => p.user_id === me);
+    },
+    [user.profile?.user_id]
+  );
+
+  // Назначение сотрудников (042/043): одно подключение — PATCH /staff, несколько — массовое действие
   const openStaffModal = React.useCallback(
     (targets: ConnectionItem[]) => {
       if (targets.length === 0) return;
@@ -476,7 +487,7 @@ export default function ConnectionsPage() {
       if (targets.length === 1) {
         const res = await api.connections.assignStaff(targets[0].connection_id, selection);
         const parts: string[] = [];
-        if (res.managerChanged) parts.push('подключивший изменен');
+        if (res.participantsChanged) parts.push(res.managerChanged ? 'состав участников и основной изменены' : 'состав участников изменен');
         if (res.confirmed) parts.push('подключение подтверждено');
         if (res.maintenanceUpdated > 0) parts.push(`сопровождение: ${res.maintenanceUpdated} мес.`);
         showToast(parts.length > 0 ? `Сотрудники назначены: ${parts.join(', ')}` : 'Изменений нет', 'success');
@@ -489,7 +500,7 @@ export default function ConnectionsPage() {
         const res = await api.connections.batch({
           action: 'assign_staff',
           connection_ids: targets.map((c) => c.connection_id),
-          payload: { manager_id: selection.manager_id, maintenance: selection.maintenance },
+          payload: { participants: selection.participants, maintenance: selection.maintenance },
         });
         showToast(res.message || 'Сотрудники назначены', 'success');
         setSelectedConnectionIds([]);
@@ -753,13 +764,14 @@ export default function ConnectionsPage() {
       },
       {
         key: 'manager_user',
-        label: 'Подключил',
-        width: 180,
-        minWidth: 150,
+        label: 'Участники',
+        width: 190,
+        minWidth: 160,
         sortable: true,
         filterable: true,
         renderCell: (row) => {
-          if (!row.manager_user) {
+          const people = row.participants && row.participants.length > 0 ? row.participants : row.manager_user ? [row.manager_user] : [];
+          if (people.length === 0) {
             return (
               <span className="text-[11px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800/60 px-2 py-0.5 rounded-md">
                 Не назначен
@@ -767,11 +779,18 @@ export default function ConnectionsPage() {
             );
           }
           return (
-            <EmployeeBadge
-              name={row.manager_user.full_name}
-              color={row.manager_user.color}
-              size="sm"
-            />
+            <div className="flex flex-col gap-0.5 min-w-0">
+              {people.map((p, i) => (
+                <div key={p.user_id} className="flex items-center gap-1 min-w-0">
+                  <EmployeeBadge name={p.full_name} color={p.color} size={people.length > 1 ? 'xs' : 'sm'} />
+                  {people.length > 1 && (
+                    <span className="text-[10px] font-mono text-zinc-400 flex-shrink-0" title={i === 0 ? 'Основной участник' : 'Участник'}>
+                      1/{people.length}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
           );
         },
       },
@@ -788,18 +807,25 @@ export default function ConnectionsPage() {
           return (
             <div className="flex flex-col gap-0.5 min-w-0">
               {months.map((index) => {
-                const a = row.maintenance_assignments?.find((x) => x.month_index === index);
-                const person = a?.user || (a ? null : row.manager_user) || null;
-                const isDefault = !a;
+                const rows = (row.maintenance_assignments || []).filter((x) => x.month_index === index);
+                const isDefault = rows.length === 0;
+                const defaultPeople = row.participants && row.participants.length > 0 ? row.participants : row.manager_user ? [row.manager_user] : [];
+                const names = isDefault
+                  ? defaultPeople.map((p) => p.full_name)
+                  : rows.map((r) => r.user?.full_name || 'сотрудник');
+                const accrued = rows.some((r) => r.status === 'accrued');
                 return (
                   <div key={index} className="flex items-center gap-1.5 min-w-0 text-[11px]">
                     <span className="w-4 text-right font-mono text-zinc-400 flex-shrink-0">{index}</span>
-                    <span className={`truncate ${isDefault ? 'text-zinc-500 dark:text-zinc-400' : 'font-semibold text-zinc-800 dark:text-zinc-200'}`}>
-                      {person?.full_name || (isDefault ? 'подключивший' : 'сотрудник')}
+                    <span
+                      className={`truncate ${isDefault ? 'text-zinc-500 dark:text-zinc-400' : 'font-semibold text-zinc-800 dark:text-zinc-200'}`}
+                      title={names.join(', ')}
+                    >
+                      {names.length > 0 ? names.join(', ') : 'участники'}
                     </span>
-                    {a?.status === 'accrued' ? (
+                    {accrued ? (
                       <Check className="w-3 h-3 text-emerald-500 flex-shrink-0" strokeWidth={2.5} aria-label="Начислено" />
-                    ) : a ? (
+                    ) : !isDefault ? (
                       <Hourglass className="w-3 h-3 text-amber-500 flex-shrink-0" strokeWidth={2} aria-label="Ждет начисления" />
                     ) : null}
                   </div>
@@ -1110,12 +1136,12 @@ export default function ConnectionsPage() {
               />
             </>
           )}
-          {canEdit && (
+          {(canEdit || isParticipantOf(row)) && (
             <JournalMenuItem
               icon={Users}
               label="Сотрудники подключения…"
               tone="info"
-              title="Кто подключил и кто сопровождает по месяцам"
+              title={canEdit ? 'Участники и сопровождающие по месяцам' : 'Исключить себя или коллегу из подключения / сопровождения'}
               onClick={() => openStaffModal([row])}
             />
           )}
@@ -1134,7 +1160,7 @@ export default function ConnectionsPage() {
         </>
       );
     },
-    [canConfirm, canDelete, canEdit, confirmingId, handleConfirmConnection, openStaffModal]
+    [canConfirm, canDelete, canEdit, confirmingId, handleConfirmConnection, isParticipantOf, openStaffModal]
   );
 
   // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
@@ -1202,7 +1228,7 @@ export default function ConnectionsPage() {
                   disabled={isBatchLoading || isStaffSaving}
                   onClick={() => openStaffModal(connections.filter((c) => ids.includes(c.connection_id)))}
                   className="h-8 px-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  title="Назначить подключившего (с подтверждением) и сопровождающих по месяцам"
+                  title="Назначить участников (с подтверждением) и сопровождающих по месяцам"
                 >
                   <Users className="w-3.5 h-3.5" />
                   <span>Сотрудники ({ids.length})</span>
@@ -1345,18 +1371,26 @@ export default function ConnectionsPage() {
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-1 min-w-0">
                   <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
-                    Подключил
+                    Участники подключения
                   </span>
-                  <div className="pt-0.5 min-w-0 max-w-full">
-                    {selectedConnection.manager_user ? (
-                      <EmployeeBadge
-                        name={selectedConnection.manager_user.full_name}
-                        color={selectedConnection.manager_user.color}
-                        size="sm"
-                      />
-                    ) : (
-                      <span className="text-xs text-zinc-400 font-medium">Не назначен</span>
-                    )}
+                  <div className="pt-0.5 min-w-0 max-w-full flex flex-col gap-1">
+                    {(() => {
+                      const people =
+                        selectedConnection.participants && selectedConnection.participants.length > 0
+                          ? selectedConnection.participants
+                          : selectedConnection.manager_user
+                          ? [selectedConnection.manager_user]
+                          : [];
+                      if (people.length === 0) return <span className="text-xs text-zinc-400 font-medium">Не назначен</span>;
+                      return people.map((p, i) => (
+                        <div key={p.user_id} className="flex items-center gap-1.5 min-w-0">
+                          <EmployeeBadge name={p.full_name} color={p.color} size="sm" />
+                          {people.length > 1 && (
+                            <span className="text-[10px] text-zinc-400 whitespace-nowrap">{i === 0 ? 'основной · ' : ''}доля 1/{people.length}</span>
+                          )}
+                        </div>
+                      ));
+                    })()}
                   </div>
                   <span className="text-[10px] text-zinc-400 block pt-0.5 truncate" title={selectedConnection.assigned_user?.full_name || 'Система'}>
                     Привязал: {selectedConnection.assigned_user?.full_name || 'Система'}
@@ -1404,9 +1438,9 @@ export default function ConnectionsPage() {
               <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-100 dark:border-zinc-800 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Сопровождает по месяцам</span>
-                  {canEdit && (
+                  {(canEdit || isParticipantOf(selectedConnection)) && (
                     <Button size="sm" variant="outline" onClick={() => openStaffModal([selectedConnection])} leftIcon={<Users className="w-3 h-3" strokeWidth={1.75} />}>
-                      Назначить
+                      {canEdit ? 'Назначить' : 'Исключить…'}
                     </Button>
                   )}
                 </div>
@@ -1415,25 +1449,35 @@ export default function ConnectionsPage() {
                     { length: Math.max(1, Number(selectedConnection.maintenance_months_total || selectedConnection.maintenance_months_limit || 2)) },
                     (_, i) => i + 1
                   ).map((index) => {
-                    const a = selectedConnection.maintenance_assignments?.find((x) => x.month_index === index);
-                    const person = a?.user || (a ? null : selectedConnection.manager_user) || null;
+                    const rows = (selectedConnection.maintenance_assignments || []).filter((x) => x.month_index === index);
+                    const isDefault = rows.length === 0;
+                    const people = isDefault
+                      ? selectedConnection.participants && selectedConnection.participants.length > 0
+                        ? selectedConnection.participants
+                        : selectedConnection.manager_user
+                        ? [selectedConnection.manager_user]
+                        : []
+                      : rows.map((r) => r.user || { user_id: r.user_id, full_name: 'Сотрудник', color: null });
+                    const accruedRow = rows.find((r) => r.status === 'accrued');
                     return (
-                      <div key={index} className="flex items-center gap-2 text-xs min-w-0">
-                        <span className="w-14 flex-shrink-0 text-[11px] text-zinc-500">{index}-й мес.</span>
-                        {person ? (
-                          <EmployeeBadge name={person.full_name} color={person.color} size="xs" />
-                        ) : (
-                          <span className="text-zinc-400">—</span>
-                        )}
-                        {a?.status === 'accrued' ? (
-                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                            начислено {a.accrued_month ? formatMonth(a.accrued_month) : ''}
-                          </span>
-                        ) : a ? (
-                          <span className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-nowrap">ждет начисления</span>
-                        ) : (
-                          <span className="text-[10px] text-zinc-400 whitespace-nowrap">по умолчанию</span>
-                        )}
+                      <div key={index} className="flex items-start gap-2 text-xs min-w-0">
+                        <span className="w-14 flex-shrink-0 text-[11px] text-zinc-500 pt-0.5">{index}-й мес.</span>
+                        <div className="flex flex-wrap items-center gap-1 min-w-0">
+                          {people.length > 0 ? (
+                            people.map((p) => <EmployeeBadge key={p.user_id} name={p.full_name} color={p.color} size="xs" />)
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                          {accruedRow ? (
+                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                              начислено {accruedRow.accrued_month ? formatMonth(accruedRow.accrued_month) : ''}
+                            </span>
+                          ) : !isDefault ? (
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-nowrap">ждет начисления</span>
+                          ) : (
+                            <span className="text-[10px] text-zinc-400 whitespace-nowrap">все участники</span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1805,7 +1849,9 @@ export default function ConnectionsPage() {
           onClose={() => setStaffModal({ open: false, connections: [] })}
           connections={staffModal.connections}
           employees={employees}
+          canEdit={canEdit}
           canConfirm={canConfirm}
+          currentUserId={user.profile?.user_id || ''}
           busy={isStaffSaving}
           onSubmit={handleStaffSubmit}
         />

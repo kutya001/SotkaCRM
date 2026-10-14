@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { connectionOwnScopeFilter, isConnectionInScope, loadMaintenanceAssignments, maintenanceConnectionIdsFor } from '@/lib/services/connections';
+import { connectionOwnScopeFilter, isConnectionInScope, loadMaintenanceAssignments, loadParticipants, maintenanceConnectionIdsFor } from '@/lib/services/connections';
 
 export async function GET(
   req: NextRequest,
@@ -58,12 +58,16 @@ export async function GET(
       confirmedUser = cu;
     }
 
-    const assignmentsMap = await loadMaintenanceAssignments([conn.connection_id]);
+    const [assignmentsMap, participantsMap] = await Promise.all([
+      loadMaintenanceAssignments([conn.connection_id]),
+      loadParticipants([conn.connection_id]),
+    ]);
 
     const result = {
       ...conn,
       confirmed_user: confirmedUser,
       maintenance_assignments: assignmentsMap.get(conn.connection_id) || [],
+      participants: participantsMap.get(conn.connection_id) || [],
       bonus_connection: Number(conn.bonus_connection_accrued || 0),
       bonus_maintenance: Number(conn.bonus_maintenance_accrued || 0),
       total_bonuses: Number(conn.total_bonuses_accrued || 0),
@@ -189,6 +193,7 @@ export async function DELETE(
 
     // 3. Удаление назначений сопровождения (042) и связанных начислений из обоих регистров
     await supabase.from('connection_maintenance_assignments').delete().eq('connection_id', id);
+    await supabase.from('connection_participants').delete().eq('connection_id', id);
     await supabase
       .from('connection_accruals')
       .delete()

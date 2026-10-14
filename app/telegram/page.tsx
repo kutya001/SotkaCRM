@@ -476,7 +476,78 @@ export default function TelegramPage() {
               Показывать заблокированных
             </label>
           </div>
-          <div className="overflow-x-auto">
+          {/* Мобильные карточки (< md): таблица не помещается на экран телефона */}
+          <div className="md:hidden divide-y divide-zinc-200/60 dark:divide-zinc-800/60">
+            {isLoading && !overview ? (
+              <div className="px-4 py-8 text-center text-xs text-zinc-400">Загрузка...</div>
+            ) : employees.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-zinc-400">Сотрудники не найдены</div>
+            ) : (
+              employees.map((emp) => (
+                <div key={emp.user_id} className={`p-4 space-y-2.5 ${emp.is_active ? '' : 'opacity-60'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <EmployeeBadge name={emp.full_name} color={emp.color} size="sm" />
+                      <div className="text-[11px] text-zinc-400 font-mono truncate">
+                        @{emp.login} · <span className="font-sans">{ROLE_LABELS[emp.role as UserRole] || emp.role}</span>
+                      </div>
+                    </div>
+                    {emp.linked ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex-shrink-0 max-w-[45%] truncate">
+                        <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                        <span className="truncate">{emp.username ? `@${emp.username}` : 'подключен'}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-zinc-100 dark:bg-zinc-800 text-zinc-400 border border-zinc-200 dark:border-zinc-700 flex-shrink-0">
+                        <MinusCircle className="w-3 h-3" />
+                        не подключен
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {(Object.keys(PREF_LABELS) as PrefKey[]).map((key) => {
+                      const on = emp.prefs[key];
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => togglePref(emp, key)}
+                          title={on ? 'Выключить' : 'Включить'}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold border transition-colors cursor-pointer ${
+                            on
+                              ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                              : 'border-zinc-200 dark:border-zinc-700 text-zinc-400 line-through'
+                          }`}
+                        >
+                          {PREF_LABELS[key]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    <span className="font-mono">
+                      Отправлено: <b className="text-zinc-800 dark:text-zinc-200">{emp.sent_count}</b>
+                      {emp.last_sent_at && <span className="block text-[10px] text-zinc-400">{formatDateTime(emp.last_sent_at)}</span>}
+                      {emp.linked && emp.linked_at && <span className="block text-[10px] text-zinc-400">подключен с {formatDateTime(emp.linked_at)}</span>}
+                    </span>
+                    {emp.linked && (
+                      <Button
+                        variant="dangerSoft"
+                        size="xs"
+                        loading={workingUserId === emp.user_id}
+                        onClick={() => handleUnlink(emp)}
+                        leftIcon={<Unlink className="w-3 h-3" />}
+                      >
+                        Отвязать
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-zinc-50/70 dark:bg-zinc-800/40 text-[11px] uppercase tracking-wider text-zinc-500">
                 <tr>

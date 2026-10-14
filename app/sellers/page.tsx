@@ -298,8 +298,17 @@ export default function SellersPage() {
   );
 
   // Клиентская фильтрация: вкладка (все / мои / без консультанта), консультант и активность
+  // По умолчанию в реестре только продавцы, прошедшие модерацию; остальные («другие организации»:
+  // на модерации, отклонённые, заблокированные) показываются отдельной кнопкой
+  const [showOthers, setShowOthers] = React.useState(false);
+  const baseSellers = React.useMemo(
+    () => sellers.filter((s) => (showOthers ? s.moderation !== 'approved' : s.moderation === 'approved')),
+    [sellers, showOthers]
+  );
+  const othersCount = React.useMemo(() => sellers.filter((s) => s.moderation !== 'approved').length, [sellers]);
+
   const visibleSellers = React.useMemo(() => {
-    return sellers.filter((s) => {
+    return baseSellers.filter((s) => {
       if (curatorTab === 'my' && s.manager_id !== currentUserId) return false;
       if (curatorTab === 'unassigned' && s.manager_id) return false;
       if (filterActive !== 'all' && String(Boolean(s.is_active)) !== filterActive) return false;
@@ -308,7 +317,7 @@ export default function SellersPage() {
       if (filterManager !== 'all' && filterManager !== 'my' && filterManager !== 'unassigned' && s.manager_id !== filterManager) return false;
       return true;
     });
-  }, [sellers, curatorTab, currentUserId, filterActive, filterManager]);
+  }, [baseSellers, curatorTab, currentUserId, filterActive, filterManager]);
 
   // Итоги транзакций Sotka HQ: дозаполняются в фоне для продавцов без итогов или с устаревшими (> 24 ч)
   const hqRefreshRef = React.useRef<Promise<void> | null>(null);
@@ -420,11 +429,11 @@ export default function SellersPage() {
   // Вкладки по консультантам для DataJournal
   const sellerTabs: DataJournalTab[] = React.useMemo(() => {
     return [
-      { id: 'all', label: 'Все', icon: Users, count: sellers.length },
-      { id: 'my', label: 'Мои продавцы', icon: UserCheck, count: sellers.filter((s) => s.manager_id === currentUserId).length },
-      { id: 'unassigned', label: 'Без консультанта', icon: UserMinus, count: sellers.filter((s) => !s.manager_id).length },
+      { id: 'all', label: 'Все', icon: Users, count: baseSellers.length },
+      { id: 'my', label: 'Мои продавцы', icon: UserCheck, count: baseSellers.filter((s) => s.manager_id === currentUserId).length },
+      { id: 'unassigned', label: 'Без консультанта', icon: UserMinus, count: baseSellers.filter((s) => !s.manager_id).length },
     ];
-  }, [sellers, currentUserId]);
+  }, [baseSellers, currentUserId]);
 
   // Вкладка — чистый клиентский фильтр: данные не перезапрашиваются
   const handleTabChange = (tabId: string) => {
@@ -1212,6 +1221,28 @@ export default function SellersPage() {
       <RotateCcw className="w-4 h-4 text-blue-500 flex-shrink-0" strokeWidth={1.75} />
       <span className="hidden md:inline">Обновить</span>
     </button>
+      <button
+        type="button"
+        onClick={() => setShowOthers((v) => !v)}
+        aria-pressed={showOthers}
+        className={`h-9 md:h-11 px-2.5 md:px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 md:gap-2 transition-all active:scale-95 shadow-sm border island-interactive flex-shrink-0 ${
+          showOthers
+            ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
+            : 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border-zinc-200/50 dark:border-zinc-700/50'
+        }`}
+        title={showOthers ? 'Вернуться к продавцам, прошедшим модерацию' : 'Показать другие организации (не прошли модерацию, отклонены, заблокированы)'}
+        aria-label={showOthers ? 'Прошедшие модерацию' : 'Другие организации'}
+      >
+        <Building2 className={`w-4 h-4 flex-shrink-0 ${showOthers ? 'text-amber-500' : 'text-zinc-500'}`} strokeWidth={1.75} />
+        <span className="hidden md:inline">{showOthers ? 'Прошедшие модерацию' : 'Другие организации'}</span>
+        <span
+          className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center ${
+            showOthers ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300' : 'bg-zinc-200/80 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'
+          }`}
+        >
+          {showOthers ? sellers.length - othersCount : othersCount}
+        </span>
+      </button>
     </div>
   );
 
@@ -1560,7 +1591,7 @@ export default function SellersPage() {
             keyField="seller_phone"
             storageKey="sotka_sellers_journal"
             searchPlaceholder="Поиск по имени, телефону или магазину..."
-            emptyMessage="Продавцы не найдены. Выполните синхронизацию с Sotka API."
+            emptyMessage={showOthers ? 'Продавцов, не прошедших модерацию, нет' : 'Продавцы не найдены. Выполните синхронизацию с Sotka API.'}
             totalCount={visibleSellers.length}
             externalSearchQuery={searchQuery}
             onSearchChange={setSearchQuery}

@@ -1086,7 +1086,20 @@ const DataJournalCardInner = <T extends Record<string, any>>({
             </button>
           )}
 
-          {customRowActions && customRowActions(row)}
+          {customRowActions && onRowContextMenu && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRowContextMenu(e, row);
+              }}
+              className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+              title="Действия"
+              aria-label="Действия"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" strokeWidth={2} />
+            </button>
+          )}
         </div>
 
         {statusCol &&
@@ -1313,12 +1326,68 @@ function DataJournalContextMenuInner<T extends Record<string, any>>({
       })()}
 
       {customRowActions && (
-        <div className="pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
+        <div
+          className="pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50 space-y-0.5"
+          // Любое действие закрывает меню (capture — до обработчика самой кнопки)
+          onClickCapture={() => setMenu(null)}
+        >
           {customRowActions(menu.row)}
         </div>
       )}
     </div>,
     document.body
+  );
+}
+
+export type JournalMenuTone = 'default' | 'info' | 'success' | 'warning' | 'danger' | 'purple';
+
+const MENU_TONE_CLASS: Record<JournalMenuTone, string> = {
+  default: 'text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 [&_svg]:text-zinc-400',
+  info: 'text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 [&_svg]:text-blue-500',
+  success: 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 [&_svg]:text-emerald-500',
+  warning: 'text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 [&_svg]:text-amber-500',
+  danger: 'text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 [&_svg]:text-rose-500',
+  purple: 'text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 [&_svg]:text-purple-500',
+};
+
+export interface JournalMenuItemProps {
+  icon?: React.ElementType;
+  label: React.ReactNode;
+  onClick?: () => void;
+  /** Ссылка вместо кнопки (открывается в новой вкладке) */
+  href?: string;
+  tone?: JournalMenuTone;
+  disabled?: boolean;
+  title?: string;
+}
+
+/**
+ * Единый пункт контекстного меню строки (ПКМ / «⋯» / карточка): используется в customRowActions всех модулей.
+ */
+export function JournalMenuItem({ icon: Icon, label, onClick, href, tone = 'default', disabled, title }: JournalMenuItemProps) {
+  const cls = `w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${MENU_TONE_CLASS[tone]}`;
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={cls} title={title}>
+        {Icon && <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />}
+        <span className="truncate">{label}</span>
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      className={cls}
+    >
+      {Icon && <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />}
+      <span className="truncate">{label}</span>
+    </button>
   );
 }
 

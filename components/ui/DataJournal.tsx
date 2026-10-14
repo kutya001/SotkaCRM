@@ -3187,9 +3187,16 @@ export function DataJournal<T extends Record<string, any>>({
                       const rowKey = String(row[keyField]);
                       if (renderCard) {
                         return (
-                          <React.Fragment key={rowKey}>
+                          <div
+                            key={rowKey}
+                            className="contents"
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              contextMenuCtrl.open(e, row);
+                            }}
+                          >
                             {renderCard(row)}
-                          </React.Fragment>
+                          </div>
                         );
                       }
                       return (
@@ -3273,9 +3280,16 @@ export function DataJournal<T extends Record<string, any>>({
               </div>
             ) : renderCard ? (
               paginatedData.map((row) => (
-                <React.Fragment key={String(row[keyField])}>
+                <div
+                  key={String(row[keyField])}
+                  className="contents"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    contextMenuCtrl.open(e, row);
+                  }}
+                >
                   {renderCard(row)}
-                </React.Fragment>
+                </div>
               ))
             ) : (
               paginatedData.map((row) => {

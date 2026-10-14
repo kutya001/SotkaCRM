@@ -549,6 +549,9 @@ interface DataJournalTableRowProps<T extends Record<string, any>> {
   statusDropdownRef: React.RefObject<HTMLDivElement | null>;
   showToast: (msg: string, type?: ToastType) => void;
   onRowContextMenu?: (e: React.MouseEvent, row: T) => void;
+  /** Индекс строки в виртуализаторе и колбэк измерения реальной высоты (data-index + ref) */
+  virtualIndex?: number;
+  measureRef?: (el: HTMLTableRowElement | null) => void;
 }
 
 const DataJournalTableRowInner = <T extends Record<string, any>>({
@@ -571,6 +574,8 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   statusDropdownRef,
   showToast,
   onRowContextMenu,
+  virtualIndex,
+  measureRef,
 }: DataJournalTableRowProps<T>) => {
   const [dropdownCoords, setDropdownCoords] = React.useState<{ top: number; left: number } | null>(
     null
@@ -597,6 +602,8 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   return (
     <tr
       key={rowKey}
+      ref={measureRef}
+      data-index={virtualIndex}
       onContextMenu={(e) => {
         if (onRowContextMenu) {
           e.preventDefault();
@@ -829,6 +836,8 @@ function areRowPropsEqual<T extends Record<string, any>>(
   if (prevProps.isSelected !== nextProps.isSelected) return false;
   if (prevProps.enableSelection !== nextProps.enableSelection) return false;
   if (prevProps.getStatusOptions !== nextProps.getStatusOptions) return false;
+  if (prevProps.virtualIndex !== nextProps.virtualIndex) return false;
+  if (prevProps.measureRef !== nextProps.measureRef) return false;
 
   const prev = prevProps.row;
   const next = nextProps.row;
@@ -1908,12 +1917,21 @@ export function DataJournal<T extends Record<string, any>>({
 
   const tableContainerRef = React.useRef<HTMLDivElement | null>(null);
 
+  // Высота строк измеряется по факту (data-index + measureElement): при оценке «на глаз»
+  // позиции строк расходились с реальными и таблица дрожала при прокрутке к концу страницы
   const rowVirtualizer = useVirtualizer({
     count: paginatedData.length,
     getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => 48,
-    overscan: 10,
+    estimateSize: () => 57,
+    overscan: 8,
+    getItemKey: (index) => String(paginatedData[index]?.[keyField] ?? index),
   });
+  const measureRowElement = React.useCallback(
+    (el: HTMLTableRowElement | null) => {
+      if (el) rowVirtualizer.measureElement(el);
+    },
+    [rowVirtualizer]
+  );
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalVirtualSize = rowVirtualizer.getTotalSize();
@@ -2901,6 +2919,8 @@ export function DataJournal<T extends Record<string, any>>({
                           statusDropdownRef={statusDropdownRef}
                           showToast={showToast}
                           onRowContextMenu={contextMenuCtrl.open}
+                          virtualIndex={virtualRow.index}
+                          measureRef={measureRowElement}
                         />
                       );
                     })}

@@ -42,7 +42,11 @@ import {
   MapPin,
   Send,
   ShieldHalf,
+  EyeOff,
+  Eye,
+  AtSign,
 } from 'lucide-react';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { FormField, Input, Select } from '@/components/ui/Field';
@@ -69,6 +73,7 @@ const RESET_FORM_ID = 'employee-reset-password-form';
 export default function EmployeesPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const user = useUser();
   const canCreate = user.can('employees.create');
   const canEdit = user.can('employees.edit');
@@ -95,7 +100,8 @@ export default function EmployeesPage() {
   // Фильтры и поиск
   const [searchQuery, setSearchQuery] = React.useState('');
   const [roleFilter, setRoleFilter] = React.useState<string>('all');
-  const [statusFilter, setStatusFilter] = React.useState<string>('all');
+  // Отключённые аккаунты скрыты из общего списка и показываются по кнопке
+  const [showInactive, setShowInactive] = React.useState(false);
 
   // Общая карта сотрудников (администратор)
   const [isMapOpen, setIsMapOpen] = React.useState(false);
@@ -175,10 +181,10 @@ export default function EmployeesPage() {
     () =>
       employees.filter((e) => {
         if (roleFilter !== 'all' && (e.role_id || '') !== roleFilter) return false;
-        if (statusFilter !== 'all' && String(Boolean(e.is_active)) !== statusFilter) return false;
+        if (!showInactive && !e.is_active) return false;
         return true;
       }),
-    [employees, roleFilter, statusFilter]
+    [employees, roleFilter, showInactive]
   );
 
   // Проверка анкеты до отправки (сервер проверяет те же правила)
@@ -403,15 +409,27 @@ export default function EmployeesPage() {
     }
   };
 
-  // Быстрое переключение активности
+  // Отключение / включение аккаунта с подтверждением
   const handleToggleActive = async (emp: EmployeeItem) => {
     const newStatus = !emp.is_active;
+    if (emp.user_id === user.profile?.user_id && !newStatus) {
+      showToast('Нельзя отключить собственный аккаунт', 'error');
+      return;
+    }
+    const ok = await confirm({
+      title: newStatus ? 'Включить аккаунт?' : 'Отключить аккаунт?',
+      subtitle: `${emp.full_name} (@${emp.login})`,
+      description: newStatus
+        ? 'Сотрудник снова сможет входить в CRM и появится в общем списке.'
+        : 'Сотрудник потеряет доступ в CRM и будет скрыт из общего списка (виден по кнопке «Показать отключённые»). Данные и история сохраняются.',
+      tone: newStatus ? 'info' : 'danger',
+      icon: newStatus ? Unlock : Lock,
+      confirmLabel: newStatus ? 'Включить' : 'Отключить',
+    });
+    if (!ok) return;
     try {
       await api.employees.update(emp.user_id, { is_active: newStatus });
-      showToast(
-        `Сотрудник ${emp.full_name} ${newStatus ? 'разблокирован' : 'заблокирован'}`,
-        'info'
-      );
+      showToast(`Аккаунт ${emp.full_name} ${newStatus ? 'включён' : 'отключён'}`, 'info');
       fetchEmployeesData();
     } catch (err: any) {
       showToast(err.message || 'Ошибка изменения активности', 'error');
@@ -427,8 +445,19 @@ export default function EmployeesPage() {
       renderCell: (item: EmployeeItem) => (
         <div className="flex items-center gap-2.5">
           <EmployeeBadge name={item.full_name} color={item.color} size="md" />
-          <span className="text-[11px] text-zinc-400 font-mono">@{item.login}</span>
         </div>
+      ),
+    },
+    {
+      key: 'login',
+      label: 'Логин',
+      sortable: true,
+      filterable: true,
+      renderCell: (item: EmployeeItem) => (
+        <span className="inline-flex items-center gap-1 font-mono text-xs text-zinc-700 dark:text-zinc-300">
+          <AtSign className="w-3 h-3 text-zinc-400" strokeWidth={2} />
+          {item.login}
+        </span>
       ),
     },
     {
@@ -490,7 +519,7 @@ export default function EmployeesPage() {
       filterType: 'select',
       filterOptions: [
         { value: 'true', label: 'Активен' },
-        { value: 'false', label: 'Заблокирован' },
+        { value: 'false', label: 'Отключён' },
       ],
       renderCell: (item: EmployeeItem) => (
         <button
@@ -505,7 +534,7 @@ export default function EmployeesPage() {
               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
               : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
           }`}
-          title={!canDeactivate ? undefined : item.is_active ? 'Нажмите для блокировки' : 'Нажмите для активации'}
+          title={!canDeactivate ? undefined : item.is_active ? 'Отключить аккаунт' : 'Включить аккаунт'}
         >
           {item.is_active ? (
             <>
@@ -515,7 +544,7 @@ export default function EmployeesPage() {
           ) : (
             <>
               <XCircle className="w-3 h-3" strokeWidth={2} />
-              <span>Заблокирован</span>
+              <span>Отключён</span>
             </>
           )}
         </button>
@@ -619,8 +648,10 @@ export default function EmployeesPage() {
       ),
     },
     {
-      key: 'user_id',
+      key: 'actions',
       label: 'Действия',
+      sortable: false,
+      filterable: false,
       renderCell: (item: EmployeeItem) => (
         <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           {canEdit && (
@@ -643,6 +674,20 @@ export default function EmployeesPage() {
               <KeyRound className="w-4 h-4" strokeWidth={1.75} />
             </button>
           )}
+          {canDeactivate && item.user_id !== user.profile?.user_id && (
+            <button
+              type="button"
+              onClick={() => handleToggleActive(item)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                item.is_active
+                  ? 'hover:bg-rose-50 dark:hover:bg-rose-950 text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400'
+                  : 'hover:bg-emerald-50 dark:hover:bg-emerald-950 text-zinc-500 hover:text-emerald-600 dark:hover:text-emerald-400'
+              }`}
+              title={item.is_active ? 'Отключить аккаунт' : 'Включить аккаунт'}
+            >
+              {item.is_active ? <Lock className="w-4 h-4" strokeWidth={1.75} /> : <Unlock className="w-4 h-4" strokeWidth={1.75} />}
+            </button>
+          )}
         </div>
       ),
     },
@@ -652,14 +697,17 @@ export default function EmployeesPage() {
   const blockedCount = employees.filter((e) => !e.is_active).length;
   const countByRole = React.useMemo(() => {
     const map = new Map<string, number>();
-    for (const e of employees) map.set(e.role_id || '', (map.get(e.role_id || '') || 0) + 1);
+    for (const e of employees) {
+      if (!showInactive && !e.is_active) continue;
+      map.set(e.role_id || '', (map.get(e.role_id || '') || 0) + 1);
+    }
     return map;
-  }, [employees]);
+  }, [employees, showInactive]);
 
   // Вкладки по ролям для DataJournal (клиентский фильтр)
   const employeeTabs: DataJournalTab[] = React.useMemo(
     () => [
-      { id: 'all', label: 'Все сотрудники', icon: Users, count: employees.length },
+      { id: 'all', label: 'Все сотрудники', icon: Users, count: employees.filter((e) => showInactive || e.is_active).length },
       ...roles.map((r) => ({
         id: r.role_id,
         label: r.name,
@@ -667,7 +715,7 @@ export default function EmployeesPage() {
         count: countByRole.get(r.role_id) || 0,
       })),
     ],
-    [employees.length, roles, countByRole]
+    [employees, roles, countByRole, showInactive]
   );
 
   return (
@@ -734,6 +782,25 @@ export default function EmployeesPage() {
               <>
                 <button
                   type="button"
+                  onClick={() => setShowInactive((v) => !v)}
+                  aria-pressed={showInactive}
+                  className={`h-10 px-4 rounded-2xl border text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95 ${
+                    showInactive
+                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+                      : 'border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200'
+                  }`}
+                  title={showInactive ? 'Скрыть отключённые аккаунты' : 'Показать отключённые аккаунты'}
+                >
+                  {showInactive ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
+                  <span className="hidden sm:inline">{showInactive ? 'Скрыть отключённые' : 'Показать отключённые'}</span>
+                  {blockedCount > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center justify-center">
+                      {blockedCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
                   onClick={() => setIsMapOpen(true)}
                   className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
                   title="Места проживания сотрудников на одной карте"
@@ -781,7 +848,7 @@ export default function EmployeesPage() {
               </div>
             ))}
             <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Заблокировано</span>
+              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Отключено</span>
               <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{blockedCount}</p>
             </div>
           </div>
@@ -973,8 +1040,8 @@ export default function EmployeesPage() {
 
             <label className="flex items-center justify-between p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 cursor-pointer text-xs">
               <div>
-                <span className="font-semibold text-zinc-900 dark:text-zinc-100 block">Активность аккаунта</span>
-                <span className="text-[11px] text-zinc-400">Разрешить авторизацию в CRM</span>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100 block">Аккаунт включён</span>
+                <span className="text-[11px] text-zinc-400">Отключённый сотрудник не может войти в CRM и скрыт из общего списка</span>
               </div>
               <input
                 type="checkbox"

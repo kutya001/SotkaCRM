@@ -3,73 +3,74 @@ import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-export async function GET(req: NextRequest) {
+/**
+ * GET /api/v1/dashboard/kpi — показатели главной страницы.
+ * Каждый блок считается в области данных сотрудника: без права «<модуль>.view_all» —
+ * только свои лиды, продавцы, подключения и начисления. В ответе есть scope по модулям,
+ * чтобы страница подписывала карточки («Мои продавцы» и т. п.).
+ */
+export async function GET(_req: NextRequest) {
   try {
     const { profile, canViewAll } = await requirePermission('dashboard.menu');
     const admin = createAdminClient();
-    const leadsViewAll = canViewAll('leads');
-
-    // Запрашиваем ключевые счетчики параллельно
+    const me = profile.user_id;
     const currentMonth = new Date().toISOString().substring(0, 7);
 
-    // 1. Попытка вызова высокопроизводительного SQL-агрегата в СУБД (1 раундтрип)
-    // RPC доверяет p_user_id/p_role, поэтому доступна только service_role (миграция 029);
-    // параметры берутся из серверного профиля, а не из запроса. p_role — только для области
-    // воронки: при праве «leads.view_all» передаем 'admin' (все лиды), иначе базовую роль
-    const { data: rpcData, error: rpcError } = await admin.rpc('get_dashboard_kpi', {
-      p_user_id: profile.user_id,
-      p_role: leadsViewAll ? 'admin' : profile.role,
-      p_month: currentMonth,
-    });
+    const scope = {
+      leads: canViewAll('leads') ? 'all' : 'own',
+      sellers: canViewAll('sellers') ? 'all' : 'own',
+      connections: canViewAll('connections') ? 'all' : 'own',
+      payouts: canViewAll('payouts') ? 'all' : 'own',
+    } as const;
 
-    if (!rpcError && rpcData) {
-      const res = rpcData as Record<string, any>;
-      return apiSuccess({
-        total_leads: Number(res.total_leads) || 0,
-        open_leads: Number(res.open_leads) || 0,
-        signed_leads: Number(res.signed_leads) || 0,
-        cancelled_leads: Number(res.cancelled_leads) || 0,
-        conversion_rate: Number(res.conversion_rate) || 0,
-        active_sellers: Number(res.active_sellers) || 0,
-        total_sellers_balance: Number(res.total_sellers_balance) || 0,
-        total_connections: Number(res.total_connections) || 0,
-        month_payouts: Number(res.month_payouts) || 0,
-      });
-    }
+    let leadsQuery = admin.from('leads').select('status');
+    if (scope.leads === 'own') leadsQuery = leadsQuery.or(`assigned_to.eq.${me},created_by.eq.${me}`);
 
-    // Fallback: быстрые параллельные агрегатные запросы (те же глобальные метрики, что считает RPC;
-    // воронка лидов — в области видимости сотрудника)
-    let leadsQuery = admin.from('leads').select('status, assigned_to');
-    if (!leadsViewAll) {
-      leadsQuery = leadsQuery.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
-    }
+    let sellersQuery = admin.from('sellers').select('is_active, balance').eq('is_deleted_from_source', false);
+    if (scope.sellers === 'own') sellersQuery = sellersQuery.eq('manager_id', me);
+
+    let connectionsQuery = admin
+      .from('connections')
+      .select('connection_id', { count: 'exact', head: true })
+      .eq('confirmation_status', 'confirmed');
+    if (scope.connections === 'own') connectionsQuery = connectionsQuery.eq('manager_id', me);
+
+    let payoutsQuery = admin
+      .from('employee_payouts')
+      .select('amount, operation_type')
+      .eq('accrual_month', currentMonth);
+    if (scope.payouts === 'own') payoutsQuery = payoutsQuery.or(`user_id.eq.${me},employee_id.eq.${me}`);
 
     const [leadsRes, sellersRes, connectionsRes, payoutsRes] = await Promise.all([
       leadsQuery,
-      admin.from('sellers').select('is_active, balance', { count: 'exact' }),
-      admin.from('connections').select('connection_id', { count: 'exact', head: true }),
-      admin.from('employee_payouts').select('amount').eq('accrual_month', currentMonth),
+      sellersQuery,
+      connectionsQuery,
+      payoutsQuery,
     ]);
+    if (leadsRes.error) throw leadsRes.error;
+    if (sellersRes.error) throw sellersRes.error;
+    if (connectionsRes.error) throw connectionsRes.error;
+    if (payoutsRes.error) throw payoutsRes.error;
 
     const leads = leadsRes.data || [];
     const totalLeads = leads.length;
     const openLeads = leads.filter((l) => l.status === 'Открыт').length;
     const signedLeads = leads.filter((l) => l.status === 'Подписан').length;
     const cancelledLeads = leads.filter((l) => l.status === 'Отмена').length;
-
     const conversionRate = totalLeads > 0 ? Math.round((signedLeads / totalLeads) * 1000) / 10 : 0;
 
     let activeSellers = 0;
     let totalBalance = 0;
-    if (sellersRes.data) {
-      for (const s of sellersRes.data) {
-        if (s.is_active) activeSellers++;
-        if (s.balance) totalBalance += Number(s.balance);
-      }
+    for (const s of sellersRes.data || []) {
+      if (s.is_active) activeSellers++;
+      if (s.balance) totalBalance += Number(s.balance);
     }
 
-    const totalConnections = connectionsRes.count || 0;
-    const monthPayouts = (payoutsRes.data || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    // Фонд выплат: начисления (положительные операции) за текущий месяц
+    const monthPayouts = (payoutsRes.data || []).reduce((acc, p) => {
+      const amount = Number(p.amount) || 0;
+      return amount > 0 ? acc + amount : acc;
+    }, 0);
 
     return apiSuccess({
       total_leads: totalLeads,
@@ -78,9 +79,11 @@ export async function GET(req: NextRequest) {
       cancelled_leads: cancelledLeads,
       conversion_rate: conversionRate,
       active_sellers: activeSellers,
-      total_sellers_balance: totalBalance,
-      total_connections: totalConnections,
-      month_payouts: monthPayouts,
+      total_sellers: (sellersRes.data || []).length,
+      total_sellers_balance: Math.round(totalBalance * 100) / 100,
+      total_connections: connectionsRes.count || 0,
+      month_payouts: Math.round(monthPayouts * 100) / 100,
+      scope,
     });
   } catch (err) {
     return handleApiError(err);

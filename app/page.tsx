@@ -50,6 +50,13 @@ export default function DashboardPage() {
     totalConnections: 0,
     monthPayouts: 0,
   });
+  // Область данных по модулям: «all» — все записи, «own» — только свои (по правам роли)
+  const [scope, setScope] = React.useState<{ leads: 'all' | 'own'; sellers: 'all' | 'own'; connections: 'all' | 'own'; payouts: 'all' | 'own' }>({
+    leads: 'own',
+    sellers: 'own',
+    connections: 'own',
+    payouts: 'own',
+  });
 
   const [recentLeads, setRecentLeads] = React.useState<
     { lead_id: string; client_name: string; phone: string; country_code?: string | null; status: string; created_at: string }[]
@@ -80,6 +87,7 @@ export default function DashboardPage() {
           totalConnections: kpiRes.total_connections,
           monthPayouts: Math.round(kpiRes.month_payouts),
         });
+        if (kpiRes.scope) setScope(kpiRes.scope);
 
         if (activityRes.recent_leads) {
           setRecentLeads(activityRes.recent_leads);
@@ -127,13 +135,15 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-between md:justify-end">
-            <Link
-              href="/leads"
-              className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-md transition-all active:scale-95"
-            >
-              <Plus className="w-4 h-4" strokeWidth={2.5} />
-              <span>Создать лид</span>
-            </Link>
+            {user.can('leads.create') && (
+              <Link
+                href="/leads?action=create"
+                className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-md transition-all active:scale-95"
+              >
+                <Plus className="w-4 h-4" strokeWidth={2.5} />
+                <span>Создать лид</span>
+              </Link>
+            )}
             <Link
               href="/profile"
               className="h-10 px-4 rounded-2xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 border border-zinc-200/50 dark:border-zinc-700/50"
@@ -151,7 +161,7 @@ export default function DashboardPage() {
             className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1 hover:border-zinc-300 dark:hover:border-zinc-700 transition-all cursor-pointer block"
           >
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-zinc-400 font-medium">Всего лидов в воронке</span>
+              <span className="text-[11px] text-zinc-400 font-medium">{scope.leads === 'all' ? 'Всего лидов в воронке' : 'Мои лиды в воронке'}</span>
               <div className="w-7 h-7 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                 <UserCheck className="w-4 h-4" strokeWidth={1.75} />
               </div>
@@ -170,7 +180,7 @@ export default function DashboardPage() {
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">
-                Продавцы Sotka
+                {scope.sellers === 'all' ? 'Активные продавцы Sotka' : 'Мои активные продавцы'}
               </span>
               <div className="w-7 h-7 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-400 flex items-center justify-center">
                 <Store className="w-4 h-4" strokeWidth={1.75} />
@@ -180,7 +190,7 @@ export default function DashboardPage() {
               {counts.totalSellers}
             </p>
             <span className="text-[11px] text-purple-600 dark:text-purple-400 block">
-              Синхронизировано из API
+              {scope.sellers === 'all' ? 'Синхронизировано из API' : 'Закреплены за вами'}
             </span>
           </Link>
 
@@ -190,7 +200,7 @@ export default function DashboardPage() {
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                Активные подключения
+                {scope.connections === 'all' ? 'Подтверждённые подключения' : 'Мои подключения'}
               </span>
               <div className="w-7 h-7 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
                 <Link2 className="w-4 h-4" strokeWidth={1.75} />
@@ -200,7 +210,7 @@ export default function DashboardPage() {
               {counts.totalConnections}
             </p>
             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 block">
-              {counts.signedLeads} подписанных лидов
+              {counts.signedLeads} {scope.leads === 'all' ? 'подписанных лидов' : 'моих подписанных лидов'}
             </span>
           </Link>
 
@@ -210,7 +220,7 @@ export default function DashboardPage() {
           >
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
-                Фонд выплат сотрудникам
+                {scope.payouts === 'all' ? 'Начисления сотрудникам за месяц' : 'Мои начисления за месяц'}
               </span>
               <div className="w-7 h-7 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                 <Banknote className="w-4 h-4" strokeWidth={1.75} />
@@ -220,7 +230,7 @@ export default function DashboardPage() {
               {counts.monthPayouts.toLocaleString('ru-RU')} сом
             </p>
             <span className="text-[11px] text-amber-600 dark:text-amber-400 block">
-              Начисления и авансы
+              {scope.payouts === 'all' ? 'По всем сотрудникам' : 'Бонусы и начисления по вашим операциям'}
             </span>
           </Link>
         </div>
@@ -253,7 +263,7 @@ export default function DashboardPage() {
               <ArrowRight className="w-4 h-4 text-zinc-400 group-hover:translate-x-0.5 transition-transform" />
             </Link>
 
-            {userRole !== 'smm' && (
+            {user.can('sellers.menu') && (
               <Link
                 href="/sellers"
                 className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all group flex items-start justify-between"
@@ -275,7 +285,7 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {userRole !== 'smm' && (
+            {user.can('connections.menu') && (
               <Link
                 href="/connections"
                 className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all group flex items-start justify-between"
@@ -297,7 +307,7 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {userRole !== 'smm' && (
+            {user.can('payouts.menu') && (
               <Link
                 href="/payouts"
                 className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all group flex items-start justify-between"
@@ -319,7 +329,7 @@ export default function DashboardPage() {
               </Link>
             )}
 
-            {userRole === 'admin' && (
+            {user.can('plans.menu') && (
               <Link
                 href="/plans"
                 className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all group flex items-start justify-between"

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
@@ -1060,26 +1061,28 @@ export default function ConnectionsPage() {
     >
       <div className="space-y-4">
         {/* ЯРУС 2: KPI карточки (Адаптивная сетка: 2x2 на мобильных, 4 в ряд на десктопе) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium truncate block">Всего подключений</span>
-            <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</p>
+        <CollapsibleStats storageKey="connections">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium truncate block">Всего подключений</span>
+              <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</p>
+            </div>
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">Новые за месяц</span>
+              <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
+            </div>
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block">В сопровождении</span>
+              <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
+            </div>
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block">Бонусы к начислению</span>
+              <p className="text-base sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
+                +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
+              </p>
+            </div>
           </div>
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">Новые за месяц</span>
-            <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
-          </div>
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block">В сопровождении</span>
-            <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
-          </div>
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block">Бонусы к начислению</span>
-            <p className="text-base sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
-              +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
-            </p>
-          </div>
-        </div>
+        </CollapsibleStats>
 
         {/* ЯРУС 3: Универсальный реестр DataJournal */}
         <DataJournal<ConnectionItem>

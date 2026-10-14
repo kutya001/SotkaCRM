@@ -25,7 +25,14 @@ import {
   Phone,
   GripVertical,
   SlidersHorizontal,
+  Inbox,
+  CheckCircle2,
+  UserCheck,
+  BadgeCheck,
+  XCircle,
+  Tags,
 } from 'lucide-react';
+import { Modal } from '@/components/ui/Modal';
 import { createPortal } from 'react-dom';
 import { useToast, type ToastType } from '@/components/ui/Toast';
 import { formatDate, formatDateTime, formatMonth } from '@/lib/utils/format';
@@ -58,6 +65,8 @@ export interface StatusOption {
   label: string;
   colorClass: string;
   dotColor?: string;
+  /** Значок статуса (бейджи, выпадающие списки, вкладки) */
+  icon?: React.ElementType;
 }
 
 export interface ColumnFilterOption {
@@ -173,30 +182,35 @@ export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
     label: 'Открыт',
     colorClass: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30',
     dotColor: 'bg-blue-500',
+    icon: Inbox,
   },
   {
     value: 'Обработан',
     label: 'Обработан',
     colorClass: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30',
     dotColor: 'bg-purple-500',
+    icon: CheckCircle2,
   },
   {
     value: 'Назначен',
     label: 'Назначен',
     colorClass: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
     dotColor: 'bg-amber-500',
+    icon: UserCheck,
   },
   {
     value: 'Подписан',
     label: 'Подписан',
     colorClass: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
     dotColor: 'bg-emerald-500',
+    icon: BadgeCheck,
   },
   {
     value: 'Отмена',
     label: 'Отмена',
     colorClass: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
     dotColor: 'bg-rose-500',
+    icon: XCircle,
   },
 ];
 
@@ -646,8 +660,9 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
             return (
               <td key={col.key} className={`px-4 py-3 ${stickyFirstColClass}`}>
                 <span
-                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass}`}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass}`}
                 >
+                  {currentOption.icon && <currentOption.icon className="w-3.5 h-3.5" strokeWidth={2} />}
                   {currentOption.label}
                 </span>
               </td>
@@ -689,11 +704,11 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
                   }}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${currentOption.colorClass} hover:opacity-90 transition-all`}
                 >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      currentOption.dotColor || 'bg-current'
-                    }`}
-                  />
+                  {currentOption.icon ? (
+                    <currentOption.icon className="w-3.5 h-3.5" strokeWidth={2} />
+                  ) : (
+                    <span className={`w-1.5 h-1.5 rounded-full ${currentOption.dotColor || 'bg-current'}`} />
+                  )}
                   <span>{currentOption.label}</span>
                   <ChevronDown className="w-3 h-3" strokeWidth={2} />
                 </button>
@@ -729,11 +744,11 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
                           }`}
                         >
                           <span className="flex items-center gap-2">
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                opt.dotColor || 'bg-zinc-400'
-                              }`}
-                            />
+                            {opt.icon ? (
+                              <opt.icon className="w-3.5 h-3.5" strokeWidth={2} />
+                            ) : (
+                              <span className={`w-2 h-2 rounded-full ${opt.dotColor || 'bg-zinc-400'}`} />
+                            )}
                             <span>{opt.label}</span>
                           </span>
                           {opt.value === val && (
@@ -970,8 +985,9 @@ const DataJournalCardInner = <T extends Record<string, any>>({
 
         {currentStatusOpt && (
           <span
-            className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 ${currentStatusOpt.colorClass}`}
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 ${currentStatusOpt.colorClass}`}
           >
+            {currentStatusOpt.icon && <currentStatusOpt.icon className="w-3.5 h-3.5" strokeWidth={2} />}
             {currentStatusOpt.label}
           </span>
         )}
@@ -1582,9 +1598,6 @@ export function DataJournal<T extends Record<string, any>>({
       if (filterPopoverRef.current && !filterPopoverRef.current.contains(target)) {
         setActiveFilterColumnKey(null);
       }
-      if (cardFiltersRef.current && !cardFiltersRef.current.contains(target)) {
-        setIsCardFiltersOpen(false);
-      }
       if (mobileGroupByRef.current && !mobileGroupByRef.current.contains(target)) {
         setIsMobileGroupByOpen(false);
       }
@@ -1594,7 +1607,6 @@ export function DataJournal<T extends Record<string, any>>({
       if (event.key === 'Escape') {
         setActiveDropdown(null);
         setActiveFilterColumnKey(null);
-        setIsCardFiltersOpen(false);
         setIsMobileGroupByOpen(false);
       }
     }
@@ -1925,8 +1937,44 @@ export function DataJournal<T extends Record<string, any>>({
   >(null);
   const statusDropdownRef = React.useRef<HTMLDivElement | null>(null);
 
+  // Вкладки: компактный режим (только значки) — общая настройка для всех модулей
+  const [tabsCompact, setTabsCompact] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      setTabsCompact(localStorage.getItem('datajournal_tabs_compact') === '1');
+    } catch {}
+  }, []);
+  const toggleTabsCompact = () => {
+    setTabsCompact((prev) => {
+      try {
+        localStorage.setItem('datajournal_tabs_compact', prev ? '0' : '1');
+      } catch {}
+      return !prev;
+    });
+  };
+
+  // Свайп влево/вправо по карточкам переключает вкладки (на сенсорных экранах)
+  const swipeRef = React.useRef<{ x: number; y: number; at: number } | null>(null);
+  const handleSwipeStart = (e: React.TouchEvent) => {
+    if (!tabs || tabs.length < 2 || viewMode !== 'cards') return;
+    const t = e.touches[0];
+    swipeRef.current = { x: t.clientX, y: t.clientY, at: Date.now() };
+  };
+  const handleSwipeEnd = (e: React.TouchEvent) => {
+    const start = swipeRef.current;
+    swipeRef.current = null;
+    if (!start || !tabs || tabs.length < 2 || !onTabChange) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < 70 || Math.abs(dy) > 50 || Date.now() - start.at > 700) return;
+    const idx = Math.max(0, tabs.findIndex((tab) => tab.id === (activeTab ?? 'all')));
+    const next = dx < 0 ? Math.min(tabs.length - 1, idx + 1) : Math.max(0, idx - 1);
+    if (next !== idx) onTabChange(tabs[next].id);
+  };
+
   return (
-    <div className="w-full space-y-4">
+    <div className="w-full space-y-4" onTouchStart={handleSwipeStart} onTouchEnd={handleSwipeEnd}>
       <React.Suspense fallback={null}>
         <UrlSearchParamsSync onQuery={handleUrlQueryChange} />
       </React.Suspense>
@@ -2114,31 +2162,44 @@ export function DataJournal<T extends Record<string, any>>({
                 <ChevronDown className="w-3.5 h-3.5 text-zinc-400 hidden md:inline" strokeWidth={1.75} />
               </button>
 
-              {/* Выпадающее меню фильтров карточного режима */}
-              {isCardFiltersOpen && (
-                <div
-                  ref={cardFiltersRef}
-                  className="absolute left-0 top-13 z-50 w-72 sm:w-80 p-3.5 rounded-2xl backdrop-blur-2xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 shadow-2xl space-y-3 animate-in fade-in zoom-in-95 duration-150"
-                >
-                  <div className="flex items-center justify-between pb-2 border-b border-zinc-200/60 dark:border-zinc-800/60">
-                    <div className="flex items-center gap-2">
-                      <Filter className="w-4 h-4 text-blue-500" strokeWidth={2} />
-                      <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                        Фильтры реестра
-                      </span>
-                    </div>
+              {/* Окно фильтров карточного режима: любое поле записи */}
+              <Modal
+                open={isCardFiltersOpen}
+                onClose={() => setIsCardFiltersOpen(false)}
+                title="Фильтры реестра"
+                subtitle={totalActiveFilterCount > 0 ? `Активных фильтров: ${totalActiveFilterCount}` : 'Отбор по любому полю карточки'}
+                icon={Filter}
+                tone="info"
+                size="md"
+                footerClassName="justify-between"
+                footer={
+                  <>
+                    <button
+                      type="button"
+                      disabled={totalActiveFilterCount === 0}
+                      onClick={resetAllFilters}
+                      className="text-xs text-rose-600 dark:text-rose-400 hover:text-rose-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-medium"
+                    >
+                      <RotateCcw className="w-3 h-3" strokeWidth={2} />
+                      <span>Сбросить все</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => setIsCardFiltersOpen(false)}
-                      className="w-6 h-6 rounded-md flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                      className="h-9 px-4 rounded-xl bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 text-xs font-semibold"
                     >
-                      <X className="w-3.5 h-3.5" strokeWidth={2} />
+                      Применить
                     </button>
-                  </div>
-
-                  <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  </>
+                }
+              >
+                <div ref={cardFiltersRef} className="space-y-2">
                     {initialColumns
-                      .filter((col) => col.filterable !== false)
+                      .filter(
+                        (col) =>
+                          col.key !== 'actions' &&
+                          (col.filterable !== false || data.some((d) => d[col.key] !== undefined && d[col.key] !== null))
+                      )
                       .map((col) => {
                         const f = columnFilters[col.key] || {};
                         const isColFiltered = isColumnFilterActive(f);
@@ -2324,28 +2385,8 @@ export function DataJournal<T extends Record<string, any>>({
                           </div>
                         );
                       })}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60">
-                    <button
-                      type="button"
-                      disabled={totalActiveFilterCount === 0}
-                      onClick={resetAllFilters}
-                      className="text-xs text-rose-600 dark:text-rose-400 hover:text-rose-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-medium"
-                    >
-                      <RotateCcw className="w-3 h-3" strokeWidth={2} />
-                      <span>Сбросить все</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsCardFiltersOpen(false)}
-                      className="h-7 px-3 rounded-lg bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 text-xs font-semibold"
-                    >
-                      Применить
-                    </button>
-                  </div>
                 </div>
-              )}
+              </Modal>
             </div>
 
             {/* [ Поиск ]: только если поиск не вынесен в шапку приложения (на экранах < md — MobileHeader) */}
@@ -2558,23 +2599,44 @@ export function DataJournal<T extends Record<string, any>>({
       {/* Горизонтальные вкладки статусов/категорий */}
       {tabs && tabs.length > 0 && (
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 w-full shrink-0 whitespace-nowrap">
+          <button
+            type="button"
+            onClick={toggleTabsCompact}
+            className={`h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 border transition-all island-interactive ${
+              tabsCompact
+                ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400'
+                : 'bg-white/75 dark:bg-zinc-900/75 border-white/20 dark:border-zinc-800/40 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100'
+            }`}
+            title={tabsCompact ? 'Показать названия вкладок' : 'Скрыть названия вкладок (только значки)'}
+            aria-label={tabsCompact ? 'Показать названия вкладок' : 'Скрыть названия вкладок'}
+            aria-pressed={tabsCompact}
+          >
+            <Tags className="w-4 h-4" strokeWidth={1.75} />
+          </button>
           {tabs.map((tab) => {
             const isActive = (activeTab ?? 'all') === tab.id;
+            const TabIcon = tab.icon;
             return (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => onTabChange && onTabChange(tab.id)}
-                className={`h-9 px-3.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all flex-shrink-0 island-interactive ${
+                title={tab.label}
+                aria-label={tab.label}
+                className={`h-9 ${tabsCompact ? 'px-2.5' : 'px-3.5'} rounded-xl text-xs font-semibold flex items-center gap-2 transition-all flex-shrink-0 island-interactive ${
                   isActive
                     ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-sm'
                     : 'bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-white dark:hover:bg-zinc-800'
                 }`}
               >
-                {tab.icon && (
-                  <tab.icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
-                )}
-                <span>{tab.label}</span>
+                {TabIcon ? (
+                  <TabIcon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />
+                ) : tabsCompact ? (
+                  <span className="w-4 h-4 rounded-md bg-current/15 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                    {tab.label.trim().charAt(0).toUpperCase()}
+                  </span>
+                ) : null}
+                {!tabsCompact && <span>{tab.label}</span>}
                 {tab.count !== undefined && (
                   <span
                     className={`min-w-[18px] h-4.5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
@@ -2887,8 +2949,9 @@ export function DataJournal<T extends Record<string, any>>({
                   <div className="flex items-center gap-2 px-1">
                     {group.statusOpt ? (
                       <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${group.statusOpt.colorClass}`}
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${group.statusOpt.colorClass}`}
                       >
+                        {group.statusOpt.icon && <group.statusOpt.icon className="w-3.5 h-3.5" strokeWidth={2} />}
                         {group.statusOpt.label}
                       </span>
                     ) : (

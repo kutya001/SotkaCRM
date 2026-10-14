@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef, type DataJournalTab, type StatusOption } from '@/components/ui/DataJournal';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
@@ -401,58 +402,60 @@ export default function TelegramPage() {
         />
 
         {/* Состояние бота и очереди */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1 col-span-2 lg:col-span-1">
-            <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1.5">
-              <Bot className="w-3.5 h-3.5" /> Бот
-            </span>
-            {overview?.configured ? (
-              <>
-                <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
-                  {overview.bot ? `@${overview.bot.username}` : 'Токен задан, Bot API недоступен'}
+        <CollapsibleStats storageKey="telegram">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1 col-span-2 lg:col-span-1">
+              <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5" /> Бот
+              </span>
+              {overview?.configured ? (
+                <>
+                  <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
+                    {overview.bot ? `@${overview.bot.username}` : 'Токен задан, Bot API недоступен'}
+                  </p>
+                  <p className={`text-[11px] flex items-center gap-1 ${webhookOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                    <Webhook className="w-3 h-3" />
+                    {webhookOk
+                      ? 'Вебхук работает'
+                      : !webhook?.secret_configured
+                      ? 'Не задан TELEGRAM_WEBHOOK_SECRET'
+                      : !webhook?.url
+                      ? 'Вебхук не зарегистрирован — зарегистрируется при первой привязке'
+                      : webhook.last_error || 'Проверьте вебхук'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Не задан TELEGRAM_BOT_TOKEN
                 </p>
-                <p className={`text-[11px] flex items-center gap-1 ${webhookOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                  <Webhook className="w-3 h-3" />
-                  {webhookOk
-                    ? 'Вебхук работает'
-                    : !webhook?.secret_configured
-                    ? 'Не задан TELEGRAM_WEBHOOK_SECRET'
-                    : !webhook?.url
-                    ? 'Вебхук не зарегистрирован — зарегистрируется при первой привязке'
-                    : webhook.last_error || 'Проверьте вебхук'}
-                </p>
-              </>
-            ) : (
-              <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5" /> Не задан TELEGRAM_BOT_TOKEN
+              )}
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-sky-500/10 dark:bg-sky-500/5 border border-sky-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-sky-600 dark:text-sky-400 font-semibold flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" /> Подключили
+              </span>
+              <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 font-mono">
+                {overview?.linked_total ?? '—'}
+                <span className="text-xs text-sky-600/70 dark:text-sky-400/70 font-medium"> / {overview?.employees.filter((e) => e.is_active).length ?? '—'}</span>
               </p>
-            )}
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Отправлено</span>
+              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{overview?.outbox.sent ?? '—'}</p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">В очереди</span>
+              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{overview?.outbox.pending ?? '—'}</p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Ошибки / пропущено</span>
+              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
+                {overview ? overview.outbox.failed : '—'}
+                <span className="text-xs text-rose-600/70 dark:text-rose-400/70 font-medium"> / {overview?.outbox.skipped ?? '—'}</span>
+              </p>
+            </div>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-sky-500/10 dark:bg-sky-500/5 border border-sky-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-sky-600 dark:text-sky-400 font-semibold flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" /> Подключили
-            </span>
-            <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 font-mono">
-              {overview?.linked_total ?? '—'}
-              <span className="text-xs text-sky-600/70 dark:text-sky-400/70 font-medium"> / {overview?.employees.filter((e) => e.is_active).length ?? '—'}</span>
-            </p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Отправлено</span>
-            <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{overview?.outbox.sent ?? '—'}</p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">В очереди</span>
-            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{overview?.outbox.pending ?? '—'}</p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Ошибки / пропущено</span>
-            <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
-              {overview ? overview.outbox.failed : '—'}
-              <span className="text-xs text-rose-600/70 dark:text-rose-400/70 font-medium"> / {overview?.outbox.skipped ?? '—'}</span>
-            </p>
-          </div>
-        </div>
+        </CollapsibleStats>
 
         {/* Подключения сотрудников */}
         <div className="rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm overflow-hidden">

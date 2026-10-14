@@ -3,8 +3,13 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } from '@/components/ui/DataJournal';
+import {
+  DataJournal,
+  JournalMenuItem,
+  type ColumnDef,
+  type StatusOption,
+  type DataJournalTab,
+} from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
@@ -12,7 +17,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { FormField, Input, Select, Textarea } from '@/components/ui/Field';
 import { formatDateTime, formatMonth, currentMonthISO } from '@/lib/utils/format';
-import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
+import { formatPhoneDisplay, telHref } from '@/lib/utils/phone';
 import { api } from '@/lib/api/client';
 import {
   getConnectionsStats,
@@ -31,7 +36,6 @@ import { ConnectionAccrualsSection } from '@/components/connections/ConnectionAc
 import {
   Link2,
   Phone,
-  MessageCircle,
   Calendar,
   ShieldAlert,
   RotateCcw,
@@ -687,33 +691,12 @@ export default function ConnectionsPage() {
         filterable: true,
         type: 'phone',
         phoneAccessor: (row) => formatPhoneDisplay(row.seller_phone),
-        renderCell: (row) => {
-          return (
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
-                {formatPhoneDisplay(row.seller_phone)}
-              </span>
-              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                <a
-                  href={waHref(row.seller_phone)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Написать в WhatsApp"
-                  className="w-6 h-6 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center transition-colors"
-                >
-                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-                </a>
-                <a
-                  href={telHref(row.seller_phone)}
-                  title="Позвонить"
-                  className="w-6 h-6 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 flex items-center justify-center transition-colors"
-                >
-                  <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
-                </a>
-              </div>
-            </div>
-          );
-        },
+        // Звонок / WhatsApp — в контекстном меню строки (ПКМ / «⋯»), ячейка — только значение
+        renderCell: (row) => (
+          <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">
+            {formatPhoneDisplay(row.seller_phone)}
+          </span>
+        ),
       },
       {
         key: 'manager_user',
@@ -995,20 +978,9 @@ export default function ConnectionsPage() {
     </div>
   );
 
-  // Контекстные действия тулбара реестра подключений (ЯРУС 3)
+  // Контекстные действия тулбара реестра подключений (ЯРУС 3); «Обновить» — стандартная кнопка DataJournal
   const connectionActions = (
     <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
-      <button
-        type="button"
-        onClick={() => fetchData()}
-        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
-        title="Обновить реестр"
-        aria-label="Обновить реестр"
-      >
-        <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-        <span className="hidden md:inline">Обновить</span>
-      </button>
-
       {canAccrue && (
         <button
           type="button"
@@ -1024,65 +996,72 @@ export default function ConnectionsPage() {
     </div>
   );
 
-  // Быстрые действия строки/карточки: компактные значки, каждое действие подтверждается диалогом
+  // Действия строки: только в контекстном меню DataJournal (ПКМ / «⋯» / карточка); подтверждение и отклонение — через диалоги
   const renderCustomRowActions = React.useCallback(
     (row: ConnectionItem) => {
-      if (!canConfirm && !canDelete) return null;
       const isPending = row.confirmation_status === 'pending' && canConfirm;
-      if (!isPending && !canDelete) return null;
-      const iconBtn =
-        'p-2 rounded-xl border transition-all active:scale-95 flex items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-wait';
+      const hasPhone = row.seller_phone.replace(/\D/g, '').length > 0;
       return (
-        <div className="flex items-center gap-1.5">
+        <>
           {isPending && (
             <>
-              <button
-                type="button"
+              <JournalMenuItem
+                icon={ShieldCheck}
+                label="Подтвердить подключение"
+                tone="success"
                 disabled={confirmingId === row.connection_id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleConfirmConnection(row);
-                }}
-                className={`${iconBtn} bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/20`}
-                title="Подтвердить подключение"
-                aria-label="Подтвердить подключение"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" strokeWidth={2} />
-                <span className="hidden xl:inline text-[11px] font-semibold">Подтвердить</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRejectDialog({ connection: row, reason: '' });
-                }}
-                className={`${iconBtn} bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/20`}
-                title="Отклонить подключение"
-                aria-label="Отклонить подключение"
-              >
-                <XCircle className="w-3.5 h-3.5" strokeWidth={2} />
-                <span className="hidden xl:inline text-[11px] font-semibold">Отклонить</span>
-              </button>
+                title="Подтвердить подключение (консультанту начислится бонус)"
+                onClick={() => handleConfirmConnection(row)}
+              />
+              <JournalMenuItem
+                icon={XCircle}
+                label="Отклонить…"
+                tone="warning"
+                title="Отклонить подключение с указанием причины"
+                onClick={() => setRejectDialog({ connection: row, reason: '' })}
+              />
             </>
           )}
-          {canDelete && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setConnectionToDelete(row);
-              }}
-              className={`${iconBtn} bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/20`}
-              title="Удалить подключение"
-              aria-label="Удалить подключение"
-            >
-              <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
-            </button>
+          {hasPhone && (
+            <JournalMenuItem icon={Phone} label="Позвонить" href={telHref(row.seller_phone)} title="Позвонить продавцу" />
           )}
-        </div>
+          {canDelete && (
+            <JournalMenuItem
+              icon={Trash2}
+              label="Удалить подключение"
+              tone="danger"
+              title="Удалить подключение и его начисления"
+              onClick={() => setConnectionToDelete(row)}
+            />
+          )}
+        </>
       );
     },
     [canConfirm, canDelete, confirmingId, handleConfirmConnection]
+  );
+
+  // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
+  const connectionsStats = (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+      <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+        <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium truncate block">Всего подключений</span>
+        <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</p>
+      </div>
+      <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+        <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">Новые за месяц</span>
+        <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
+      </div>
+      <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+        <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block">В сопровождении</span>
+        <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
+      </div>
+      <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+        <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block">Бонусы к начислению</span>
+        <p className="text-base sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
+          +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
+        </p>
+      </div>
+    </div>
   );
 
   return (
@@ -1097,31 +1076,7 @@ export default function ConnectionsPage() {
       filterContent={filterContent}
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: KPI карточки (Адаптивная сетка: 2x2 на мобильных, 4 в ряд на десктопе) */}
-        <CollapsibleStats storageKey="connections">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium truncate block">Всего подключений</span>
-              <p className="text-base sm:text-xl font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</p>
-            </div>
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">Новые за месяц</span>
-              <p className="text-base sm:text-xl font-bold font-mono text-blue-700 dark:text-blue-300">{stats.newThisMonth}</p>
-            </div>
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-purple-600 dark:text-purple-400 font-semibold truncate block">В сопровождении</span>
-              <p className="text-base sm:text-xl font-bold font-mono text-purple-700 dark:text-purple-300">{stats.inMaintenance}</p>
-            </div>
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold truncate block">Бонусы к начислению</span>
-              <p className="text-base sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 font-mono truncate">
-                +{stats.totalBonusAmount.toLocaleString('ru-RU')} сом
-              </p>
-            </div>
-          </div>
-        </CollapsibleStats>
-
-        {/* ЯРУС 3: Универсальный реестр DataJournal */}
+        {/* ЯРУС 2–3: KPI карточки (внутри DataJournal, сворачиваются кнопкой тулбара) + универсальный реестр */}
         <DataJournal<ConnectionItem>
           data={visibleConnections}
           columns={columns}
@@ -1134,6 +1089,9 @@ export default function ConnectionsPage() {
           tabs={confirmationTabs}
           activeTab={confirmationTab}
           onTabChange={handleConfirmationTabChange}
+          stats={connectionsStats}
+          onRefresh={() => fetchData()}
+          refreshing={isLoading}
           customActions={connectionActions}
           customRowActions={renderCustomRowActions}
           enableSelection={canBulk}
@@ -1154,8 +1112,10 @@ export default function ConnectionsPage() {
 
               <button
                 type="button"
+                disabled={isBatchLoading}
                 onClick={() => setBulkMaintenanceModal({ isOpen: true, months: 2 })}
-                className="h-8 px-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-semibold border border-purple-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="h-8 px-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-semibold border border-purple-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Изменить срок сопровождения выбранных"
               >
                 <Clock className="w-3.5 h-3.5" />
                 <span>Срок сопр. ({ids.length})</span>
@@ -1163,6 +1123,7 @@ export default function ConnectionsPage() {
 
               <button
                 type="button"
+                disabled={isBatchLoading}
                 onClick={() =>
                   setBulkAccrueModal({
                     isOpen: true,
@@ -1170,7 +1131,8 @@ export default function ConnectionsPage() {
                     month: currentMonthISO(),
                   })
                 }
-                className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Начислить бонусы выбранным"
               >
                 <Coins className="w-3.5 h-3.5" />
                 <span>Начислить ({ids.length})</span>

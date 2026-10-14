@@ -3,7 +3,13 @@
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataJournal, type ColumnDef, type DataJournalTab, PIPELINE_STATUS_OPTIONS } from '@/components/ui/DataJournal';
+import {
+  DataJournal,
+  JournalMenuItem,
+  type ColumnDef,
+  type DataJournalTab,
+  PIPELINE_STATUS_OPTIONS,
+} from '@/components/ui/DataJournal';
 import dynamic from 'next/dynamic';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
@@ -37,14 +43,9 @@ import {
 } from './actions';
 import {
   BookOpen,
-  Plus,
-  Phone,
-  MessageCircle,
   Ban,
   UserCheck,
   Instagram,
-  Sparkles,
-  Layers,
   RotateCcw,
   Link2,
   Store,
@@ -193,12 +194,13 @@ function LeadsContent() {
     }
   };
 
-  // Загрузка начальных данных и профиля
-  const fetchInitialData = React.useCallback(async () => {
+  // Загрузка начальных данных и профиля (bypassCache — принудительное обновление из тулбара)
+  const fetchInitialData = React.useCallback(async (opts?: { bypassCache?: boolean }) => {
+    const bypassCache = Boolean(opts?.bypassCache);
     setIsLoading(true);
     try {
       const [leadsRes, statsRes, consultantsRes] = await Promise.all([
-        api.leads.getAll({ page: 1, limit: 100 }),
+        api.leads.getAll({ page: 1, limit: 100, bypassCache }),
         getLeadsStats(),
         getConsultantsList(),
       ]);
@@ -207,7 +209,7 @@ function LeadsContent() {
       const items = [...(leadsRes.items || [])];
       const total = leadsRes.total || items.length;
       for (let page = 2; items.length < total && page <= 50; page++) {
-        const next = await api.leads.getAll({ page, limit: 100 });
+        const next = await api.leads.getAll({ page, limit: 100, bypassCache });
         if (!next.items || next.items.length === 0) break;
         items.push(...next.items);
       }
@@ -238,6 +240,9 @@ function LeadsContent() {
   React.useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
+
+  // Стандартная кнопка «Обновить список» тулбара DataJournal
+  const handleRefresh = React.useCallback(() => fetchInitialData({ bypassCache: true }), [fetchInitialData]);
 
   // Автоматический расчет ответственного консультанта по умолчанию
   const defaultConsultantId = React.useMemo(() => {
@@ -892,64 +897,47 @@ function LeadsContent() {
     </div>
   );
 
-  // Быстрые действия в строках таблицы и карточках DataJournal
+  // Действия строки: только в контекстном меню DataJournal (ПКМ / «⋯» / карточка)
   const renderCustomRowActions = React.useCallback(
     (row: LeadItem) => {
-      const actions: React.ReactNode[] = [];
+      const canLinkRow = canLinkSeller && !row.seller_phone && row.status !== 'Отмена';
+      const isLinked = Boolean(row.seller_phone);
 
-      if (canLinkSeller) {
-        if (!row.seller_phone && row.status !== 'Отмена') {
-          actions.push(
-            <button
-              key="link"
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleLinkSeller(row);
-              }}
-              className="p-1.5 rounded-lg text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 bg-purple-500/10 border border-purple-500/20 transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
+      if (!canLinkRow && !isLinked && !canDeleteLeads) return null;
+
+      return (
+        <>
+          {canLinkRow && (
+            <JournalMenuItem
+              icon={Link2}
+              label="Связать с продавцом"
+              tone="purple"
               title="Быстро связать с продавцом платформы"
-            >
-              <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
-              <span className="hidden xl:inline text-[11px] font-semibold">Связать</span>
-            </button>
-          );
-        } else if (row.seller_phone) {
-          actions.push(
-            <span
-              key="linked"
-              className="p-1.5 rounded-lg text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-mono flex items-center gap-1"
+              onClick={() => handleLinkSeller(row)}
+            />
+          )}
+          {isLinked && (
+            <JournalMenuItem
+              icon={Store}
+              label={`К продавцу ${formatPhoneDisplay(row.seller_phone)}`}
+              tone="success"
               title={`Привязан к продавцу ${formatPhoneDisplay(row.seller_phone)}`}
-            >
-              <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
-              <span className="hidden xl:inline font-semibold">Связан</span>
-            </span>
-          );
-        }
-      }
-
-      if (canDeleteLeads) {
-        actions.push(
-          <button
-            key="delete"
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setLeadToDelete(row);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
-            title="Удалить навсегда"
-          >
-            <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
-            <span>Удалить навсегда</span>
-          </button>
-        );
-      }
-
-      if (actions.length === 0) return null;
-      return <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">{actions}</div>;
+              onClick={() => router.push(`/sellers?search=${encodeURIComponent(row.seller_phone || '')}`)}
+            />
+          )}
+          {canDeleteLeads && (
+            <JournalMenuItem
+              icon={Trash2}
+              label="Удалить навсегда"
+              tone="danger"
+              title="Удалить лид навсегда"
+              onClick={() => setLeadToDelete(row)}
+            />
+          )}
+        </>
+      );
     },
-    [canLinkSeller, canDeleteLeads, handleLinkSeller]
+    [canLinkSeller, canDeleteLeads, handleLinkSeller, router]
   );
 
   const isAnyModalOpen =
@@ -1050,14 +1038,18 @@ function LeadsContent() {
                 type="button"
                 disabled={isBatchLoading}
                 onClick={() => handleBatchDelete(clearSelection)}
-                className="h-8 px-2.5 rounded-xl bg-rose-500/30 hover:bg-rose-500/40 text-rose-300 text-xs font-semibold border border-rose-500/40 transition-colors flex items-center gap-1"
+                className="h-8 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 title="Удалить выбранные лиды навсегда"
               >
                 <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                <span>Удалить</span>
+                <span>Удалить ({ids.length})</span>
               </button>
             </div>
           )}
+          onCreateClick={canCreateLeads ? handleCreateClick : undefined}
+          createTooltip="Добавить лид"
+          onRefresh={handleRefresh}
+          refreshing={isLoading}
           customActions={leadActions}
           customRowActions={renderCustomRowActions}
           onRowClick={handleRowClick}

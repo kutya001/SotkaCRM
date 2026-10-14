@@ -3,14 +3,19 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } from '@/components/ui/DataJournal';
+import {
+  DataJournal,
+  JournalMenuItem,
+  type ColumnDef,
+  type StatusOption,
+  type DataJournalTab,
+} from '@/components/ui/DataJournal';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
 import { Button } from '@/components/ui/Button';
-import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
+import { formatPhoneDisplay } from '@/lib/utils/phone';
 import { formatDateTime } from '@/lib/utils/format';
 import { api } from '@/lib/api/client';
 import {
@@ -22,19 +27,15 @@ import {
 } from './actions';
 import {
   Store,
-  Phone,
-  MessageCircle,
   UserCheck,
   ShieldAlert,
   Wallet,
   CheckCircle2,
-  Clock,
   Building2,
-  Users2,
   RefreshCw,
   Loader2,
   RotateCcw,
-  Plus,
+  Link2,
   Trash2,
   Users,
   UserMinus,
@@ -246,8 +247,9 @@ export default function SellersPage() {
 
   // Загрузка данных: весь доступный реестр постранично за один раз.
   // Вкладки и фильтры (консультант, активность, поиск) работают на клиенте без повторных запросов.
+  // bypassCache — принудительное обновление из тулбара (мимо SWR-кэша клиента API)
   const fetchSellersData = React.useCallback(
-    async (_page = 1, _search = '', silent = false) => {
+    async (_page = 1, _search = '', silent = false, bypassCache = false) => {
       if (!silent) {
         setIsLoading(true);
       }
@@ -259,10 +261,11 @@ export default function SellersPage() {
           moderation: 'all',
           isActive: 'all',
           managerId: 'all',
+          bypassCache,
         });
         const [sellersRes, leadsCheckRes, statsRes, managersRes] = await Promise.all([
           firstPage,
-          api.sellers.checkAvailableLeads().catch(() => ({ has_available_leads: false, available_count: 0 })),
+          api.sellers.checkAvailableLeads({ bypassCache }).catch(() => ({ has_available_leads: false, available_count: 0 })),
           getSellersStats(),
           getManagersList(),
         ]);
@@ -270,7 +273,7 @@ export default function SellersPage() {
         const items: SellerItem[] = [...(sellersRes.items || [])];
         const total = sellersRes.total || items.length;
         for (let page = 2; items.length < total && page <= 50; page++) {
-          const next = await api.sellers.getAll({ page, pageSize: PAGE_SIZE, moderation: 'all', isActive: 'all', managerId: 'all' });
+          const next = await api.sellers.getAll({ page, pageSize: PAGE_SIZE, moderation: 'all', isActive: 'all', managerId: 'all', bypassCache });
           if (!next.items || next.items.length === 0) break;
           items.push(...next.items);
         }
@@ -360,6 +363,19 @@ export default function SellersPage() {
       if (saved) setLastSyncedAt(saved);
     } catch {}
   }, []);
+
+  // Стандартная кнопка «Обновить список» тулбара DataJournal: тихое обновление (реестр не размонтируется)
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const handleRefresh = React.useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await fetchSellersData(1, '', true, true);
+      if (user.can('sellers.transactions')) await refreshHqTotals(true);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, fetchSellersData, user, refreshHqTotals]);
 
   const handleSyncApi = React.useCallback(async () => {
     if (isSyncing) return;
@@ -569,24 +585,38 @@ export default function SellersPage() {
     [canTakeSeller, confirm, sellers, managers, currentUserId, user.userName, user.userLogin, showToast, fetchSellersData, searchQuery]
   );
 
-  /** Консультант продавца в ячейке/карточке для не-администратора: бейдж, статус подтверждения, «Взять себе» */
+  /**
+   * Консультант продавца для не-администратора: бейдж и статус подтверждения.
+   * В ячейке реестра — только отображение («Взять себе» — в контекстном меню строки);
+   * кнопка «Взять себе» остается только в карточке продавца (allowTake).
+   */
   const renderCuratorReadOnly = React.useCallback(
-    (seller: SellerItem, size: 'xs' | 'sm' = 'sm') => {
+    (seller: SellerItem, size: 'xs' | 'sm' = 'sm', allowTake = false) => {
       if (canTakeSeller(seller)) {
+        if (allowTake) {
+          return (
+            <Button
+              variant="info"
+              size="xs"
+              loading={takingPhone === seller.seller_phone}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleTakeSelf(seller);
+              }}
+              leftIcon={<UserPlus className="w-3 h-3" strokeWidth={2} />}
+              title="Стать консультантом этого продавца (подтверждает администратор)"
+            >
+              Взять себе
+            </Button>
+          );
+        }
         return (
-          <Button
-            variant="info"
-            size="xs"
-            loading={takingPhone === seller.seller_phone}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleTakeSelf(seller);
-            }}
-            leftIcon={<UserPlus className="w-3 h-3" strokeWidth={2} />}
-            title="Стать консультантом этого продавца (подтверждает администратор)"
+          <span
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-md"
+            title="Свободный продавец: «Взять себе» — в меню строки (ПКМ / «⋯»)"
           >
-            Взять себе
-          </Button>
+            {takingPhone === seller.seller_phone ? 'Закрепляем…' : 'Свободен'}
+          </span>
         );
       }
       if (!seller.manager_user) {
@@ -615,6 +645,8 @@ export default function SellersPage() {
         minWidth: 180,
         sortable: true,
         filterable: true,
+        cardTitle: true,
+        textValue: (row: SellerItem) => row.seller_name || row.store || 'Без имени',
         renderCell: (row: SellerItem) => (
           <div className="flex items-center gap-2.5">
             <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-medium text-xs flex-shrink-0 ${
@@ -903,20 +935,15 @@ export default function SellersPage() {
             );
           }
 
+          // Привязка лида — в контекстном меню строки (ПКМ / «⋯»); ячейка — только отображение
           if (!row.manager_id && hasAvailableLeads && canLinkLead) {
             return (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLinkLeadModal({ isOpen: true, seller: row });
-                }}
-                className="h-7 px-2 text-[11px] font-semibold rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 transition-all flex items-center gap-1"
-                title="Привязать свободный лид"
+              <span
+                className="text-[11px] text-blue-600 dark:text-blue-400 italic"
+                title="Привязать свободный лид можно из меню строки (ПКМ / «⋯»)"
               >
-                <Plus className="w-3 h-3" />
-                <span>Связать с лидом</span>
-              </button>
+                Можно связать с лидом
+              </span>
             );
           }
 
@@ -1113,7 +1140,7 @@ export default function SellersPage() {
             </div>
           );
         }
-        return renderCuratorReadOnly(data, 'sm');
+        return renderCuratorReadOnly(data, 'sm', true);
       },
     },
   ];
@@ -1188,7 +1215,7 @@ export default function SellersPage() {
     </div>
   );
 
-  // Контекстные действия тулбара реестра продавцов (ЯРУС 3)
+  // Контекстные действия тулбара реестра продавцов (ЯРУС 3); «Обновить» — стандартная кнопка DataJournal
   const sellerActions = (
     <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
       {canSync && (
@@ -1208,19 +1235,6 @@ export default function SellersPage() {
           <span className="hidden md:inline">{isSyncing ? 'Синхронизация...' : 'Синхронизация API'}</span>
         </button>
       )}
-    <button
-      type="button"
-      onClick={() => {
-        void fetchSellersData(1, '', true);
-        if (user.can('sellers.transactions')) void refreshHqTotals(true);
-      }}
-      className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
-      title="Обновить базу продавцов"
-      aria-label="Обновить базу продавцов"
-    >
-      <RotateCcw className="w-4 h-4 text-blue-500 flex-shrink-0" strokeWidth={1.75} />
-      <span className="hidden md:inline">Обновить</span>
-    </button>
       <button
         type="button"
         onClick={() => setShowOthers((v) => !v)}
@@ -1246,243 +1260,117 @@ export default function SellersPage() {
     </div>
   );
 
-  // Кастомный рендеринг карточки продавца для мобильных устройств (Card View)
-  const renderSellerCard = (seller: SellerItem) => {
-    const bal = Number(seller.balance) || 0;
-    const cleanPhone = seller.seller_phone.replace(/\D/g, '');
-    const modOpt = SELLER_MODERATION_OPTIONS.find((o) => o.value === seller.moderation) || {
-      value: seller.moderation,
-      label: seller.moderation,
-      colorClass: 'bg-zinc-500/15 text-zinc-600 border-zinc-500/30',
-      dotColor: 'bg-zinc-500',
-    };
-
-    return (
-      <div
-        key={seller.seller_phone}
-        onClick={() =>
-          setModalState({
-            isOpen: true,
-            mode: 'view',
-            selectedSeller: seller,
-          })
-        }
-        className="rounded-2xl sm:rounded-3xl island-glass border border-white/20 dark:border-zinc-800/40 p-3.5 sm:p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all shadow-sm"
-      >
-        {/* Верхняя строка: Магазин, имя продавца и бейджи статуса */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
-                <Store className="w-3.5 h-3.5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 truncate">
-                  <h4 className="text-xs sm:text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
-                    {seller.seller_name || 'Без имени'}
-                  </h4>
-                  {seller.is_deleted_from_source && (
-                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex-shrink-0">
-                      Удален в HQ
-                    </span>
-                  )}
-                </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  {seller.store || 'Без названия'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-1 flex-shrink-0">
-            <span
-              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1 ${modOpt.colorClass}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${modOpt.dotColor || 'bg-current'}`} />
-              <span>{modOpt.label}</span>
-            </span>
-            <span
-              className={`text-[10px] font-medium flex items-center gap-1 ${
-                seller.is_active ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400'
-              }`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  seller.is_active ? 'bg-emerald-500' : 'bg-zinc-400'
-                }`}
-              />
-              <span>{seller.is_active ? 'Активен' : 'Неактивен'}</span>
-            </span>
-          </div>
-        </div>
-
-        {/* Телефон и быстрые кнопки связи */}
-        <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
-          <div className="font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-            {formatPhone(seller.seller_phone)}
-          </div>
-          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-            {cleanPhone && (
-              <>
-                <a
-                  href={telHref(seller.seller_phone)}
-                  className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 transition-colors"
-                  title="Позвонить"
-                >
-                  <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
-                </a>
-                <a
-                  href={waHref(seller.seller_phone)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-colors"
-                  title="WhatsApp"
-                >
-                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-                </a>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Характеристики: Баланс, Тариф, Точки/Сотрудники */}
-        <div className="grid grid-cols-3 gap-2 py-1.5 px-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/50 dark:border-zinc-700/50 text-center">
-          <div>
-            <span className="text-[10px] text-zinc-400 block">Баланс</span>
-            <span
-              className={`text-xs font-bold font-mono ${
-                bal > 0
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-zinc-700 dark:text-zinc-300'
-              }`}
-            >
-              {bal.toLocaleString('ru-RU')} c
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] text-zinc-400 block">Тариф</span>
-            <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate block">
-              {seller.plan_name || 'Базовый'}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] text-zinc-400 block">Точек/Сотр</span>
-            <span className="text-xs font-mono font-medium text-zinc-700 dark:text-zinc-300">
-              {seller.outlets_count} / {seller.employees_count}
-            </span>
-          </div>
-        </div>
-
-        {/* Назначение консультанта и Связанный лид (Мобильный режим) */}
-        <div className="space-y-2 pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
-          {/* Блок Консультанта */}
-          <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
-            <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-              Консультант:
-            </span>
-            {canAssign ? (
-              <div className="flex flex-col items-end gap-1 flex-1 max-w-[210px]">
-                <CuratorSelectDropdown
-                  value={seller.manager_id}
-                  managers={managers}
-                  onChange={async (val) => {
-                    await handleAssignManager(seller.seller_phone, val);
-                  }}
-                  size="sm"
-                  className="w-full max-w-[190px]"
-                />
-                <ConnectionConfirmationBadge
-                  status={seller.manager_id ? seller.connection?.confirmation_status : null}
-                  reason={seller.connection?.rejection_reason}
-                  size="xs"
-                />
-              </div>
-            ) : (
-              <div>{renderCuratorReadOnly(seller, 'xs')}</div>
-            )}
-          </div>
-
-          {/* Блок Привязки Лида */}
-          <div className="flex items-center justify-between gap-2" onClick={(e) => e.stopPropagation()}>
-            <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-              Лид:
-            </span>
-            {seller.linked_lead ? (
-              <div className="flex items-center gap-1.5 text-right min-w-0">
-                <span className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
-                  <UserCheck className="w-2.5 h-2.5" />
-                </span>
-                <div className="min-w-0">
-                  <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate block">
-                    {seller.linked_lead.client_name}
-                  </span>
-                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
-                    {seller.linked_lead.status}
-                  </span>
-                </div>
-              </div>
-            ) : (!seller.manager_id && hasAvailableLeads && canLinkLead) ? (
-              <button
-                type="button"
-                onClick={() => setLinkLeadModal({ isOpen: true, seller })}
-                className="h-7 px-2.5 text-[11px] font-semibold rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 transition-all flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Связать с лидом</span>
-              </button>
-            ) : (
-              <span className="text-[11px] text-zinc-400 italic">
-                {seller.manager_id ? 'Консультант назначен' : 'Прямое подключение'}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
+  // Действия строки: только в контекстном меню DataJournal (ПКМ / «⋯» / карточка)
   const renderCustomRowActions = React.useCallback(
     (row: SellerItem) => {
+      const canTakeRow = canTakeSeller(row);
       const canLink = hasAvailableLeads && canLinkLead && !row.linked_lead && !row.manager_id;
-      const canDelete = canDeleteSeller;
 
-      if (!canLink && !canDelete) {
+      if (!canTakeRow && !canLink && !canDeleteSeller) {
         return null;
       }
 
       return (
-        <div className="space-y-1">
+        <>
+          {canTakeRow && (
+            <JournalMenuItem
+              icon={UserPlus}
+              label={takingPhone === row.seller_phone ? 'Закрепляем…' : 'Взять себе'}
+              tone="info"
+              disabled={takingPhone === row.seller_phone}
+              title="Стать консультантом этого продавца (подтверждает администратор)"
+              onClick={() => handleTakeSelf(row)}
+            />
+          )}
           {canLink && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setLinkLeadModal({ isOpen: true, seller: row });
-              }}
-              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
-            >
-              <Plus className="w-4 h-4 text-blue-500" strokeWidth={1.75} />
-              <span>Связать с лидом</span>
-            </button>
+            <JournalMenuItem
+              icon={Link2}
+              label="Связать с лидом"
+              tone="info"
+              title="Привязать свободный лид"
+              onClick={() => setLinkLeadModal({ isOpen: true, seller: row })}
+            />
           )}
-
-          {canDelete && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setSellerToDelete(row);
-              }}
-              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
-              <span>{row.is_deleted_from_source ? 'Удалить навсегда (в HQ удален)' : 'Удалить навсегда'}</span>
-            </button>
+          {canDeleteSeller && (
+            <JournalMenuItem
+              icon={Trash2}
+              label={row.is_deleted_from_source ? 'Удалить навсегда (в HQ удален)' : 'Удалить навсегда'}
+              tone="danger"
+              title="Удалить продавца из базы SotkaCRM навсегда"
+              onClick={() => setSellerToDelete(row)}
+            />
           )}
-        </div>
+        </>
       );
     },
-    [hasAvailableLeads, currentUserRole]
+    [canTakeSeller, hasAvailableLeads, canLinkLead, canDeleteSeller, takingPhone, handleTakeSelf]
+  );
+
+  // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
+  const sellersStats = (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+      {/* Всего продавцов */}
+      <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+          <Store className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">Всего продавцов</div>
+          <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</div>
+        </div>
+      </div>
+
+      {/* Активных */}
+      <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
+          <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">Активные</div>
+          <div className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">{stats.active}</div>
+        </div>
+      </div>
+
+      {/* Без консультанта */}
+      <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
+          <UserMinus className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">Без консультанта</div>
+          <div className="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+            {Math.max(0, stats.total - stats.assigned)}
+          </div>
+        </div>
+      </div>
+
+      {/* Закреплено */}
+      <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
+          <UserCheck className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">С консультантом</div>
+          <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
+            {stats.assigned}
+            <span className="text-[11px] text-zinc-400 font-normal"> / {stats.total}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Общий баланс */}
+      <div className="col-span-2 sm:col-span-1 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
+          <Wallet className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">Общий баланс</div>
+          <div className="text-sm sm:text-base lg:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100 truncate">
+            {stats.totalBalance.toLocaleString('ru-RU')} KGS
+          </div>
+        </div>
+      </div>
+    </div>
   );
 
   return (
@@ -1497,87 +1385,6 @@ export default function SellersPage() {
       filterContent={filterContent}
     >
       <div className="space-y-4">
-        {/* ЯРУС 2: ВЕРХНИЙ БЛОК МЕТРИК / KPI КАРТОЧКИ (Адаптивная сетка: 2x2 + баланс на мобильных, 5 в ряд на десктопе) */}
-        <CollapsibleStats storageKey="sellers">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
-            {/* Всего продавцов */}
-            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
-                <Store className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  Всего продавцов
-                </div>
-                <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
-                  {stats.total}
-                </div>
-              </div>
-            </div>
-
-            {/* Активных */}
-            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
-                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  Активные
-                </div>
-                <div className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                  {stats.active}
-                </div>
-              </div>
-            </div>
-
-            {/* Без консультанта */}
-            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
-                <UserMinus className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  Без консультанта
-                </div>
-                <div className="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
-                  {Math.max(0, stats.total - stats.assigned)}
-                </div>
-              </div>
-            </div>
-
-            {/* Закреплено */}
-            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
-                <UserCheck className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  С консультантом
-                </div>
-                <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
-                  {stats.assigned}
-                  <span className="text-[11px] text-zinc-400 font-normal"> / {stats.total}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Общий баланс */}
-            <div className="col-span-2 sm:col-span-1 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
-                <Wallet className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-              </div>
-              <div className="min-w-0">
-                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                  Общий баланс
-                </div>
-                <div className="text-sm sm:text-base lg:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100 truncate">
-                  {stats.totalBalance.toLocaleString('ru-RU')} KGS
-                </div>
-              </div>
-            </div>
-          </div>
-        </CollapsibleStats>
-
         {/* УНИВЕРСАЛЬНЫЙ РЕЕСТР DATAJOURNAL (ЯРУС 3) */}
         {isLoading ? (
           <div className="p-12 text-center rounded-3xl island-glass border border-white/20 dark:border-zinc-800/40 space-y-3">
@@ -1628,17 +1435,19 @@ export default function SellersPage() {
                   type="button"
                   disabled={isBatchLoading}
                   onClick={() => handleBatchDelete(clearSelection)}
-                  className="h-8 px-2.5 rounded-xl bg-rose-500/30 hover:bg-rose-500/40 text-rose-300 text-xs font-semibold border border-rose-500/40 transition-colors flex items-center gap-1"
-                  title="Удалить продавцов"
+                  className="h-8 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Удалить выбранных продавцов"
                 >
                   <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span>Удалить</span>
+                  <span>Удалить ({ids.length})</span>
                 </button>
               </div>
             )}
+            stats={sellersStats}
+            onRefresh={handleRefresh}
+            refreshing={isRefreshing}
             customActions={sellerActions}
             customRowActions={renderCustomRowActions}
-            renderCard={renderSellerCard}
             onRowClick={(seller) => {
               setSellerModalTab('main');
               setModalState({

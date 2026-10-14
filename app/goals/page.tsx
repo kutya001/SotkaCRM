@@ -2,11 +2,10 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
+import { DataJournal, JournalMenuItem, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
 import { Modal, ModalCallout } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { FormField, Input, Select, Textarea } from '@/components/ui/Field';
@@ -23,9 +22,10 @@ import {
   type PlanPeriodKind,
   type PlanScope,
 } from '@/lib/plans/periods';
-import { Target, Plus, Users, User, Trash2, Pencil, RotateCcw, TrendingUp, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Target, Users, User, Trash2, Pencil, TrendingUp, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 const FORM_ID = 'plan-form';
+const BULK_TARGET_FORM_ID = 'plan-bulk-target-form';
 
 const STATUS_CLASS: Record<PlanItem['progress_status'], string> = {
   done: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
@@ -67,6 +67,7 @@ interface PlanForm {
 
 export default function GoalsPage() {
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const user = useUser();
   const isAdmin = user.can('goals.manage');
   const today = todayISODate();
@@ -76,6 +77,9 @@ export default function GoalsPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [kindTab, setKindTab] = React.useState<string>('monthly');
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
+  const [bulkTarget, setBulkTarget] = React.useState<{ ids: string[]; value: string; clear: () => void } | null>(null);
 
   const [editor, setEditor] = React.useState<{ open: boolean; plan: PlanItem | null }>({ open: false, plan: null });
   const [form, setForm] = React.useState<PlanForm>({ scope: 'personal', user_id: '', period_kind: 'monthly', period_date: today, target_count: '', note: '' });
@@ -163,6 +167,51 @@ export default function GoalsPage() {
       setPlanToDelete(null);
     } catch (err: any) {
       showToast(err.message || 'Не удалось удалить план', 'error');
+    }
+  };
+
+  // Массовые действия (goals.manage)
+  const handleBulkDelete = async (ids: string[], clearSelection: () => void) => {
+    const ok = await confirm({
+      title: `Удалить планы (${ids.length})?`,
+      description: 'Планы будут удалены. Подключения и начисления не затрагиваются.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.goals.batch({ action: 'delete', ids });
+      showToast(`Удалено планов: ${res.affected}`, 'info');
+      clearSelection();
+      await fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось удалить планы', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleBulkTargetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkTarget) return;
+    const target = parseInt(bulkTarget.value, 10);
+    if (!Number.isFinite(target) || target < 1) {
+      showToast('Укажите план: целое число больше нуля', 'error');
+      return;
+    }
+    setIsBatchLoading(true);
+    try {
+      const res = await api.goals.batch({ action: 'set_target', ids: bulkTarget.ids, target_count: target });
+      showToast(`План изменен: ${res.affected}`, 'success');
+      bulkTarget.clear();
+      setBulkTarget(null);
+      await fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось изменить план', 'error');
+    } finally {
+      setIsBatchLoading(false);
     }
   };
 
@@ -285,32 +334,62 @@ export default function GoalsPage() {
         filterable: true,
         renderCell: (row) => <span className="text-xs text-zinc-500 dark:text-zinc-400 truncate block">{row.note || '—'}</span>,
       },
-      ...(isAdmin
-        ? [
-            {
-              key: 'actions',
-              label: 'Действия',
-              width: 150,
-              minWidth: 130,
-              sortable: false,
-              filterable: false,
-              renderCell: (row: PlanItem) => (
-                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                  <Button variant="ghost" size="xs" onClick={() => openEdit(row)} leftIcon={<Pencil className="w-3.5 h-3.5" />}>
-                    Цель
-                  </Button>
-                  <Button variant="ghost" size="xs" className="text-rose-600 dark:text-rose-400" onClick={() => setPlanToDelete(row)} leftIcon={<Trash2 className="w-3.5 h-3.5" />} />
-                </div>
-              ),
-            } as ColumnDef<PlanItem>,
-          ]
-        : []),
     ],
+    [today]
+  );
+
+  // Контекстное меню строки (ПКМ / «⋯»): только для goals.manage
+  const renderRowActions = React.useCallback(
+    (row: PlanItem) => (
+      <>
+        <JournalMenuItem icon={Pencil} label="Изменить план" onClick={() => openEdit(row)} />
+        <JournalMenuItem icon={Trash2} label="Удалить" tone="danger" onClick={() => setPlanToDelete(row)} />
+      </>
+    ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isAdmin, today]
+    []
   );
 
   const normalizedStart = normalizePeriodStart(form.period_kind, form.period_date || today);
+
+  const statsBlock = (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1 col-span-2 lg:col-span-1">
+        <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5" /> Общий план {summary.teamMonthly ? `(${formatPeriodLabel(summary.teamMonthly.period_kind, summary.teamMonthly.period_start)})` : ''}
+        </span>
+        {summary.teamMonthly ? (
+          <ProgressBar item={summary.teamMonthly} />
+        ) : (
+          <p className="text-xs text-zinc-400">{isAdmin ? 'Общий план на текущий период не поставлен' : 'Не поставлен'}</p>
+        )}
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1.5">
+          <TrendingUp className="w-3.5 h-3.5" /> Персональные (текущие)
+        </span>
+        <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
+          {summary.personalActual}
+          <span className="text-xs text-blue-600/70 dark:text-blue-400/70 font-medium"> / {summary.personalTotal}</span>
+        </p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5" /> Выполнено
+        </span>
+        <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
+          {summary.done}
+          <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70 font-medium"> из {summary.active}</span>
+        </p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5" /> Отстают от графика
+        </span>
+        <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{summary.behind}</p>
+      </div>
+    </div>
+  );
 
   return (
     <AppLayout
@@ -322,85 +401,93 @@ export default function GoalsPage() {
       hideFab={!isAdmin}
     >
       <div className="space-y-6 pb-16">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-blue-600 dark:text-blue-400">
-              <Target className="w-4 h-4" strokeWidth={2} />
-              <span>Планы по подключениям</span>
-            </div>
-            <h1 className="text-xl lg:text-2xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight mt-1">Планы</h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              Факт — подтвержденные подключения за период. Персональные планы по каждому сотруднику и общий план команды.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <Button variant="outline" size="lg" onClick={fetchData} loading={isLoading} leftIcon={<RotateCcw className="w-4 h-4" strokeWidth={1.75} />}>
-              Обновить
-            </Button>
-            {isAdmin && (
-              <Button size="lg" onClick={openCreate} leftIcon={<Plus className="w-4 h-4" strokeWidth={2} />}>
-                Поставить план
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <CollapsibleStats storageKey="goals">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1 col-span-2 lg:col-span-1">
-              <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5" /> Общий план {summary.teamMonthly ? `(${formatPeriodLabel(summary.teamMonthly.period_kind, summary.teamMonthly.period_start)})` : ''}
-              </span>
-              {summary.teamMonthly ? (
-                <ProgressBar item={summary.teamMonthly} />
-              ) : (
-                <p className="text-xs text-zinc-400">{isAdmin ? 'Общий план на текущий период не поставлен' : 'Не поставлен'}</p>
-              )}
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1.5">
-                <TrendingUp className="w-3.5 h-3.5" /> Персональные (текущие)
-              </span>
-              <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
-                {summary.personalActual}
-                <span className="text-xs text-blue-600/70 dark:text-blue-400/70 font-medium"> / {summary.personalTotal}</span>
-              </p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Выполнено
-              </span>
-              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
-                {summary.done}
-                <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70 font-medium"> из {summary.active}</span>
-              </p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" /> Отстают от графика
-              </span>
-              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{summary.behind}</p>
-            </div>
-          </div>
-        </CollapsibleStats>
-
         <DataJournal<PlanItem>
           data={visible}
           columns={columns}
           keyField="plan_id"
           title="Реестр планов"
           storageKey="goals_journal"
-          emptyMessage={isAdmin ? 'Планы не поставлены — нажмите «Поставить план»' : 'Планы на этот вид периода не поставлены'}
+          emptyMessage={isAdmin ? 'Планы не поставлены — нажмите «+»' : 'Планы на этот вид периода не поставлены'}
           externalSearchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           tabs={tabs}
           activeTab={kindTab}
           onTabChange={setKindTab}
           totalCount={visible.length}
+          stats={statsBlock}
+          onRefresh={fetchData}
+          refreshing={isLoading}
           onRowClick={isAdmin ? openEdit : undefined}
           onCreateClick={isAdmin ? openCreate : undefined}
           createTooltip="Поставить план"
+          customRowActions={isAdmin ? renderRowActions : undefined}
+          enableSelection={isAdmin}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          renderBulkActions={(ids, clearSelection) => (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isBatchLoading}
+                onClick={() => setBulkTarget({ ids, value: '', clear: clearSelection })}
+                className="h-8 px-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Установить одно значение плана для выбранных"
+              >
+                <Target className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Изменить план…</span>
+              </button>
+              <button
+                type="button"
+                disabled={isBatchLoading}
+                onClick={() => void handleBulkDelete(ids, clearSelection)}
+                className="h-8 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-200 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Удалить ({ids.length})</span>
+              </button>
+            </div>
+          )}
         />
+
+        {/* Массовое изменение плана */}
+        <Modal
+          open={bulkTarget !== null}
+          onClose={() => setBulkTarget(null)}
+          title="Изменить план"
+          subtitle={bulkTarget ? `Выбрано планов: ${bulkTarget.ids.length}` : undefined}
+          icon={Target}
+          tone="info"
+          size="sm"
+          busy={isBatchLoading}
+          formId={BULK_TARGET_FORM_ID}
+          onSubmit={handleBulkTargetSubmit}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setBulkTarget(null)} disabled={isBatchLoading}>
+                Отмена
+              </Button>
+              <Button type="submit" form={BULK_TARGET_FORM_ID} variant="info" loading={isBatchLoading}>
+                Применить
+              </Button>
+            </>
+          }
+        >
+          <FormField label="Новый план подключений" required htmlFor="plan-bulk-target" hint="Значение будет установлено для всех выбранных планов">
+            <Input
+              id="plan-bulk-target"
+              type="number"
+              min={1}
+              step={1}
+              value={bulkTarget?.value || ''}
+              onChange={(e) => setBulkTarget((b) => (b ? { ...b, value: e.target.value } : b))}
+              placeholder="Например: 10"
+              mono
+              size="lg"
+              required
+              autoFocus
+            />
+          </FormField>
+        </Modal>
 
         <Modal
           open={editor.open}

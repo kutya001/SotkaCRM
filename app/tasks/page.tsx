@@ -2,11 +2,10 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef, type DataJournalTab, type StatusOption } from '@/components/ui/DataJournal';
+import { DataJournal, JournalMenuItem, type ColumnDef, type DataJournalTab, type StatusOption } from '@/components/ui/DataJournal';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
 import { Modal, ModalCallout } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { FormField, Input, Select, Textarea, ReadOnlyValue } from '@/components/ui/Field';
@@ -18,7 +17,6 @@ import {
   allowedTaskTransitions,
   canAssignTask,
   canEditTaskFields,
-  canManageTasks,
   canDeleteTask,
   isOpenTaskStatus,
   type TaskPriority,
@@ -35,7 +33,9 @@ import {
   Trash2,
   Pencil,
   Flag,
-  RotateCcw,
+  Eye,
+  Inbox,
+  UserCheck,
 } from 'lucide-react';
 
 const STATUS_OPTIONS: StatusOption[] = [
@@ -45,6 +45,15 @@ const STATUS_OPTIONS: StatusOption[] = [
   { value: 'Отложен', label: 'Отложен', colorClass: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30', dotColor: 'bg-purple-500' },
   { value: 'Отмена', label: 'Отмена', colorClass: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30', dotColor: 'bg-rose-500' },
 ];
+
+/** Значок и тон пункта «перевести в статус» в контекстном меню строки */
+const STATUS_MENU: Record<TaskStatus, { icon: React.ElementType; tone: 'default' | 'info' | 'success' | 'warning' | 'danger' | 'purple' }> = {
+  Открыт: { icon: Inbox, tone: 'info' },
+  Назначен: { icon: UserCheck, tone: 'warning' },
+  Выполнен: { icon: CheckCircle2, tone: 'success' },
+  Отложен: { icon: PauseCircle, tone: 'purple' },
+  Отмена: { icon: XCircle, tone: 'danger' },
+};
 
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
   low: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-200 dark:border-zinc-700',
@@ -75,12 +84,11 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
 
 export default function TasksPage() {
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const user = useUser();
   const role = user.role;
   const userId = user.profile?.user_id || '';
   const actor = React.useMemo(() => ({ userId, permissions: user.permissions }), [userId, user.permissions]);
-  const isManager = canManageTasks(actor);
-  const canCreateTask = user.can('tasks.create');
   const today = todayISODate();
 
   const [tasks, setTasks] = React.useState<TaskItem[]>([]);
@@ -88,6 +96,8 @@ export default function TasksPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [tab, setTab] = React.useState('active');
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
 
   const [editor, setEditor] = React.useState<{ open: boolean; task: TaskItem | null }>({ open: false, task: null });
   const [form, setForm] = React.useState<TaskForm>(EMPTY_FORM);
@@ -215,6 +225,48 @@ export default function TasksPage() {
     } catch (err: any) {
       showToast(err.message || 'Не удалось удалить задачу', 'error');
     }
+  };
+
+  // Массовые действия: права проверяются сервером по каждой задаче, пропущенные приходят с причиной
+  const runBatch = React.useCallback(
+    async (payload: Parameters<typeof api.tasks.batch>[0], clearSelection: () => void, verb: string) => {
+      setIsBatchLoading(true);
+      try {
+        const res = await api.tasks.batch(payload);
+        const skippedCount = res.skipped.length;
+        const firstReason = res.skipped[0]?.reason;
+        if (res.affected === 0 && skippedCount > 0) {
+          showToast(`Ничего не изменено. Пропущено: ${skippedCount}${firstReason ? ` — ${firstReason}` : ''}`, 'error');
+        } else {
+          showToast(`${verb}: ${res.affected}${skippedCount > 0 ? `, пропущено: ${skippedCount}` : ''}`, skippedCount > 0 ? 'info' : 'success');
+        }
+        clearSelection();
+        await fetchData();
+      } catch (err: any) {
+        showToast(err.message || 'Не удалось выполнить массовое действие', 'error');
+      } finally {
+        setIsBatchLoading(false);
+      }
+    },
+    [fetchData, showToast]
+  );
+
+  const handleBulkStatus = (ids: string[], status: TaskStatus, clearSelection: () => void) =>
+    runBatch({ action: 'change_status', ids, status }, clearSelection, `Статус «${status}»`);
+
+  const handleBulkAssign = (ids: string[], assigned_to: string | null, clearSelection: () => void) =>
+    runBatch({ action: 'change_assigned', ids, assigned_to }, clearSelection, 'Переназначено');
+
+  const handleBulkDelete = async (ids: string[], clearSelection: () => void) => {
+    const ok = await confirm({
+      title: `Удалить задачи (${ids.length})?`,
+      description: 'Будут удалены только задачи, которые вы вправе удалять. Отменить удаление нельзя.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
+    await runBatch({ action: 'delete', ids }, clearSelection, 'Удалено');
   };
 
   const counts = React.useMemo(() => {
@@ -357,6 +409,54 @@ export default function TasksPage() {
   const canEditCurrent = (task: TaskItem) => canEditTaskFields(actor, task);
   const canDeleteCurrent = (task: TaskItem) => canDeleteTask(actor, task);
 
+  // Контекстное меню строки (ПКМ / «⋯»): переходы статуса, редактирование, удаление
+  const renderRowActions = React.useCallback(
+    (row: TaskItem) => {
+      const allowed = allowedTaskTransitions(actor, row);
+      return (
+        <>
+          <JournalMenuItem icon={Eye} label="Открыть задачу" onClick={() => setViewTask(row)} />
+          {allowed.map((s) => (
+            <JournalMenuItem
+              key={s}
+              icon={STATUS_MENU[s].icon}
+              tone={STATUS_MENU[s].tone}
+              label={s === 'Выполнен' ? 'Выполнена' : s === 'Отмена' ? 'Отменить' : s === 'Отложен' ? 'Отложить' : `В статус «${s}»`}
+              onClick={() => {
+                void handleStatusChange(row, s).catch((err: any) => showToast(err.message || 'Не удалось изменить статус', 'error'));
+              }}
+            />
+          ))}
+          {canEditTaskFields(actor, row) && <JournalMenuItem icon={Pencil} label="Редактировать" onClick={() => openEdit(row)} />}
+          {canDeleteTask(actor, row) && <JournalMenuItem icon={Trash2} label="Удалить" tone="danger" onClick={() => setTaskToDelete(row)} />}
+        </>
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actor, handleStatusChange, showToast]
+  );
+
+  const statsBlock = (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+        <span className="text-[11px] text-zinc-400 font-medium">В работе</span>
+        <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{counts.active}</p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Мои</span>
+        <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{counts.mine}</p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Просрочено</span>
+        <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{counts.overdue}</p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Выполнено</span>
+        <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{counts.done}</p>
+      </div>
+    </div>
+  );
+
   return (
     <AppLayout
       searchQuery={searchQuery}
@@ -366,48 +466,6 @@ export default function TasksPage() {
       createTooltip="Новая задача"
     >
       <div className="space-y-6 pb-16">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-amber-600 dark:text-amber-400">
-              <ListTodo className="w-4 h-4" strokeWidth={2} />
-              <span>Поручения и контроль сроков</span>
-            </div>
-            <h1 className="text-xl lg:text-2xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight mt-1">Задачи</h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              {isManager ? 'Ставьте задачи сотрудникам: ответственный получит уведомление в Telegram' : 'Ваши задачи и задачи, которые вы поставили себе'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <Button variant="outline" size="lg" onClick={fetchData} loading={isLoading} leftIcon={<RotateCcw className="w-4 h-4" strokeWidth={1.75} />}>
-              Обновить
-            </Button>
-            <Button size="lg" onClick={openCreate} leftIcon={<Plus className="w-4 h-4" strokeWidth={2} />}>
-              Новая задача
-            </Button>
-          </div>
-        </div>
-
-        <CollapsibleStats storageKey="tasks">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-              <span className="text-[11px] text-zinc-400 font-medium">В работе</span>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{counts.active}</p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Мои</span>
-              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{counts.mine}</p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Просрочено</span>
-              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{counts.overdue}</p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Выполнено</span>
-              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{counts.done}</p>
-            </div>
-          </div>
-        </CollapsibleStats>
-
         <DataJournal<TaskItem>
           data={visible}
           columns={columns}
@@ -421,11 +479,80 @@ export default function TasksPage() {
           activeTab={tab}
           onTabChange={setTab}
           totalCount={visible.length}
+          stats={statsBlock}
+          onRefresh={fetchData}
+          refreshing={isLoading}
           onRowClick={(row) => setViewTask(row)}
           onStatusChange={handleStatusChange}
           getStatusOptions={getStatusOptions}
+          customRowActions={renderRowActions}
           onCreateClick={openCreate}
           createTooltip="Новая задача"
+          enableSelection
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          renderBulkActions={(ids, clearSelection) => (
+            <div className="flex items-center gap-2">
+              <select
+                disabled={isBatchLoading}
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    void handleBulkStatus(ids, e.target.value as TaskStatus, clearSelection);
+                    e.target.value = '';
+                  }
+                }}
+                className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer disabled:opacity-50"
+                title="Перевести выбранные задачи в статус"
+              >
+                <option value="" disabled className="text-zinc-900 bg-white">
+                  Статус...
+                </option>
+                {STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value} className="text-zinc-900 bg-white">
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+
+              {canAssignOthers && (
+                <select
+                  disabled={isBatchLoading}
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value !== '') {
+                      void handleBulkAssign(ids, e.target.value === 'null' ? null : e.target.value, clearSelection);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer max-w-[170px] truncate disabled:opacity-50"
+                  title="Назначить ответственного по выбранным задачам"
+                >
+                  <option value="" disabled className="text-zinc-900 bg-white">
+                    Ответственный...
+                  </option>
+                  <option value="null" className="text-zinc-900 bg-white">
+                    Снять ответственного
+                  </option>
+                  {employees.map((emp) => (
+                    <option key={emp.user_id} value={emp.user_id} className="text-zinc-900 bg-white">
+                      {emp.full_name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              <button
+                type="button"
+                disabled={isBatchLoading}
+                onClick={() => void handleBulkDelete(ids, clearSelection)}
+                className="h-8 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-200 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Удалить ({ids.length})</span>
+              </button>
+            </div>
+          )}
         />
 
         {/* Карточка задачи */}

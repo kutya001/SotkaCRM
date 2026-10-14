@@ -29,6 +29,8 @@ export interface EmployeeItem {
   gender: 'male' | 'female' | null;
   bio: string | null;
   telegram_username: string | null;
+  /** Последняя активность в CRM (миграция 041) */
+  last_active_at?: string | null;
   telegram_linked: boolean;
 }
 
@@ -106,7 +108,7 @@ const fetchCachedEmployees = unstable_cache(
     let query = supabase
       .from('users')
       .select(
-        'user_id, login, full_name, phone, role, role_id, roles:role_id(name), is_active, color, created_at, address, latitude, longitude, inn, birth_date, gender, bio, telegram_username, telegram_chat_id',
+        'user_id, login, full_name, phone, role, role_id, roles:role_id(name), is_active, color, created_at, last_active_at, address, latitude, longitude, inn, birth_date, gender, bio, telegram_username, telegram_chat_id',
         {
           count: 'exact',
         }
@@ -134,7 +136,7 @@ const fetchCachedEmployees = unstable_cache(
 
     // Сортировка
     const ascending = sortOrder === 'asc';
-    const validSortCols = ['full_name', 'login', 'role', 'is_active', 'created_at'];
+    const validSortCols = ['full_name', 'login', 'role', 'is_active', 'created_at', 'last_active_at'];
     const orderCol = validSortCols.includes(sortBy) ? sortBy : 'created_at';
     query = query.order(orderCol, { ascending });
 

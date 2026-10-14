@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAuth, type AuthContext } from '@/lib/auth/check-role';
-import { fullPhoneSchema } from '@/lib/validations';
+import { fullPhoneSchema, employeeProfileFieldsSchema } from '@/lib/validations';
 import type { Database, UserRole } from '@/types/database.types';
 
 export interface UserProfileData {
@@ -19,6 +19,17 @@ export interface UserProfileData {
   is_active: boolean;
   color: string;
   created_at: string;
+  /** Последняя активность в CRM (миграция 041) */
+  last_active_at: string | null;
+  /** Анкета сотрудника (миграция 030) */
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  inn: string | null;
+  birth_date: string | null;
+  gender: string | null;
+  bio: string | null;
+  telegram_username: string | null;
 }
 
 export interface SmmKpiStats {
@@ -67,7 +78,8 @@ export interface UserKpiResponse {
   error?: string;
 }
 
-const PROFILE_COLUMNS = 'user_id, login, full_name, phone, role, role_id, roles:role_id(name), is_active, color, created_at';
+const PROFILE_COLUMNS =
+  'user_id, login, full_name, phone, role, role_id, roles:role_id(name), is_active, color, created_at, last_active_at, address, latitude, longitude, inn, birth_date, gender, bio, telegram_username';
 
 /** Строка users с присоединенной ролью → UserProfileData (role_name сплющивается из roles) */
 function toProfileData(row: any): UserProfileData {
@@ -375,6 +387,14 @@ export async function updateProfileData(input: {
   is_active?: boolean;
   color?: string;
   targetUserId?: string;
+  /** Анкета: адрес, координаты, ИНН, дата рождения, пол, биография (свой профиль — всегда) */
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  inn?: string | null;
+  birth_date?: string | null;
+  gender?: 'male' | 'female' | null;
+  bio?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   let ctx: AuthContext;
   try {
@@ -421,6 +441,27 @@ export async function updateProfileData(input: {
     updates.color = input.color;
   }
 
+  // Анкета сотрудника: валидация теми же правилами, что и в модуле «Сотрудники»
+  const PROFILE_FIELD_KEYS = ['address', 'latitude', 'longitude', 'inn', 'birth_date', 'gender', 'bio'] as const;
+  const profileInput: Record<string, unknown> = {};
+  for (const key of PROFILE_FIELD_KEYS) {
+    if (input[key] !== undefined) profileInput[key] = input[key];
+  }
+  if (Object.keys(profileInput).length > 0) {
+    const parsedProfile = employeeProfileFieldsSchema.safeParse(profileInput);
+    if (!parsedProfile.success) {
+      return { success: false, error: parsedProfile.error.issues[0]?.message || 'Ошибка в анкете сотрудника' };
+    }
+    const lat = parsedProfile.data.latitude ?? null;
+    const lon = parsedProfile.data.longitude ?? null;
+    if ((lat === null) !== (lon === null) && (parsedProfile.data.latitude !== undefined || parsedProfile.data.longitude !== undefined)) {
+      return { success: false, error: 'Укажите и широту, и долготу (или очистите оба поля)' };
+    }
+    for (const key of PROFILE_FIELD_KEYS) {
+      if (parsedProfile.data[key] !== undefined) (updates as Record<string, unknown>)[key] = parsedProfile.data[key];
+    }
+  }
+
   if (input.role_id !== undefined) {
     // Назначенная роль; триггер БД синхронизирует устаревший enum
     updates.role_id = input.role_id;
@@ -440,7 +481,15 @@ export async function updateProfileData(input: {
     .single();
 
   if (updateError) {
-    return { success: false, error: updateError.message };
+    const msg = updateError.message;
+    const friendly = msg.includes('users_inn_unique')
+      ? 'Сотрудник с таким ИНН уже есть в системе'
+      : msg.includes('users_inn_format')
+      ? 'ИНН должен состоять из 14 цифр'
+      : msg.includes('users_coordinates_pair')
+      ? 'Укажите и широту, и долготу'
+      : msg;
+    return { success: false, error: friendly };
   }
 
   // Синхронизируем метаданные в auth.users через сервисный клиент

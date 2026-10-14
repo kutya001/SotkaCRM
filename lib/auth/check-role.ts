@@ -4,6 +4,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, UserRole } from '@/types/database.types';
 import { hasAllPermissions, hasAnyPermission, hasPermission, legacyPermissionsForRole } from '@/lib/auth/permissions';
 import { PERMISSION_LABELS } from '@/lib/auth/permissions-catalog';
+import { createAdminClient } from '@/lib/supabase/admin';
+
+/** Отметка последней активности обновляется не чаще раза в 5 минут */
+const ACTIVITY_TOUCH_INTERVAL_MS = 5 * 60_000;
+
+async function touchLastActivity(userId: string, lastActiveAt: string | null | undefined): Promise<void> {
+  const last = lastActiveAt ? new Date(lastActiveAt).getTime() : 0;
+  if (Date.now() - last < ACTIVITY_TOUCH_INTERVAL_MS) return;
+  const { error } = await createAdminClient()
+    .from('users')
+    .update({ last_active_at: new Date().toISOString() })
+    .eq('user_id', userId);
+  if (error) console.warn('[requireAuth] last_active_at не обновлена:', error.message);
+}
 
 export interface AuthContext {
   user: {
@@ -71,7 +85,7 @@ export const requireAuth = cache(async (): Promise<AuthContext> => {
   const { data: profile, error: profileError } = await supabase
     .from('users')
     .select(
-      'user_id, auth_id, login, full_name, role, is_active, role_id, roles:role_id(code, name, is_admin, base_role, role_permissions(permission))'
+      'user_id, auth_id, login, full_name, role, is_active, role_id, last_active_at, roles:role_id(code, name, is_admin, base_role, role_permissions(permission))'
     )
     .eq('auth_id', claims.sub)
     .single();
@@ -94,6 +108,9 @@ export const requireAuth = cache(async (): Promise<AuthContext> => {
       : (role.role_permissions || []).map((p) => p.permission)
     : legacyPermissionsForRole(profile.role as UserRole);
   const isAdmin = permissions.includes('*');
+
+  // Последняя активность сотрудника (не блокирует запрос, при ошибке только предупреждение)
+  await touchLastActivity(profile.user_id, (profile as { last_active_at?: string | null }).last_active_at).catch(() => undefined);
 
   return {
     user: { id: claims.sub, email: claims.email },

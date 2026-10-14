@@ -497,13 +497,16 @@ export function normalizeSellerTransactions(raw: unknown): NormalizedSellerTrans
     };
   });
 
-  const computedTopups = items.reduce((sum, t) => (t.amount > 0 ? sum + t.amount : sum), 0);
-  const computedCharges = items.reduce((sum, t) => (t.amount < 0 ? sum - t.amount : sum), 0);
-  const hasTotal = (key: string) => block[key] !== undefined && block[key] !== null;
+  // Итоги считаются только по успешным операциям (failed / pending не учитываются);
+  // готовые суммы API используются лишь когда список операций не передан
+  const succeeded = items.filter((t) => isSucceededTransaction(t.status));
+  const computedTopups = succeeded.reduce((sum, t) => (t.amount > 0 ? sum + t.amount : sum), 0);
+  const computedCharges = succeeded.reduce((sum, t) => (t.amount < 0 ? sum - t.amount : sum), 0);
+  const hasTotal = (key: string) => items.length === 0 && block[key] !== undefined && block[key] !== null;
 
   return {
     items,
-    total: hasTotal('total') ? Number(block.total) || 0 : items.length,
+    total: block.total !== undefined && block.total !== null ? Number(block.total) || 0 : items.length,
     total_topups: hasTotal('total_topups') ? toNumber(block.total_topups) : Math.round(computedTopups * 100) / 100,
     total_charges: hasTotal('total_charges')
       ? Math.abs(toNumber(block.total_charges))
@@ -512,4 +515,11 @@ export function normalizeSellerTransactions(raw: unknown): NormalizedSellerTrans
       ? toNumber(block.total_amount)
       : Math.round((computedTopups - computedCharges) * 100) / 100,
   };
+}
+
+const SUCCEEDED_STATUSES = new Set(['succeeded', 'success', 'completed', 'paid', 'done', 'ok', 'успешно']);
+
+/** Успешная операция Sotka HQ (учитывается в итогах пополнений/списаний) */
+export function isSucceededTransaction(status: string | null | undefined): boolean {
+  return SUCCEEDED_STATUSES.has(String(status ?? 'succeeded').trim().toLowerCase());
 }

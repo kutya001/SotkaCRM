@@ -310,6 +310,38 @@ export default function SellersPage() {
     });
   }, [sellers, curatorTab, currentUserId, filterActive, filterManager]);
 
+  // Итоги транзакций Sotka HQ: дозаполняются в фоне для продавцов без итогов или с устаревшими (> 24 ч)
+  const hqRefreshRef = React.useRef<Promise<void> | null>(null);
+  const refreshHqTotals = React.useCallback(
+    async (force = false) => {
+      if (hqRefreshRef.current) return hqRefreshRef.current;
+      const run = (async () => {
+        try {
+          const res = await api.sellers.refreshHqTotals(force ? { stale_hours: 1 } : {});
+          if (res.refreshed > 0) await fetchSellersData(1, '', true);
+        } catch (err: any) {
+          console.warn('[sellers] Итоги транзакций Sotka HQ не обновлены:', err?.message);
+        } finally {
+          hqRefreshRef.current = null;
+        }
+      })();
+      hqRefreshRef.current = run;
+      return run;
+    },
+    [fetchSellersData]
+  );
+  const hqAutoRequestedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (hqAutoRequestedRef.current || sellers.length === 0 || !user.can('sellers.transactions')) return;
+    const staleBefore = Date.now() - 24 * 3_600_000;
+    const needsRefresh = sellers.some(
+      (s) => s.organization_id && !s.is_deleted_from_source && (!s.hq_tx_synced_at || new Date(s.hq_tx_synced_at).getTime() < staleBefore)
+    );
+    if (!needsRefresh) return;
+    hqAutoRequestedRef.current = true;
+    void refreshHqTotals();
+  }, [sellers, user, refreshHqTotals]);
+
   // Синхронизация реестра с Sotka HQ API (только из модуля «Продавцы»)
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
@@ -1169,7 +1201,10 @@ export default function SellersPage() {
       )}
     <button
       type="button"
-      onClick={() => fetchSellersData(1, '', true)}
+      onClick={() => {
+        void fetchSellersData(1, '', true);
+        if (user.can('sellers.transactions')) void refreshHqTotals(true);
+      }}
       className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
       title="Обновить базу продавцов"
       aria-label="Обновить базу продавцов"

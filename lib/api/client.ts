@@ -472,6 +472,15 @@ export const api = {
         method: 'GET',
         bypassCache: options?.bypassCache,
       }),
+    /** Обновление итогов транзакций Sotka HQ (пополнения / списания) для продавцов без итогов или с устаревшими */
+    refreshHqTotals: async (params?: { stale_hours?: number | null; limit?: number }) => {
+      const res = await request<{ refreshed: number; queued: number; remaining: number }>('/api/v1/sellers/hq-totals', {
+        method: 'POST',
+        body: JSON.stringify(params || {}),
+      });
+      invalidateNamespaces('sellers');
+      return res;
+    },
     /** Без параметров синхронизирует весь реестр Sotka HQ, с limit — одну порцию */
     syncSotka: async (params?: { offset?: number; limit?: number }) => {
       const res = await request<{ synced_count: number; total_available: number; duration_ms: number }>(

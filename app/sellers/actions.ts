@@ -13,13 +13,13 @@ import {
 import { linkLeadToSellerAtomic } from '@/lib/services/lead-linking';
 import { assignSellerToManager } from '@/lib/services/connections';
 import { applySellersOrder, findSellerByKey, isSellerInScope, sellersOwnScopeFilter } from '@/lib/services/sellers';
+import { refreshSellersHqTotals } from '@/lib/services/hq-totals';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import {
   normalizeSotkaSeller,
   resolveSotkaPlan,
   parseDateToISO,
   extractSellerDetailRegisteredAt,
-  normalizeSellerTransactions,
   type NormalizedSotkaSeller,
   type SotkaSellerDetail,
   type SotkaSellerOverviewItem,
@@ -877,42 +877,19 @@ export async function syncSellersFromSotka(
       savedCount += chunk.length;
     }
 
-    // 7.1. Итоги транзакций Sotka HQ (пополнения / списания) из детальной карточки продавца.
-    // Обновляются в пределах бюджета времени, сначала самые давно не обновлявшиеся:
-    // остальные дозаполняются при следующих синхронизациях или при открытии вкладки транзакций.
+    // 7.1. Итоги транзакций Sotka HQ (пополнения / списания по успешным операциям) из детальной
+    // карточки продавца: сначала без итогов, затем устаревшие — в пределах бюджета времени.
+    // Остальные дозаполняет реестр продавцов (POST /api/v1/sellers/hq-totals) и вкладка транзакций.
     try {
-      const { data: staleRows } = await supabase
-        .from('sellers')
-        .select('seller_phone, organization_id, hq_tx_synced_at')
-        .not('organization_id', 'is', null)
-        .in('seller_phone', phones)
-        .order('hq_tx_synced_at', { ascending: true, nullsFirst: true })
-        .limit(HQ_TOTALS_REFRESH_LIMIT);
-      const queue = (staleRows || []).filter((r) => r.organization_id);
-      let refreshed = 0;
-      for (let i = 0; i < queue.length; i += DETAIL_BACKFILL_CONCURRENCY) {
-        if (Date.now() - startedAt > SYNC_TIME_BUDGET_MS) break;
-        await Promise.all(
-          queue.slice(i, i + DETAIL_BACKFILL_CONCURRENCY).map(async (row) => {
-            try {
-              const detail = await fetchSellerDetail(token, row.organization_id as string);
-              const totals = normalizeSellerTransactions(detail?.transactions);
-              const { error: totalsErr } = await supabase
-                .from('sellers')
-                .update({
-                  hq_topups_total: totals.total_topups,
-                  hq_charges_total: totals.total_charges,
-                  hq_tx_synced_at: new Date().toISOString(),
-                } as any)
-                .eq('seller_phone', row.seller_phone);
-              if (!totalsErr) refreshed++;
-            } catch (txErr: any) {
-              console.warn(`[syncSellersFromSotka] Итоги транзакций организации ${row.organization_id} недоступны:`, txErr?.message);
-            }
-          })
-        );
-      }
-      console.log(`[Sellers Sync] Итоги транзакций Sotka HQ обновлены: ${refreshed} из ${queue.length}`);
+      const hq = await refreshSellersHqTotals({
+        token,
+        phones,
+        staleHours: 24,
+        limit: HQ_TOTALS_REFRESH_LIMIT,
+        timeBudgetMs: SYNC_TIME_BUDGET_MS,
+        startedAt,
+      });
+      console.log(`[Sellers Sync] Итоги транзакций Sotka HQ обновлены: ${hq.refreshed} из ${hq.queued}`);
     } catch (hqErr: any) {
       console.warn('[syncSellersFromSotka] Не удалось обновить итоги транзакций Sotka HQ:', hqErr?.message);
     }

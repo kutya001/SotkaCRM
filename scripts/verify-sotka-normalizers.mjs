@@ -50,7 +50,22 @@ assert.equal(tx.total_topups, 1500.5);
 assert.equal(tx.total_charges, 500);
 assert.equal(tx.total_amount, 1000.5);
 
-// Итоги из ответа API имеют приоритет
+// Неуспешные операции не входят в итоги, даже если API прислал свои суммы
+const txFailed = normalizeSellerTransactions({
+  total_topups: 2998,
+  total_charges: 1499,
+  items: [
+    { id: 1, type: 'charge', amount: 1499, status: 'succeeded' },
+    { id: 2, type: 'topup', amount: 1499, status: 'succeeded' },
+    { id: 3, type: 'topup', amount: 1499, status: 'failed' },
+  ],
+});
+assert.deepEqual(
+  { topups: txFailed.total_topups, charges: txFailed.total_charges, amount: txFailed.total_amount },
+  { topups: 1499, charges: 1499, amount: 0 }
+);
+
+// Итоги из ответа API используются только без списка операций
 const txApi = normalizeSellerTransactions({ items: [], total: 12, total_topups: 100, total_charges: -40, total_amount: 60 });
 assert.deepEqual(
   { total: txApi.total, topups: txApi.total_topups, charges: txApi.total_charges, amount: txApi.total_amount },

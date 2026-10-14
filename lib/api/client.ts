@@ -806,6 +806,15 @@ export const api = {
       invalidateNamespaces('employees', 'profile', 'analytics');
       return res;
     },
+    /** Массовые действия: set_active (is_active), set_role (role_id) */
+    batch: async (data: { action: 'set_active' | 'set_role'; ids: string[]; is_active?: boolean; role_id?: string }) => {
+      const res = await request<{ success: boolean; updated: number; skipped?: string[] }>('/api/v1/employees/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      invalidateNamespaces('employees', 'profile', 'analytics');
+      return res;
+    },
   },
 
   // 8. Тарифы
@@ -873,6 +882,15 @@ export const api = {
           method: 'DELETE',
         }
       );
+      invalidateNamespaces('plans');
+      return res;
+    },
+    /** Массовые действия: delete, set_active (is_active) */
+    batch: async (data: { action: 'delete' | 'set_active'; ids: string[]; is_active?: boolean }) => {
+      const res = await request<{ success: boolean; affected: number }>('/api/v1/plans/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
       invalidateNamespaces('plans');
       return res;
     },
@@ -1066,6 +1084,12 @@ export const api = {
       request<{ success: boolean; status: string; error: string | null }>(`/api/v1/telegram/admin/outbox/${id}/retry`, {
         method: 'POST',
       }),
+    /** Массовые действия над журналом сообщений: retry (повторить неотправленные), delete */
+    adminOutboxBatch: (data: { action: 'retry' | 'delete'; ids: string[] }) =>
+      request<{ success: boolean; affected: number; sent?: number; failed?: number }>('/api/v1/telegram/admin/outbox/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     adminUnlinkUser: (userId: string) =>
       request<{ success: boolean; was_linked: boolean }>(`/api/v1/telegram/admin/users/${userId}/link`, { method: 'DELETE' }),
     adminUpdateUserPrefs: (
@@ -1099,6 +1123,14 @@ export const api = {
       invalidateCache('/api/v1/tasks');
       return request<{ success: boolean }>(`/api/v1/tasks/${id}`, { method: 'DELETE' });
     },
+    /** Массовые действия: change_status, change_assigned, delete (права проверяются по каждой задаче) */
+    batch: (data: { action: 'change_status' | 'change_assigned' | 'delete'; ids: string[]; status?: string; assigned_to?: string | null }) => {
+      invalidateCache('/api/v1/tasks');
+      return request<{ success: boolean; affected: number; skipped: { task_id: string; reason: string }[] }>('/api/v1/tasks/batch', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
   },
 
   // Планы по подключениям
@@ -1119,6 +1151,9 @@ export const api = {
     update: (id: string, data: { target_count?: number; note?: string | null }) =>
       request<PlanItem>(`/api/v1/goals/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: string) => request<{ success: boolean }>(`/api/v1/goals/${id}`, { method: 'DELETE' }),
+    /** Массовые действия: delete, set_target (target_count) */
+    batch: (data: { action: 'delete' | 'set_target'; ids: string[]; target_count?: number }) =>
+      request<{ success: boolean; affected: number }>('/api/v1/goals/batch', { method: 'POST', body: JSON.stringify(data) }),
   },
 };
 

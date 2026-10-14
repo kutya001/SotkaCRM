@@ -7,6 +7,7 @@ import { Maximize2, Minimize2, Search, X } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import type { UserRole } from '@/types/database.types';
 import { useUser } from '@/components/auth/AuthProvider';
+import { HelpButton } from '@/components/layout/HelpModal';
 
 interface TopHeaderProps {
   collapsed: boolean;
@@ -107,6 +108,9 @@ export function TopHeader({
 
       {/* 3. Правая часть: системный блок (ширина, тема, профиль) */}
       <div className="flex items-center gap-2.5 flex-shrink-0">
+        {/* Подсказка по текущему модулю */}
+        <HelpButton />
+
         {/* Переключатель ширины экрана: Компактный / Широкий экран */}
         {onToggleLayoutWidth && (
           <button

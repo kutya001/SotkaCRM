@@ -3,8 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
+import { DataJournal, JournalMenuItem, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { formatMonth } from '@/lib/utils/format';
 import { formatPhoneDisplay } from '@/lib/utils/phone';
@@ -20,9 +19,8 @@ import {
 import {
   Banknote,
   Plus,
-  Calendar,
-  RotateCcw,
   Layers,
+  ListChecks,
   TrendingDown,
   TrendingUp,
   Receipt,
@@ -34,6 +32,8 @@ import {
   Trash2,
   ExternalLink,
   Pencil,
+  Eye,
+  UserRound,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -289,9 +289,23 @@ export default function PayoutsPage() {
     setSelectedCategory(e.target.value);
   };
 
-  const handleTabChange = (tab: 'all' | 'accruals' | 'deductions' | 'payouts') => {
-    setSelectedTab(tab);
+  type PayoutTabId = 'all' | 'accruals' | 'deductions' | 'payouts';
+  const handleTabChange = (tabId: string) => {
+    if (tabId === 'all' || tabId === 'accruals' || tabId === 'deductions' || tabId === 'payouts') {
+      setSelectedTab(tabId as PayoutTabId);
+    }
   };
+
+  // Вкладки реестра: вид операции (клиентский фильтр, счётчики из сводки)
+  const payoutTabs: DataJournalTab[] = React.useMemo(
+    () => [
+      { id: 'all', label: 'Все операции', icon: ListChecks, count: stats.transactionsCount },
+      { id: 'accruals', label: 'Начисления (+)', icon: TrendingUp, count: stats.accrualsCount },
+      { id: 'deductions', label: 'Удержания (−)', icon: TrendingDown, count: stats.deductionsCount },
+      { id: 'payouts', label: 'Выплаты (−) • ЗП и аванс', icon: Wallet, count: stats.payoutsCount },
+    ],
+    [stats.transactionsCount, stats.accrualsCount, stats.deductionsCount, stats.payoutsCount]
+  );
 
   // Автоматическая загрузка расчетного листка при выборе сотрудника в форме создания
   React.useEffect(() => {
@@ -777,37 +791,115 @@ export default function PayoutsPage() {
         <FileSpreadsheet className="w-4 h-4" strokeWidth={1.75} />
         <span className="hidden sm:inline">Расчётный лист</span>
       </button>
-
-      <button
-        type="button"
-        onClick={() => fetchData()}
-        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0 cursor-pointer"
-        title="Обновить журнал"
-      >
-        <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-        <span className="hidden md:inline">Обновить</span>
-      </button>
     </div>
   );
 
-  const renderCustomRowActions = React.useCallback(
-    (row: PayoutItem) => {
-      if (!canDeletePayout) return null;
-      return (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setPayoutToDelete(row);
-          }}
-          className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-2.5 transition-colors cursor-pointer"
-        >
-          <Trash2 className="w-4 h-4 text-rose-500" strokeWidth={1.75} />
-          <span>Удалить операцию</span>
-        </button>
-      );
-    },
-    [canDeletePayout]
+  // Контекстное меню строки (ПКМ / «⋯» / карточка)
+  const renderCustomRowActions = (row: PayoutItem) => (
+      <>
+        <JournalMenuItem icon={Eye} label="Открыть операцию" onClick={() => setSelectedPayout(row)} />
+        {canEditPayout && (
+          <JournalMenuItem icon={Pencil} label="Изменить" tone="info" onClick={() => openBulkEdit([row.payout_id])} />
+        )}
+        {row.connection_id && (
+          <JournalMenuItem
+            icon={ExternalLink}
+            label="Перейти к сделке (Подключение)"
+            href={`/connections?search=${encodeURIComponent(row.connection_id)}`}
+          />
+        )}
+        {row.seller_phone && (
+          <JournalMenuItem
+            icon={UserRound}
+            label="Перейти к продавцу"
+            href={`/sellers?search=${encodeURIComponent(row.seller_phone)}`}
+          />
+        )}
+        {canDeletePayout && (
+          <JournalMenuItem icon={Trash2} label="Удалить операцию" tone="danger" onClick={() => setPayoutToDelete(row)} />
+        )}
+      </>
+  );
+
+  // Сводка: остаток на начало → начислено / удержано / выплачено → остаток на конец
+  const statsBlock = (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
+        <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+          <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
+            <Layers className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
+            <span className="truncate">Остаток на начало</span>
+          </span>
+          <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.openingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+            {formatSom(stats.openingBalance)}
+          </p>
+          <p className="text-[10px] text-zinc-400 truncate">
+            {selectedMonth !== 'all' ? `на 01.${selectedMonth.slice(5, 7)}.${selectedMonth.slice(0, 4)}` : 'период не выбран'}
+          </p>
+        </div>
+
+        <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+          <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 truncate">
+            <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+            <span className="truncate">Начислено (+)</span>
+          </span>
+          <p className="text-sm sm:text-xl font-bold text-emerald-700 dark:text-emerald-300 font-mono truncate">
+            +{formatSom(stats.totalAccrued)}
+          </p>
+          <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 truncate">
+            операций: {stats.accrualsCount}
+          </p>
+        </div>
+
+        <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+          <span className="text-[10px] sm:text-[11px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
+            <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+            <span className="truncate">Удержано (−)</span>
+          </span>
+          <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
+            −{formatSom(stats.totalDeductions)}
+          </p>
+          <p className="text-[10px] text-amber-700/70 dark:text-amber-400/70 truncate">
+            операций: {stats.deductionsCount}
+          </p>
+        </div>
+
+        <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+          <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
+            <Wallet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+            <span className="truncate">Выплачено (−)</span>
+          </span>
+          <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
+            −{formatSom(stats.totalPaid)}
+          </p>
+          <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70 truncate">
+            в т.ч. аванс: {formatSom(stats.totalAdvances)}
+          </p>
+        </div>
+
+        <div className={`col-span-2 lg:col-span-1 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl shadow-sm space-y-1 border ${stats.closingBalance < 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-white/75 dark:bg-zinc-900/75 border-emerald-500/30'}`}>
+          <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-semibold flex items-center gap-1 truncate">
+            <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+            <span className="truncate">Остаток на конец</span>
+          </span>
+          <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.closingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+            {formatSom(stats.closingBalance)}
+          </p>
+          <p className={`text-[10px] truncate ${stats.closingBalance < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
+            {stats.closingBalance < 0 ? 'переплата сотрудникам' : 'к выплате сотрудникам'}
+          </p>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-zinc-400 px-1">
+        Остаток на конец = остаток на начало + начислено − удержано − выплачено
+        {selectedEmployee !== 'all'
+          ? ` • ${employees.find((e) => e.user_id === selectedEmployee)?.full_name || 'сотрудник'}`
+          : isPrivileged
+            ? ' • все сотрудники'
+            : ''}
+      </p>
+    </div>
   );
 
   return (
@@ -824,121 +916,7 @@ export default function PayoutsPage() {
       createTooltip="Оформить операцию по ЗП"
     >
       <div className="space-y-4">
-        {/* Сводка: остаток на начало → начислено / удержано / выплачено → остаток на конец */}
-        <CollapsibleStats storageKey="payouts">
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
-                <Layers className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Остаток на начало</span>
-              </span>
-              <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.openingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                {formatSom(stats.openingBalance)}
-              </p>
-              <p className="text-[10px] text-zinc-400 truncate">
-                {selectedMonth !== 'all' ? `на 01.${selectedMonth.slice(5, 7)}.${selectedMonth.slice(0, 4)}` : 'период не выбран'}
-              </p>
-            </div>
-
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 truncate">
-                <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Начислено (+)</span>
-              </span>
-              <p className="text-sm sm:text-xl font-bold text-emerald-700 dark:text-emerald-300 font-mono truncate">
-                +{formatSom(stats.totalAccrued)}
-              </p>
-              <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 truncate">
-                операций: {stats.accrualsCount}
-              </p>
-            </div>
-
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
-                <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Удержано (−)</span>
-              </span>
-              <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
-                −{formatSom(stats.totalDeductions)}
-              </p>
-              <p className="text-[10px] text-amber-700/70 dark:text-amber-400/70 truncate">
-                операций: {stats.deductionsCount}
-              </p>
-            </div>
-
-            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-              <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
-                <Wallet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Выплачено (−)</span>
-              </span>
-              <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
-                −{formatSom(stats.totalPaid)}
-              </p>
-              <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70 truncate">
-                в т.ч. аванс: {formatSom(stats.totalAdvances)}
-              </p>
-            </div>
-
-            <div className={`col-span-2 lg:col-span-1 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl shadow-sm space-y-1 border ${stats.closingBalance < 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-white/75 dark:bg-zinc-900/75 border-emerald-500/30'}`}>
-              <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-semibold flex items-center gap-1 truncate">
-                <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Остаток на конец</span>
-              </span>
-              <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.closingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                {formatSom(stats.closingBalance)}
-              </p>
-              <p className={`text-[10px] truncate ${stats.closingBalance < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
-                {stats.closingBalance < 0 ? 'переплата сотрудникам' : 'к выплате сотрудникам'}
-              </p>
-            </div>
-          </div>
-        </CollapsibleStats>
-
-        <p className="text-[11px] text-zinc-400 px-1 -mt-1">
-          Остаток на конец = остаток на начало + начислено − удержано − выплачено
-          {selectedEmployee !== 'all'
-            ? ` • ${employees.find((e) => e.user_id === selectedEmployee)?.full_name || 'сотрудник'}`
-            : isPrivileged
-              ? ' • все сотрудники'
-              : ''}
-        </p>
-
-        {/* Табы реестра: три вида операций */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm overflow-x-auto">
-          {(
-            [
-              { id: 'all', label: 'Все операции', count: stats.transactionsCount, active: 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900', hover: 'hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/60', Icon: null },
-              { id: 'accruals', label: 'Начисления (+)', count: stats.accrualsCount, active: 'bg-emerald-600 text-white', hover: 'hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-500/10', Icon: TrendingUp },
-              { id: 'deductions', label: 'Удержания (−)', count: stats.deductionsCount, active: 'bg-amber-600 text-white', hover: 'hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10', Icon: TrendingDown },
-              { id: 'payouts', label: 'Выплаты (−) • ЗП и аванс', count: stats.payoutsCount, active: 'bg-sky-600 text-white', hover: 'hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-500/10', Icon: Wallet },
-            ] as const
-          ).map((tab) => {
-            const isActive = selectedTab === tab.id;
-            const Icon = tab.Icon;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => handleTabChange(tab.id)}
-                className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
-                  isActive ? `${tab.active} shadow-sm` : `text-zinc-600 dark:text-zinc-400 ${tab.hover}`
-                }`}
-              >
-                {Icon && <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />}
-                <span>{tab.label}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium ${
-                    isActive ? 'bg-white/20 dark:bg-zinc-900/20' : 'bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500'
-                  }`}
-                >
-                  {tab.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Универсальный реестр DataJournal */}
+        {/* Универсальный реестр DataJournal: сводка, вкладки видов операций и действия — в стандартном тулбаре */}
         <DataJournal<PayoutItem>
           data={visiblePayouts}
           columns={columns}
@@ -948,6 +926,14 @@ export default function PayoutsPage() {
           onRowClick={(row) => setSelectedPayout(row)}
           totalCount={totalCount}
           externalSearchQuery={searchQuery}
+          stats={statsBlock}
+          tabs={payoutTabs}
+          activeTab={selectedTab}
+          onTabChange={handleTabChange}
+          onCreateClick={canCreatePayout ? () => setIsCreateOpen(true) : undefined}
+          createTooltip="Оформить операцию по ЗП"
+          onRefresh={fetchData}
+          refreshing={isLoading}
           customActions={payoutActions}
           customRowActions={renderCustomRowActions}
           enableSelection={canBulkPayouts}
@@ -958,19 +944,23 @@ export default function PayoutsPage() {
               <button
                 type="button"
                 onClick={() => openBulkEdit(ids)}
-                className="h-8 px-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+                className="h-8 px-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Изменить выбранные операции"
               >
                 <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
-                <span>Изменить</span>
+                <span>Изменить ({ids.length})</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setBulkDeleteIds(ids)}
-                className="h-8 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-200 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-                <span>Удалить</span>
-              </button>
+              {canDeletePayout && (
+                <button
+                  type="button"
+                  onClick={() => setBulkDeleteIds(ids)}
+                  className="h-8 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                  title="Удалить выбранные операции"
+                >
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>Удалить ({ids.length})</span>
+                </button>
+              )}
             </div>
           )}
         />

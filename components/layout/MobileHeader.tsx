@@ -7,6 +7,7 @@ import { Search, SlidersHorizontal, X, Menu, User } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { MobileMenuDrawer } from '@/components/layout/MobileMenuDrawer';
 import { useUser } from '@/components/auth/AuthProvider';
+import { HelpButton } from '@/components/layout/HelpModal';
 
 interface MobileHeaderProps {
   onOpenFilter?: () => void;
@@ -122,6 +123,11 @@ export function MobileHeader({
                   )}
                 </button>
               )}
+
+              <HelpButton
+                className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive active:scale-95"
+                iconClassName="w-5 h-5"
+              />
 
               <div className="flex items-center justify-center min-w-[40px] min-h-[40px]">
                 <ThemeToggle />

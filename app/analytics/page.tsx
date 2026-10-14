@@ -3,7 +3,6 @@
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import {
-  BarChart3,
   TrendingUp,
   UserCheck,
   Store,
@@ -94,22 +93,6 @@ export default function AnalyticsPage() {
       userLogin={userLogin}
     >
       <div className="space-y-6 pb-20 lg:pb-6">
-        {/* Заголовок страницы */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-blue-600 dark:text-blue-400">
-              <BarChart3 className="w-4 h-4" strokeWidth={2} />
-              <span>Сводная аналитика</span>
-            </div>
-            <h1 className="text-xl lg:text-2xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight mt-1">
-              KPI и показатели эффективности
-            </h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              Оперативная статистика воронки лидов, клиентской базы и фонда выплат
-            </p>
-          </div>
-        </div>
-
         {/* 1. Главные метрики воронки */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Конверсия воронки */}

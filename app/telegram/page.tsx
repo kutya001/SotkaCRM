@@ -2,8 +2,7 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef, type DataJournalTab, type StatusOption } from '@/components/ui/DataJournal';
+import { DataJournal, JournalMenuItem, type ColumnDef, type DataJournalTab, type StatusOption } from '@/components/ui/DataJournal';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
@@ -26,10 +25,12 @@ import {
   MinusCircle,
   RotateCcw,
   Unlink,
-  RefreshCw,
   Eye,
   AlertTriangle,
   ShieldCheck,
+  Trash2,
+  MessageSquareText,
+  UserRound,
 } from 'lucide-react';
 import type { UserRole } from '@/types/database.types';
 
@@ -37,6 +38,12 @@ type Overview = Awaited<ReturnType<typeof api.telegram.adminOverview>>;
 type EmployeeLink = Overview['employees'][number];
 type OutboxItem = Awaited<ReturnType<typeof api.telegram.adminOutbox>>['items'][number];
 type PrefKey = keyof EmployeeLink['prefs'];
+type PageTab = 'outbox' | 'employees';
+
+const PAGE_TAB_STORAGE_KEY = 'sotka_telegram_tab';
+
+/** Статусы, из которых сообщение можно отправить повторно */
+const RETRYABLE_STATUSES = new Set(['failed', 'skipped', 'pending']);
 
 const STATUS_OPTIONS: StatusOption[] = [
   { value: 'sent', label: 'Отправлено', colorClass: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30', dotColor: 'bg-emerald-500' },
@@ -82,6 +89,8 @@ export default function TelegramPage() {
   const confirm = useConfirm();
   const user = useUser();
   const isAdmin = user.can('telegram.manage') || user.can('telegram.broadcast');
+  // Массовые действия над журналом доступны только с правом управления (сервер проверяет telegram.manage)
+  const canManageOutbox = user.can('telegram.manage');
 
   const [overview, setOverview] = React.useState<Overview | null>(null);
   const [items, setItems] = React.useState<OutboxItem[]>([]);
@@ -89,11 +98,33 @@ export default function TelegramPage() {
   const [isDispatching, setIsDispatching] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [statusTab, setStatusTab] = React.useState('all');
+  const [pageTab, setPageTab] = React.useState<PageTab>('outbox');
   const [isBroadcastOpen, setIsBroadcastOpen] = React.useState(false);
   const [selectedItem, setSelectedItem] = React.useState<OutboxItem | null>(null);
   const [retryingId, setRetryingId] = React.useState<string | null>(null);
   const [workingUserId, setWorkingUserId] = React.useState<string | null>(null);
   const [showAllEmployees, setShowAllEmployees] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
+
+  // Вкладка страницы запоминается в браузере (читается после монтирования, чтобы не ломать гидратацию)
+  React.useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(PAGE_TAB_STORAGE_KEY);
+      if (saved === 'outbox' || saved === 'employees') setPageTab(saved);
+    } catch {
+      /* localStorage недоступен */
+    }
+  }, []);
+
+  const changePageTab = (next: PageTab) => {
+    setPageTab(next);
+    try {
+      window.localStorage.setItem(PAGE_TAB_STORAGE_KEY, next);
+    } catch {
+      /* localStorage недоступен */
+    }
+  };
 
   const fetchData = React.useCallback(async () => {
     setIsLoading(true);
@@ -143,6 +174,48 @@ export default function TelegramPage() {
       showToast(err.message || 'Не удалось отправить повторно', 'error');
     } finally {
       setRetryingId(null);
+    }
+  };
+
+  // Массовые действия над журналом сообщений
+  const handleBulkRetry = async (ids: string[], clearSelection: () => void) => {
+    setIsBatchLoading(true);
+    try {
+      const res = await api.telegram.adminOutboxBatch({ action: 'retry', ids });
+      showToast(
+        res.affected === 0
+          ? 'Среди выбранных нет сообщений для повторной отправки'
+          : `В очередь: ${res.affected}, отправлено: ${res.sent ?? 0}, ошибок: ${res.failed ?? 0}`,
+        res.affected === 0 ? 'info' : (res.failed ?? 0) > 0 ? 'info' : 'success'
+      );
+      clearSelection();
+      await fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось отправить повторно', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  const handleBulkDelete = async (ids: string[], clearSelection: () => void) => {
+    const ok = await confirm({
+      title: `Удалить сообщения (${ids.length})?`,
+      description: 'Записи журнала будут удалены безвозвратно. Уже отправленные сообщения у получателей останутся.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.telegram.adminOutboxBatch({ action: 'delete', ids });
+      showToast(`Удалено сообщений: ${res.affected}`, 'info');
+      clearSelection();
+      await fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось удалить сообщения', 'error');
+    } finally {
+      setIsBatchLoading(false);
     }
   };
 
@@ -294,33 +367,29 @@ export default function TelegramPage() {
             <span className="text-xs text-zinc-400">—</span>
           ),
       },
-      {
-        key: 'actions',
-        label: 'Действия',
-        width: 160,
-        minWidth: 140,
-        sortable: false,
-        filterable: false,
-        renderCell: (row) => (
-          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-            <Button variant="ghost" size="xs" onClick={() => setSelectedItem(row)} leftIcon={<Eye className="w-3.5 h-3.5" />}>
-              Текст
-            </Button>
-            {(row.status === 'failed' || row.status === 'skipped') && (
-              <Button
-                variant="secondary"
-                size="xs"
-                loading={retryingId === row.id}
-                onClick={() => handleRetry(row)}
-                leftIcon={<RotateCcw className="w-3.5 h-3.5" />}
-              >
-                Повторить
-              </Button>
-            )}
-          </div>
-        ),
-      },
     ],
+    []
+  );
+
+  // Контекстное меню строки журнала (ПКМ / «⋯»)
+  const renderRowActions = React.useCallback(
+    (row: OutboxItem) => (
+      <>
+        <JournalMenuItem icon={Eye} label="Открыть текст" onClick={() => setSelectedItem(row)} />
+        {RETRYABLE_STATUSES.has(row.status) && (
+          <JournalMenuItem
+            icon={RotateCcw}
+            label="Повторить отправку"
+            tone="info"
+            disabled={retryingId === row.id}
+            onClick={() => void handleRetry(row)}
+          />
+        )}
+        {row.recipient && (
+          <JournalMenuItem icon={UserRound} label="Открыть получателя" href={`/employees?q=${encodeURIComponent(row.recipient.login)}`} />
+        )}
+      </>
+    ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [retryingId]
   );
@@ -344,6 +413,102 @@ export default function TelegramPage() {
 
   const webhook = overview?.webhook;
   const webhookOk = Boolean(webhook?.url && webhook.secret_configured && !webhook.last_error);
+  const activeEmployeesTotal = overview?.employees.filter((e) => e.is_active).length ?? '—';
+
+  // Действия модуля в тулбаре журнала: отправить очередь, рассылка
+  const outboxActions = (
+    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+      <button
+        type="button"
+        onClick={handleDispatchNow}
+        disabled={isDispatching || !overview?.configured}
+        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        title="Отправить сообщения, ожидающие в очереди"
+        aria-label="Отправить очередь"
+      >
+        <Inbox className={`w-4 h-4 flex-shrink-0 ${isDispatching ? 'animate-pulse' : ''}`} strokeWidth={1.75} />
+        <span className="hidden md:inline">Отправить очередь{overview && overview.outbox.pending > 0 ? ` (${overview.outbox.pending})` : ''}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setIsBroadcastOpen(true)}
+        disabled={!overview?.configured}
+        className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm island-interactive flex-shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        title="Рассылка сотрудникам"
+        aria-label="Рассылка"
+      >
+        <Send className="w-4 h-4 flex-shrink-0" strokeWidth={2} />
+        <span className="hidden md:inline">Рассылка</span>
+      </button>
+    </div>
+  );
+
+  // KPI журнала сообщений (над тулбаром, сворачиваются кнопкой «статистика»)
+  const outboxStats = (
+    <div className="grid grid-cols-3 gap-3">
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Отправлено</span>
+        <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{overview?.outbox.sent ?? '—'}</p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">В очереди</span>
+        <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{overview?.outbox.pending ?? '—'}</p>
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Ошибки / пропущено</span>
+        <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
+          {overview ? overview.outbox.failed : '—'}
+          <span className="text-xs text-rose-600/70 dark:text-rose-400/70 font-medium"> / {overview?.outbox.skipped ?? '—'}</span>
+        </p>
+      </div>
+    </div>
+  );
+
+  // Состояние бота и вебхука + сколько сотрудников подключили Telegram (шапка вкладки сотрудников)
+  const botStatus = (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1 sm:col-span-2">
+        <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1.5">
+          <Bot className="w-3.5 h-3.5" /> Бот
+        </span>
+        {overview?.configured ? (
+          <>
+            <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
+              {overview.bot ? `@${overview.bot.username}` : 'Токен задан, Bot API недоступен'}
+            </p>
+            <p className={`text-[11px] flex items-center gap-1 ${webhookOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+              <Webhook className="w-3 h-3" />
+              {webhookOk
+                ? 'Вебхук работает'
+                : !webhook?.secret_configured
+                ? 'Не задан TELEGRAM_WEBHOOK_SECRET'
+                : !webhook?.url
+                ? 'Вебхук не зарегистрирован — зарегистрируется при первой привязке'
+                : webhook.last_error || 'Проверьте вебхук'}
+            </p>
+          </>
+        ) : (
+          <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5" /> Не задан TELEGRAM_BOT_TOKEN
+          </p>
+        )}
+      </div>
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-sky-500/10 dark:bg-sky-500/5 border border-sky-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-sky-600 dark:text-sky-400 font-semibold flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5" /> Подключили
+        </span>
+        <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 font-mono">
+          {overview?.linked_total ?? '—'}
+          <span className="text-xs text-sky-600/70 dark:text-sky-400/70 font-medium"> / {activeEmployeesTotal}</span>
+        </p>
+      </div>
+    </div>
+  );
+
+  const pageTabs: { id: PageTab; label: string; icon: React.ElementType; count?: number }[] = [
+    { id: 'outbox', label: 'Журнал сообщений', icon: MessageSquareText, count: items.length },
+    { id: 'employees', label: 'Подключения сотрудников', icon: Users, count: overview?.linked_total },
+  ];
 
   return (
     <AppLayout
@@ -353,43 +518,36 @@ export default function TelegramPage() {
       hideFab
     >
       <div className="space-y-6 pb-16">
-        {/* Шапка модуля */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-sky-600 dark:text-sky-400">
-              <Send className="w-4 h-4" strokeWidth={2} />
-              <span>Уведомления сотрудников</span>
-            </div>
-            <h1 className="text-xl lg:text-2xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight mt-1">Telegram</h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              Подключения сотрудников, журнал отправленных сообщений и рассылка администратора
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-            <Button variant="outline" size="lg" onClick={fetchData} loading={isLoading} leftIcon={<RefreshCw className="w-4 h-4" strokeWidth={1.75} />}>
-              Обновить
-            </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              onClick={handleDispatchNow}
-              loading={isDispatching}
-              disabled={!overview?.configured}
-              leftIcon={<Inbox className="w-4 h-4" strokeWidth={1.75} />}
-              title="Отправить сообщения, ожидающие в очереди"
-            >
-              Отправить очередь{overview && overview.outbox.pending > 0 ? ` (${overview.outbox.pending})` : ''}
-            </Button>
-            <Button
-              size="lg"
-              className="bg-sky-600 hover:bg-sky-700 text-white"
-              onClick={() => setIsBroadcastOpen(true)}
-              disabled={!overview?.configured}
-              leftIcon={<Send className="w-4 h-4" strokeWidth={2} />}
-            >
-              Рассылка
-            </Button>
+        {/* Вкладки страницы: журнал сообщений / подключения сотрудников */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-2xl border border-zinc-200/40 dark:border-zinc-700/40 h-10 max-w-full overflow-x-auto no-scrollbar">
+            {pageTabs.map((t) => {
+              const isActive = pageTab === t.id;
+              const TabIcon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => changePageTab(t.id)}
+                  className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+                    isActive ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                  aria-pressed={isActive}
+                >
+                  <TabIcon className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>{t.label}</span>
+                  {t.count !== undefined && (
+                    <span
+                      className={`min-w-[18px] h-4.5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                        isActive ? 'bg-zinc-900/10 dark:bg-white/15' : 'bg-zinc-300/60 dark:bg-zinc-700/60'
+                      }`}
+                    >
+                      {t.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -401,63 +559,10 @@ export default function TelegramPage() {
           }}
         />
 
-        {/* Состояние бота и очереди */}
-        <CollapsibleStats storageKey="telegram">
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1 col-span-2 lg:col-span-1">
-              <span className="text-[11px] text-zinc-400 font-medium flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5" /> Бот
-              </span>
-              {overview?.configured ? (
-                <>
-                  <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
-                    {overview.bot ? `@${overview.bot.username}` : 'Токен задан, Bot API недоступен'}
-                  </p>
-                  <p className={`text-[11px] flex items-center gap-1 ${webhookOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                    <Webhook className="w-3 h-3" />
-                    {webhookOk
-                      ? 'Вебхук работает'
-                      : !webhook?.secret_configured
-                      ? 'Не задан TELEGRAM_WEBHOOK_SECRET'
-                      : !webhook?.url
-                      ? 'Вебхук не зарегистрирован — зарегистрируется при первой привязке'
-                      : webhook.last_error || 'Проверьте вебхук'}
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Не задан TELEGRAM_BOT_TOKEN
-                </p>
-              )}
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-sky-500/10 dark:bg-sky-500/5 border border-sky-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-sky-600 dark:text-sky-400 font-semibold flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5" /> Подключили
-              </span>
-              <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 font-mono">
-                {overview?.linked_total ?? '—'}
-                <span className="text-xs text-sky-600/70 dark:text-sky-400/70 font-medium"> / {overview?.employees.filter((e) => e.is_active).length ?? '—'}</span>
-              </p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Отправлено</span>
-              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{overview?.outbox.sent ?? '—'}</p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">В очереди</span>
-              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{overview?.outbox.pending ?? '—'}</p>
-            </div>
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Ошибки / пропущено</span>
-              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
-                {overview ? overview.outbox.failed : '—'}
-                <span className="text-xs text-rose-600/70 dark:text-rose-400/70 font-medium"> / {overview?.outbox.skipped ?? '—'}</span>
-              </p>
-            </div>
-          </div>
-        </CollapsibleStats>
-
         {/* Подключения сотрудников */}
+        {pageTab === 'employees' && (
+        <div className="space-y-4">
+        {botStatus}
         <div className="rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-zinc-200/60 dark:border-zinc-800/60 flex items-center justify-between gap-3 flex-wrap">
             <div>
@@ -644,8 +749,11 @@ export default function TelegramPage() {
             </table>
           </div>
         </div>
+        </div>
+        )}
 
         {/* Журнал сообщений */}
+        {pageTab === 'outbox' && (
         <DataJournal<OutboxItem>
           data={visibleItems}
           columns={columns}
@@ -659,8 +767,40 @@ export default function TelegramPage() {
           activeTab={statusTab}
           onTabChange={setStatusTab}
           totalCount={visibleItems.length}
+          stats={outboxStats}
+          onRefresh={fetchData}
+          refreshing={isLoading}
+          customActions={outboxActions}
+          customRowActions={renderRowActions}
           onRowClick={(row) => setSelectedItem(row)}
+          enableSelection={canManageOutbox}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          renderBulkActions={(ids, clearSelection) => (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isBatchLoading || !overview?.configured}
+                onClick={() => void handleBulkRetry(ids, clearSelection)}
+                className="h-8 px-3 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/30 text-xs font-semibold text-sky-200 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Повторно отправить неотправленные (ошибка, пропущено, в очереди)"
+              >
+                <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Повторить ({ids.length})</span>
+              </button>
+              <button
+                type="button"
+                disabled={isBatchLoading}
+                onClick={() => void handleBulkDelete(ids, clearSelection)}
+                className="h-8 px-3 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-200 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Удалить ({ids.length})</span>
+              </button>
+            </div>
+          )}
         />
+        )}
 
         {/* Текст сообщения */}
         {selectedItem && (

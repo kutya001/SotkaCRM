@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
+import { DataJournal, JournalMenuItem, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { formatDateOnly } from '@/lib/utils/format';
 import { useToast } from '@/components/ui/Toast';
@@ -18,19 +18,18 @@ import {
   type PlanPriceItem,
 } from './actions';
 import {
-  BookOpen,
   Plus,
   History,
-  RotateCcw,
   Tag,
   CheckCircle2,
   XCircle,
   ArrowRight,
   Trash2,
   Calendar,
+  Archive,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
 import { Button } from '@/components/ui/Button';
 import { FormField, Input, Textarea } from '@/components/ui/Field';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -40,9 +39,13 @@ const PLAN_FORM_ID = 'plan-edit-form';
 
 export default function PlansPage() {
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const user = useUser();
 
   const [plans, setPlans] = React.useState<PlanItem[]>([]);
+  // Массовые действия
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>(user.role);
@@ -229,8 +232,7 @@ export default function PlansPage() {
     }
   };
 
-  const handleOpenHistory = async (plan: PlanItem, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleOpenHistory = async (plan: PlanItem) => {
     setHistoryModal({ isOpen: true, planName: plan.plan_name, items: [], loading: true });
     try {
       const history = await getPlanHistory(plan.plan_id);
@@ -255,6 +257,79 @@ export default function PlansPage() {
       showToast(err.message || 'Ошибка при удалении тарифа', 'error');
     }
   };
+
+  // Массовая активация / архивация (одиночное действие из меню — те же ids из одного элемента)
+  const handleBulkSetActive = async (ids: string[], isActive: boolean, clearSelection?: () => void) => {
+    const targetIds = ids.filter((id) => {
+      const plan = plans.find((p) => p.plan_id === id);
+      return plan && plan.is_active !== isActive;
+    });
+    if (targetIds.length === 0) {
+      showToast(isActive ? 'Среди выбранных нет архивных тарифов' : 'Среди выбранных нет активных тарифов', 'info');
+      return;
+    }
+    setIsBatchLoading(true);
+    try {
+      const res = await api.plans.batch({ action: 'set_active', ids: targetIds, is_active: isActive });
+      showToast(`${isActive ? 'Активировано' : 'Отправлено в архив'} тарифов: ${res.affected}`, 'success');
+      clearSelection?.();
+      setSelectedIds([]);
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового изменения статуса тарифов', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  // Массовое удаление с подтверждением (проверки использования — на сервере по каждому тарифу)
+  const handleBulkDelete = async (ids: string[], clearSelection: () => void) => {
+    const ok = await confirm({
+      title: `Удалить ${ids.length} тарифов?`,
+      description:
+        'Действие необратимо. Тарифы, привязанные к действующим продавцам или зафиксированные в подключениях, удалены не будут.',
+      tone: 'danger',
+      icon: Trash2,
+      confirmLabel: 'Удалить',
+    });
+    if (!ok) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.plans.batch({ action: 'delete', ids });
+      const failed = ids.length - (res.affected ?? 0);
+      showToast(
+        failed > 0 ? `Удалено тарифов: ${res.affected}, заблокировано: ${failed}` : `Удалено тарифов: ${res.affected}`,
+        failed > 0 ? 'info' : 'success'
+      );
+      clearSelection();
+      setSelectedIds([]);
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового удаления тарифов', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  // Контекстное меню строки (ПКМ / «⋯» / карточка)
+  const renderCustomRowActions = (row: PlanItem) => (
+    <>
+      <JournalMenuItem icon={Calendar} label="Тариф и история цен" tone="info" onClick={() => handleOpenEdit(row)} />
+      <JournalMenuItem icon={History} label="Аудит изменений цен" tone="purple" onClick={() => handleOpenHistory(row)} />
+      {canManagePlans && (
+        <JournalMenuItem
+          icon={row.is_active ? Archive : CheckCircle2}
+          label={row.is_active ? 'В архив' : 'Активировать'}
+          tone={row.is_active ? 'warning' : 'success'}
+          disabled={isBatchLoading}
+          onClick={() => handleBulkSetActive([row.plan_id], !row.is_active)}
+        />
+      )}
+      {canManagePlans && (
+        <JournalMenuItem icon={Trash2} label="Удалить тариф" tone="danger" onClick={() => setDeleteDialog({ isOpen: true, plan: row })} />
+      )}
+    </>
+  );
 
   const columns: ColumnDef<PlanItem>[] = [
     {
@@ -345,60 +420,7 @@ export default function PlansPage() {
         </span>
       ),
     },
-    {
-      key: 'actions',
-      label: 'Действия',
-      width: 200,
-      minWidth: 160,
-      sortable: false,
-      filterable: false,
-      renderCell: (row) => (
-        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={() => handleOpenEdit(row)}
-            className="h-7 px-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-[11px] font-medium flex items-center gap-1 transition-colors"
-            title="Тариф и история цен"
-          >
-            <Calendar className="w-3.5 h-3.5" strokeWidth={1.75} />
-            <span>Тариф и цены</span>
-          </button>
-          <button
-            onClick={(e) => handleOpenHistory(row, e)}
-            className="h-7 px-2 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[11px] font-medium flex items-center gap-1 transition-colors"
-            title="История изменений цен"
-          >
-            <History className="w-3.5 h-3.5 text-zinc-400" strokeWidth={1.75} />
-            <span>Аудит</span>
-          </button>
-          {canManagePlans && (
-            <button
-              onClick={() => setDeleteDialog({ isOpen: true, plan: row })}
-              className="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center transition-colors"
-              title="Удалить тариф"
-            >
-              <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
-            </button>
-          )}
-        </div>
-      ),
-    },
   ];
-
-  // Контекстные действия тулбара реестра тарифов (ЯРУС 3)
-  const planActions = (
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={() => fetchData()}
-        className="min-w-[44px] min-h-[44px] h-11 px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive"
-        title="Обновить каталог"
-        aria-label="Обновить каталог"
-      >
-        <RotateCcw className={`w-4 h-4 text-blue-500 flex-shrink-0 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.75} />
-        <span className="hidden sm:inline">Обновить</span>
-      </button>
-    </div>
-  );
 
   return (
     <AppLayout
@@ -412,20 +434,7 @@ export default function PlansPage() {
       createTooltip="Добавить тариф"
     >
       <div className="space-y-4">
-        {/* Заголовок модуля тарифов */}
-        <div className="flex items-center justify-between pb-1">
-          <div>
-            <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-blue-500" strokeWidth={1.75} />
-              <span>Тарифные планы</span>
-            </h1>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Каталог тарифных планов и история действия стоимости по датам
-            </p>
-          </div>
-        </div>
-
-        {/* Реестр тарифов DataJournal (ЯРУС 3) */}
+        {/* Реестр тарифов DataJournal (ЯРУС 3): действия — в стандартном тулбаре и контекстном меню */}
         <DataJournal<PlanItem>
           data={plans}
           columns={columns}
@@ -435,7 +444,57 @@ export default function PlansPage() {
           onRowClick={canManagePlans ? handleOpenEdit : undefined}
           totalCount={plans.length}
           externalSearchQuery={searchQuery}
-          customActions={planActions}
+          onCreateClick={canManagePlans ? handleOpenCreate : undefined}
+          createTooltip="Добавить тариф"
+          onRefresh={fetchData}
+          refreshing={isLoading}
+          customRowActions={renderCustomRowActions}
+          enableSelection={canManagePlans}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          renderBulkActions={(ids, clearSelection) => {
+            const selected = plans.filter((p) => ids.includes(p.plan_id));
+            const toArchive = selected.filter((p) => p.is_active).length;
+            const toActivate = selected.filter((p) => !p.is_active).length;
+            return (
+              <div className="flex items-center gap-2">
+                {toActivate > 0 && (
+                  <button
+                    type="button"
+                    disabled={isBatchLoading}
+                    onClick={() => handleBulkSetActive(ids, true, clearSelection)}
+                    className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Активировать выбранные тарифы"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Активировать ({toActivate})</span>
+                  </button>
+                )}
+                {toArchive > 0 && (
+                  <button
+                    type="button"
+                    disabled={isBatchLoading}
+                    onClick={() => handleBulkSetActive(ids, false, clearSelection)}
+                    className="h-8 px-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold border border-amber-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Отправить выбранные тарифы в архив"
+                  >
+                    <Archive className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Деактивировать ({toArchive})</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={isBatchLoading}
+                  onClick={() => handleBulkDelete(ids, clearSelection)}
+                  className="h-8 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Удалить выбранные тарифы"
+                >
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  <span>Удалить ({ids.length})</span>
+                </button>
+              </div>
+            );
+          }}
         />
 
         {/* Модальное окно создания / редактирования тарифа с историей действия цен */}

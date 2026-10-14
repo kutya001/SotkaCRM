@@ -66,9 +66,10 @@ async function runPerfSwrVerification() {
     throw new Error('Роут sellers/[id]/link-lead не вызывает link_lead_to_seller RPC!');
   }
 
+  // Показатели главной считаются в области данных сотрудника (view_all → все записи, иначе — свои)
   const kpiRoute = fs.readFileSync('app/api/v1/dashboard/kpi/route.ts', 'utf8');
-  if (!kpiRoute.includes(".rpc('get_dashboard_kpi'")) {
-    throw new Error('Роут dashboard/kpi не вызывает get_dashboard_kpi RPC!');
+  if (!kpiRoute.includes("canViewAll('leads')") || !kpiRoute.includes('scope.leads === \'own\'')) {
+    throw new Error('Роут dashboard/kpi не ограничивает показатели областью данных сотрудника!');
   }
 
   const payoutsCalcRoute = fs.readFileSync('app/api/v1/payouts/calculate/route.ts', 'utf8');

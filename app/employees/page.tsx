@@ -3,8 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
-import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
+import { DataJournal, JournalMenuItem, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
 import { PhoneInput, usePhoneParts } from '@/components/ui/PhoneInput';
@@ -45,6 +44,7 @@ import {
   EyeOff,
   Eye,
   AtSign,
+  UserCog,
 } from 'lucide-react';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { Modal } from '@/components/ui/Modal';
@@ -69,6 +69,7 @@ import { EmployeesMapModal } from '@/components/employees/EmployeesMapModal';
 const CREATE_FORM_ID = 'employee-create-form';
 const EDIT_FORM_ID = 'employee-edit-form';
 const RESET_FORM_ID = 'employee-reset-password-form';
+const BULK_ROLE_FORM_ID = 'employee-bulk-role-form';
 
 export default function EmployeesPage() {
   const router = useRouter();
@@ -105,6 +106,12 @@ export default function EmployeesPage() {
 
   // Общая карта сотрудников (администратор)
   const [isMapOpen, setIsMapOpen] = React.useState(false);
+
+  // Массовые действия: выбор строк, назначение роли
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [isBatchLoading, setIsBatchLoading] = React.useState(false);
+  const [bulkRoleIds, setBulkRoleIds] = React.useState<string[] | null>(null);
+  const [bulkRoleId, setBulkRoleId] = React.useState('');
 
   // Модальное окно создания сотрудника
   const [isCreateModalOpen, setIsCreateModalOpen] = React.useState(false);
@@ -186,6 +193,11 @@ export default function EmployeesPage() {
       }),
     [employees, roleFilter, showInactive]
   );
+
+  // При смене вкладки роли или фильтра активности выбор строк сбрасывается
+  React.useEffect(() => {
+    setSelectedIds([]);
+  }, [roleFilter, showInactive]);
 
   // Проверка анкеты до отправки (сервер проверяет те же правила)
   const validateProfile = (profile: EmployeeProfileFormValue): string | null => {
@@ -436,6 +448,74 @@ export default function EmployeesPage() {
     }
   };
 
+  // Массовое отключение / включение аккаунтов (собственный аккаунт никогда не отключается)
+  const handleBulkSetActive = async (ids: string[], isActive: boolean, clearSelection: () => void) => {
+    const ownId = user.profile?.user_id;
+    const targetIds = ids.filter((id) => {
+      const emp = employees.find((e) => e.user_id === id);
+      if (!emp || emp.is_active === isActive) return false;
+      if (!isActive && id === ownId) return false;
+      return true;
+    });
+    if (!isActive && ownId && ids.includes(ownId)) {
+      showToast('Собственный аккаунт пропущен: его нельзя отключить', 'info');
+    }
+    if (targetIds.length === 0) {
+      showToast(isActive ? 'Среди выбранных нет отключённых аккаунтов' : 'Среди выбранных нет активных аккаунтов', 'info');
+      return;
+    }
+    const ok = await confirm({
+      title: isActive ? `Включить ${targetIds.length} аккаунтов?` : `Отключить ${targetIds.length} аккаунтов?`,
+      description: isActive
+        ? 'Сотрудники снова смогут входить в CRM и появятся в общем списке.'
+        : 'Сотрудники потеряют доступ в CRM и будут скрыты из общего списка (видны по кнопке «Показать отключённые»). Данные и история сохраняются.',
+      tone: isActive ? 'info' : 'danger',
+      icon: isActive ? Unlock : Lock,
+      confirmLabel: isActive ? 'Включить' : 'Отключить',
+    });
+    if (!ok) return;
+    setIsBatchLoading(true);
+    try {
+      const res = await api.employees.batch({ action: 'set_active', ids: targetIds, is_active: isActive });
+      showToast(`${isActive ? 'Включено' : 'Отключено'} аккаунтов: ${res.updated}`, 'success');
+      clearSelection();
+      setSelectedIds([]);
+      fetchEmployeesData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового изменения активности', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
+  // Массовое назначение роли
+  const openBulkRole = (ids: string[]) => {
+    const first = employees.find((e) => ids.includes(e.user_id));
+    setBulkRoleId(first?.role_id || roles[0]?.role_id || '');
+    setBulkRoleIds(ids);
+  };
+
+  const handleBulkRoleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkRoleIds || bulkRoleIds.length === 0) return;
+    if (!bulkRoleId) {
+      showToast('Выберите роль', 'error');
+      return;
+    }
+    setIsBatchLoading(true);
+    try {
+      const res = await api.employees.batch({ action: 'set_role', ids: bulkRoleIds, role_id: bulkRoleId });
+      showToast(`Роль «${roleNameById.get(bulkRoleId) || ''}» назначена: ${res.updated} сотр.`, 'success');
+      setBulkRoleIds(null);
+      setSelectedIds([]);
+      fetchEmployeesData();
+    } catch (err: any) {
+      showToast(err.message || 'Ошибка массового назначения роли', 'error');
+    } finally {
+      setIsBatchLoading(false);
+    }
+  };
+
   // Конфигурация колонок DataJournal
   const columns: ColumnDef<EmployeeItem>[] = [
     {
@@ -522,19 +602,12 @@ export default function EmployeesPage() {
         { value: 'false', label: 'Отключён' },
       ],
       renderCell: (item: EmployeeItem) => (
-        <button
-          type="button"
-          disabled={!canDeactivate}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (canDeactivate) handleToggleActive(item);
-          }}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all active:scale-95 disabled:cursor-default ${
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
             item.is_active
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
-              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
           }`}
-          title={!canDeactivate ? undefined : item.is_active ? 'Отключить аккаунт' : 'Включить аккаунт'}
         >
           {item.is_active ? (
             <>
@@ -547,7 +620,7 @@ export default function EmployeesPage() {
               <span>Отключён</span>
             </>
           )}
-        </button>
+        </span>
       ),
     },
     {
@@ -647,51 +720,33 @@ export default function EmployeesPage() {
         </span>
       ),
     },
-    {
-      key: 'actions',
-      label: 'Действия',
-      sortable: false,
-      filterable: false,
-      renderCell: (item: EmployeeItem) => (
-        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          {canEdit && (
-            <button
-              type="button"
-              onClick={() => handleOpenEdit(item)}
-              className="p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
-              title="Редактировать сотрудника"
-            >
-              <Edit3 className="w-4 h-4" strokeWidth={1.75} />
-            </button>
-          )}
-          {canResetPassword && (
-            <button
-              type="button"
-              onClick={() => handleOpenResetPassword(item)}
-              className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950 text-zinc-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-              title="Сбросить пароль"
-            >
-              <KeyRound className="w-4 h-4" strokeWidth={1.75} />
-            </button>
-          )}
-          {canDeactivate && item.user_id !== user.profile?.user_id && (
-            <button
-              type="button"
-              onClick={() => handleToggleActive(item)}
-              className={`p-1.5 rounded-lg transition-colors ${
-                item.is_active
-                  ? 'hover:bg-rose-50 dark:hover:bg-rose-950 text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400'
-                  : 'hover:bg-emerald-50 dark:hover:bg-emerald-950 text-zinc-500 hover:text-emerald-600 dark:hover:text-emerald-400'
-              }`}
-              title={item.is_active ? 'Отключить аккаунт' : 'Включить аккаунт'}
-            >
-              {item.is_active ? <Lock className="w-4 h-4" strokeWidth={1.75} /> : <Unlock className="w-4 h-4" strokeWidth={1.75} />}
-            </button>
-          )}
-        </div>
-      ),
-    },
   ];
+
+  // Контекстное меню строки (ПКМ / «⋯» / карточка)
+  const renderCustomRowActions = (item: EmployeeItem) => {
+    const isSelf = item.user_id === user.profile?.user_id;
+    if (!canEdit && !canResetPassword && !canDeactivate) return null;
+    return (
+      <>
+        {canEdit && (
+          <JournalMenuItem icon={Edit3} label="Редактировать" onClick={() => handleOpenEdit(item)} />
+        )}
+        {canResetPassword && (
+          <JournalMenuItem icon={KeyRound} label="Сбросить пароль" tone="info" onClick={() => handleOpenResetPassword(item)} />
+        )}
+        {canDeactivate && (
+          <JournalMenuItem
+            icon={item.is_active ? Lock : Unlock}
+            label={item.is_active ? 'Отключить аккаунт' : 'Включить аккаунт'}
+            tone={item.is_active ? 'danger' : 'success'}
+            disabled={isSelf && item.is_active}
+            title={isSelf && item.is_active ? 'Нельзя отключить собственный аккаунт' : undefined}
+            onClick={() => handleToggleActive(item)}
+          />
+        )}
+      </>
+    );
+  };
 
   // Подсчет статистики
   const blockedCount = employees.filter((e) => !e.is_active).length;
@@ -718,6 +773,68 @@ export default function EmployeesPage() {
     [employees, roles, countByRole, showInactive]
   );
 
+  // Контекстные действия тулбара реестра
+  const employeeActions = (
+    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+      <button
+        type="button"
+        onClick={() => setShowInactive((v) => !v)}
+        aria-pressed={showInactive}
+        className={`h-9 md:h-11 px-3 md:px-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 island-interactive ${
+          showInactive
+            ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+            : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80'
+        }`}
+        title={showInactive ? 'Скрыть отключённые аккаунты' : 'Показать отключённые аккаунты'}
+      >
+        {showInactive ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
+        <span className="hidden lg:inline">{showInactive ? 'Скрыть отключённые' : 'Показать отключённые'}</span>
+        {blockedCount > 0 && (
+          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center justify-center">
+            {blockedCount}
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={() => setIsMapOpen(true)}
+        className="h-9 md:h-11 px-3 md:px-3.5 rounded-xl border bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 text-xs font-semibold flex items-center gap-2 transition-all active:scale-95 island-interactive"
+        title="Места проживания сотрудников на одной карте"
+      >
+        <MapPin className="w-4 h-4 text-rose-500" strokeWidth={2} />
+        <span className="hidden lg:inline">Карта сотрудников</span>
+      </button>
+    </div>
+  );
+
+  // Статистика модуля (блок над тулбаром DataJournal)
+  const statsBlock = (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+        <span className="text-[11px] text-zinc-400 font-medium">Всего в штате</span>
+        <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{employees.length}</p>
+      </div>
+      {roles.map((r) => (
+        <div
+          key={r.role_id}
+          className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1"
+        >
+          <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">{r.name}</span>
+          <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">{countByRole.get(r.role_id) || 0}</p>
+        </div>
+      ))}
+      <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+        <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Отключено</span>
+        <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{blockedCount}</p>
+      </div>
+    </div>
+  );
+
+  const handleOpenCreate = () => {
+    if (!newRoleId) setNewRoleId(roles.find((r) => r.code === 'consultant')?.role_id || roles[0]?.role_id || '');
+    setIsCreateModalOpen(true);
+  };
+
   return (
     <AppLayout
       userRole={currentUserRole}
@@ -727,101 +844,37 @@ export default function EmployeesPage() {
       onSearchChange={setSearchQuery}
       searchPlaceholder="Поиск по ФИО, логину или номеру..."
     >
-      <div className="space-y-6 pb-16">
-        {/* Шапка модуля */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-blue-600 dark:text-blue-400">
-              <Users className="w-4 h-4" strokeWidth={2} />
-              <span>Администрирование пользователей</span>
-            </div>
-            <h1 className="text-xl lg:text-2xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight mt-1">
-              {pageTab === 'roles' ? 'Роли и доступы' : 'Реестр сотрудников'}
-            </h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              {pageTab === 'roles'
-                ? 'Создание ролей и гибкая настройка прав по каждому модулю'
-                : 'Управление доступом, ролевой моделью и учетными записями CRM'}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-            {/* Вкладки модуля */}
-            <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-2xl border border-zinc-200/40 dark:border-zinc-700/40 h-10">
+      <div className="space-y-4 pb-16">
+        {/* Разделы модуля: реестр сотрудников / роли и доступы */}
+        <div className="flex items-center">
+          <div className="inline-flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-2xl border border-zinc-200/40 dark:border-zinc-700/40 h-10">
+            <button
+              type="button"
+              onClick={() => setPageTab('employees')}
+              className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                pageTab === 'employees'
+                  ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+              aria-pressed={pageTab === 'employees'}
+            >
+              <Users className="w-3.5 h-3.5" strokeWidth={1.75} />
+              <span>Сотрудники</span>
+            </button>
+            {canSeeRoles && (
               <button
                 type="button"
-                onClick={() => setPageTab('employees')}
+                onClick={() => setPageTab('roles')}
                 className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                  pageTab === 'employees'
+                  pageTab === 'roles'
                     ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
                     : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
                 }`}
-                aria-pressed={pageTab === 'employees'}
+                aria-pressed={pageTab === 'roles'}
               >
-                <Users className="w-3.5 h-3.5" strokeWidth={1.75} />
-                <span>Сотрудники</span>
+                <ShieldHalf className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Роли — Доступы</span>
               </button>
-              {canSeeRoles && (
-                <button
-                  type="button"
-                  onClick={() => setPageTab('roles')}
-                  className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                    pageTab === 'roles'
-                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                      : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-                  }`}
-                  aria-pressed={pageTab === 'roles'}
-                >
-                  <ShieldHalf className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span>Роли — Доступы</span>
-                </button>
-              )}
-            </div>
-
-            {pageTab === 'employees' && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowInactive((v) => !v)}
-                  aria-pressed={showInactive}
-                  className={`h-10 px-4 rounded-2xl border text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95 ${
-                    showInactive
-                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
-                      : 'border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200'
-                  }`}
-                  title={showInactive ? 'Скрыть отключённые аккаунты' : 'Показать отключённые аккаунты'}
-                >
-                  {showInactive ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
-                  <span className="hidden sm:inline">{showInactive ? 'Скрыть отключённые' : 'Показать отключённые'}</span>
-                  {blockedCount > 0 && (
-                    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center justify-center">
-                      {blockedCount}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsMapOpen(true)}
-                  className="h-10 px-4 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
-                  title="Места проживания сотрудников на одной карте"
-                >
-                  <MapPin className="w-4 h-4 text-rose-500" strokeWidth={2} />
-                  <span className="hidden sm:inline">Карта сотрудников</span>
-                </button>
-                {canCreate && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!newRoleId) setNewRoleId(roles.find((r) => r.code === 'consultant')?.role_id || roles[0]?.role_id || '');
-                      setIsCreateModalOpen(true);
-                    }}
-                    className="h-10 px-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-95"
-                  >
-                    <Plus className="w-4 h-4" strokeWidth={2} />
-                    <span>Добавить сотрудника</span>
-                  </button>
-                )}
-              </>
             )}
           </div>
         </div>
@@ -830,32 +883,7 @@ export default function EmployeesPage() {
 
         <EmployeesMapModal isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} />
 
-        {/* Карточки оперативной статистики по сотрудникам */}
-        {pageTab === 'employees' && (
-        <CollapsibleStats storageKey="employees">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-              <span className="text-[11px] text-zinc-400 font-medium">Всего в штате</span>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{employees.length}</p>
-            </div>
-            {roles.map((r) => (
-              <div
-                key={r.role_id}
-                className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1"
-              >
-                <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold truncate block">{r.name}</span>
-                <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">{countByRole.get(r.role_id) || 0}</p>
-              </div>
-            ))}
-            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Отключено</span>
-              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{blockedCount}</p>
-            </div>
-          </div>
-        </CollapsibleStats>
-        )}
-
-        {/* Таблица DataJournal */}
+        {/* Реестр сотрудников DataJournal: статистика, вкладки ролей и действия — в стандартном тулбаре */}
         {pageTab === 'employees' && (
         <DataJournal<EmployeeItem>
           data={visibleEmployees}
@@ -867,12 +895,114 @@ export default function EmployeesPage() {
           emptyMessage="Сотрудники не найдены"
           externalSearchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          stats={statsBlock}
           tabs={employeeTabs}
           activeTab={roleFilter}
           onTabChange={setRoleFilter}
+          onCreateClick={canCreate ? handleOpenCreate : undefined}
+          createTooltip="Добавить сотрудника"
+          onRefresh={fetchEmployeesData}
+          refreshing={isLoading}
+          customActions={employeeActions}
+          customRowActions={renderCustomRowActions}
           onRowClick={(item) => (canEdit ? handleOpenEdit(item) : undefined)}
+          enableSelection={canEdit || canDeactivate}
+          selectedIds={selectedIds}
+          onSelectionChange={setSelectedIds}
+          renderBulkActions={(ids, clearSelection) => {
+            const ownId = user.profile?.user_id;
+            const selected = employees.filter((e) => ids.includes(e.user_id));
+            const toDisable = selected.filter((e) => e.is_active && e.user_id !== ownId).length;
+            const toEnable = selected.filter((e) => !e.is_active).length;
+            return (
+              <div className="flex items-center gap-2">
+                {canDeactivate && toDisable > 0 && (
+                  <button
+                    type="button"
+                    disabled={isBatchLoading}
+                    onClick={() => handleBulkSetActive(ids, false, clearSelection)}
+                    className="h-8 px-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Отключить выбранные аккаунты"
+                  >
+                    <Lock className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Отключить ({toDisable})</span>
+                  </button>
+                )}
+                {canDeactivate && toEnable > 0 && (
+                  <button
+                    type="button"
+                    disabled={isBatchLoading}
+                    onClick={() => handleBulkSetActive(ids, true, clearSelection)}
+                    className="h-8 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold border border-emerald-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Включить выбранные аккаунты"
+                  >
+                    <Unlock className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Включить ({toEnable})</span>
+                  </button>
+                )}
+                {canEdit && (
+                  <button
+                    type="button"
+                    disabled={isBatchLoading}
+                    onClick={() => openBulkRole(ids)}
+                    className="h-8 px-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 text-xs font-semibold border border-blue-500/30 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Назначить роль выбранным сотрудникам"
+                  >
+                    <UserCog className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    <span>Назначить роль… ({ids.length})</span>
+                  </button>
+                )}
+              </div>
+            );
+          }}
         />
         )}
+
+        {/* Массовое назначение роли */}
+        <Modal
+          open={bulkRoleIds !== null}
+          onClose={() => !isBatchLoading && setBulkRoleIds(null)}
+          title="Назначить роль"
+          subtitle={`Выбрано сотрудников: ${bulkRoleIds?.length ?? 0}`}
+          icon={UserCog}
+          tone="info"
+          size="sm"
+          busy={isBatchLoading}
+          formId={BULK_ROLE_FORM_ID}
+          onSubmit={handleBulkRoleSubmit}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setBulkRoleIds(null)} disabled={isBatchLoading}>
+                Отмена
+              </Button>
+              <Button type="submit" form={BULK_ROLE_FORM_ID} variant="info" loading={isBatchLoading}>
+                {isBatchLoading ? 'Назначение...' : 'Назначить'}
+              </Button>
+            </>
+          }
+        >
+          <FormField
+            label="Роль в системе CRM"
+            htmlFor="employee-bulk-role"
+            hint={roles.find((r) => r.role_id === bulkRoleId)?.description || 'Права роли настраиваются во вкладке «Роли — Доступы»'}
+          >
+            <Select
+              id="employee-bulk-role"
+              value={bulkRoleId}
+              onChange={(e) => setBulkRoleId(e.target.value)}
+              className="font-semibold"
+              size="lg"
+              required
+            >
+              <option value="">— Выберите роль —</option>
+              {roles.map((r) => (
+                <option key={r.role_id} value={r.role_id}>
+                  {r.name}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+        </Modal>
 
         {/* 1. МОДАЛЬНОЕ ОКНО ДОБАВЛЕНИЯ СОТРУДНИКА */}
         <Modal

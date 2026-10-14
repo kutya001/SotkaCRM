@@ -814,6 +814,30 @@ export type Database = {
           },
         ]
       }
+      connection_participants: {
+        Row: {
+          id: string
+          connection_id: string
+          user_id: string
+          added_by: string | null
+          added_at: string
+        }
+        Insert: {
+          id?: string
+          connection_id: string
+          user_id: string
+          added_by?: string | null
+          added_at?: string
+        }
+        Update: {
+          id?: string
+          connection_id?: string
+          user_id?: string
+          added_by?: string | null
+          added_at?: string
+        }
+        Relationships: []
+      }
       connection_maintenance_assignments: {
         Row: {
           id: string

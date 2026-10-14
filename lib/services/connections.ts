@@ -22,14 +22,60 @@ const fail = (error: string, code: string, status = 400): ServiceError => ({ suc
 /** Инициатор операции: достаточно user_id (права проверяет вызывающий маршрут через requirePermission) */
 type Actor = Pick<AuthContext['profile'], 'user_id'> & Partial<Pick<AuthContext['profile'], 'role'>>;
 
-/** Подключения, где сотрудник назначен на сопровождение хотя бы одного месяца (042) */
+/**
+ * Подключения, где сотрудник участвует помимо основного (connection_participants, 043)
+ * или назначен на сопровождение хотя бы одного месяца (042).
+ */
 export async function maintenanceConnectionIdsFor(userId: string): Promise<string[]> {
   const admin = createAdminClient();
-  const { data } = await admin
-    .from('connection_maintenance_assignments')
-    .select('connection_id')
-    .eq('user_id', userId);
-  return Array.from(new Set((data || []).map((r) => r.connection_id)));
+  const [{ data: maint }, { data: parts }] = await Promise.all([
+    admin.from('connection_maintenance_assignments').select('connection_id').eq('user_id', userId),
+    admin.from('connection_participants').select('connection_id').eq('user_id', userId),
+  ]);
+  return Array.from(new Set([...(maint || []), ...(parts || [])].map((r) => r.connection_id)));
+}
+
+/** Все участники подключения: основной (manager_id) первым, далее по порядку добавления (043) */
+export async function loadParticipants(
+  connectionIds: string[]
+): Promise<Map<string, MaintenanceAssignmentView['user'][]>> {
+  const result = new Map<string, MaintenanceAssignmentView['user'][]>();
+  if (connectionIds.length === 0) return result;
+  const admin = createAdminClient();
+  const [{ data: conns }, { data: rows }] = await Promise.all([
+    admin.from('connections').select('connection_id, manager_id').in('connection_id', connectionIds),
+    admin
+      .from('connection_participants')
+      .select('connection_id, user_id, added_at')
+      .in('connection_id', connectionIds)
+      .order('added_at', { ascending: true }),
+  ]);
+  const idsByConn = new Map<string, string[]>();
+  for (const c of conns || []) idsByConn.set(c.connection_id, c.manager_id ? [c.manager_id] : []);
+  for (const r of rows || []) {
+    const arr = idsByConn.get(r.connection_id) || [];
+    if (!arr.includes(r.user_id)) arr.push(r.user_id);
+    idsByConn.set(r.connection_id, arr);
+  }
+  const userIds = Array.from(new Set(Array.from(idsByConn.values()).flat()));
+  const users = new Map<string, MaintenanceAssignmentView['user']>();
+  if (userIds.length > 0) {
+    const { data: us } = await admin.from('users').select('user_id, full_name, role, login, color').in('user_id', userIds);
+    (us || []).forEach((u) => users.set(u.user_id, { ...u, color: u.color ?? null }));
+  }
+  for (const [cid, ids] of idsByConn) {
+    result.set(
+      cid,
+      ids.map((id) => users.get(id) || { user_id: id, full_name: 'Сотрудник', role: '', login: '', color: null })
+    );
+  }
+  return result;
+}
+
+/** Идентификаторы участников подключения (основной первым) */
+export async function participantIdsOf(connectionId: string): Promise<string[]> {
+  const map = await loadParticipants([connectionId]);
+  return (map.get(connectionId) || []).map((u) => u!.user_id);
 }
 
 /**
@@ -98,33 +144,43 @@ export async function loadMaintenanceAssignments(
 
 export interface MaintenanceAssignmentInput {
   month_index: number;
-  /** null — сопровождает подключивший (назначение по месяцу снимается) */
-  user_id: string | null;
+  /** Пустой список — сопровождают все участники подключения (назначения месяца снимаются) */
+  user_ids: string[];
 }
 
 interface StaffParams {
   connectionId: string;
-  /** Подключивший сотрудник: назначение подтверждает подключение (бонус — триггер 035) */
-  managerId?: string | null;
+  /** Полный состав участников: первый — основной (подключивший, manager_id). Назначение подтверждает подключение */
+  participants?: string[];
+  /** Сопровождающие по месяцам */
   maintenance?: MaintenanceAssignmentInput[];
   actor: Actor;
+  /**
+   * admin — право connections.edit (любые изменения);
+   * participant — участник подключения: может только исключать (себя или коллег) из участников и из месяцев сопровождения
+   */
+  mode: 'admin' | 'participant';
 }
 
 export interface StaffResult {
   connectionId: string;
+  participantsChanged: boolean;
   managerChanged: boolean;
   confirmed: boolean;
   maintenanceUpdated: number;
   skipped: string[];
 }
 
+const uniq = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
+
 /**
- * Назначение сотрудников подключения (042): «кто подключил» (с подтверждением подключения)
- * и «кто сопровождает» по месяцам. Сопровождение не подтверждается сразу — статус назначения
- * становится accrued в момент начисления за соответствующий месяц.
+ * Сотрудники подключения (042/043): участники (бонус за подключение делится поровну; смена состава
+ * пересчитывает неоплаченные доли триггером БД) и сопровождающие по месяцам (доли при начислении).
+ * Назначение участников администратором подтверждает подключение. Сопровождение подтверждается
+ * только при начислении за месяц; уже начисленные месяцы не меняются.
  */
 export async function assignConnectionStaff(params: StaffParams): Promise<ServiceResult<StaffResult>> {
-  const { connectionId, managerId, maintenance = [], actor } = params;
+  const { connectionId, maintenance = [], actor, mode } = params;
   const admin = createAdminClient();
 
   const { data: conn, error: connErr } = await admin
@@ -135,25 +191,39 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
   if (connErr) return fail(connErr.message, 'DB_ERROR', 500);
   if (!conn) return fail('Подключение не найдено', 'NOT_FOUND', 404);
 
-  const userIds = Array.from(
-    new Set([managerId, ...maintenance.map((m) => m.user_id)].filter((v): v is string => Boolean(v)))
-  );
+  const currentParticipants = await participantIdsOf(connectionId);
+  if (mode === 'participant' && !currentParticipants.includes(actor.user_id)) {
+    return fail('Изменять состав могут только участники этого подключения', 'FORBIDDEN', 403);
+  }
+
+  const requested = params.participants ? uniq(params.participants) : undefined;
+  if (requested && requested.length === 0) return fail('В подключении должен остаться хотя бы один участник', 'VALIDATION_ERROR', 422);
+  if (requested && requested.length > 3) return fail('В подключении может быть не более трех участников', 'VALIDATION_ERROR', 422);
+
+  // Участник может только исключать: новый состав — подмножество текущего
+  if (mode === 'participant' && requested) {
+    const added = requested.filter((id) => !currentParticipants.includes(id));
+    if (added.length > 0) return fail('Участник может только исключать из подключения, добавляет администратор', 'FORBIDDEN', 403);
+  }
+
+  const userIds = uniq([...(requested || []), ...maintenance.flatMap((m) => m.user_ids || [])]);
   if (userIds.length > 0) {
     const { data: users } = await admin.from('users').select('user_id, is_active').in('user_id', userIds);
     const active = new Set((users || []).filter((u) => u.is_active).map((u) => u.user_id));
-    const missing = userIds.filter((id) => !active.has(id));
-    if (missing.length > 0) return fail('Сотрудник не найден или отключен', 'USER_NOT_FOUND', 404);
+    if (userIds.some((id) => !active.has(id))) return fail('Сотрудник не найден или отключен', 'USER_NOT_FOUND', 404);
   }
 
   const nowIso = new Date().toISOString();
   const skipped: string[] = [];
+  let participantsChanged = false;
   let managerChanged = false;
   let confirmed = false;
 
-  // 1. Подключивший: смена сотрудника и/или подтверждение подключения
-  if (managerId) {
-    const needsManager = managerId !== conn.manager_id;
-    const needsConfirm = conn.confirmation_status !== 'confirmed';
+  // 1. Состав участников: основной (manager_id) + остальные (connection_participants)
+  if (requested) {
+    const nextManager = requested[0];
+    const needsManager = nextManager !== conn.manager_id;
+    const needsConfirm = mode === 'admin' && conn.confirmation_status !== 'confirmed';
     if (needsManager || needsConfirm) {
       const restart = conn.confirmation_status === 'rejected';
       const now = new Date();
@@ -161,13 +231,12 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
       const { error } = await admin
         .from('connections')
         .update({
-          manager_id: managerId,
+          manager_id: nextManager,
           ...(needsManager ? { assigned_by: actor.user_id, assigned_at: nowIso } : {}),
-          confirmation_status: 'confirmed',
-          confirmed_by: actor.user_id,
-          confirmed_at: nowIso,
-          rejection_reason: null,
-          ...(restart
+          ...(needsConfirm
+            ? { confirmation_status: 'confirmed', confirmed_by: actor.user_id, confirmed_at: nowIso, rejection_reason: null }
+            : {}),
+          ...(restart && needsConfirm
             ? { status: 'подключен', client_status: 'новый', accrual_month: nowIso.substring(0, 7), maintenance_month_start: nextMonth }
             : {}),
         })
@@ -175,20 +244,51 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
       if (error) return fail(error.message, 'DB_ERROR', 500);
       managerChanged = needsManager;
       confirmed = needsConfirm;
-
-      // Консультант в карточке продавца — подключивший
-      await admin.from('sellers').update({ manager_id: managerId }).eq('seller_phone', conn.seller_phone);
+      // Консультант в карточке продавца — основной участник
+      await admin.from('sellers').update({ manager_id: nextManager }).eq('seller_phone', conn.seller_phone);
     }
+
+    const extras = requested.slice(1);
+    const { data: existingRows } = await admin
+      .from('connection_participants')
+      .select('user_id')
+      .eq('connection_id', connectionId);
+    const existing = new Set((existingRows || []).map((r) => r.user_id));
+    const toRemove = Array.from(existing).filter((id) => !extras.includes(id));
+    const toAdd = extras.filter((id) => !existing.has(id));
+    if (toRemove.length > 0) {
+      const { error } = await admin
+        .from('connection_participants')
+        .delete()
+        .eq('connection_id', connectionId)
+        .in('user_id', toRemove);
+      if (error) return fail(error.message, 'DB_ERROR', 500);
+      participantsChanged = true;
+    }
+    if (toAdd.length > 0) {
+      const { error } = await admin.from('connection_participants').insert(
+        toAdd.map((user_id) => ({ connection_id: connectionId, user_id, added_by: actor.user_id, added_at: nowIso }))
+      );
+      if (error) return fail(error.message, 'DB_ERROR', 500);
+      participantsChanged = true;
+    }
+    if (needsManager) participantsChanged = true;
   }
 
-  // 2. Сопровождение по месяцам: planned-назначения создаются/меняются/снимаются, accrued — не трогаем
+  // 2. Сопровождение по месяцам: planned-назначения заменяются набором; accrued месяцы не трогаем
   let maintenanceUpdated = 0;
   if (maintenance.length > 0) {
+    const effectiveParticipants = requested || currentParticipants;
     const { data: existingRows } = await admin
       .from('connection_maintenance_assignments')
       .select('month_index, user_id, status')
       .eq('connection_id', connectionId);
-    const existing = new Map((existingRows || []).map((r) => [r.month_index, r]));
+    const byMonth = new Map<number, { user_id: string; status: string }[]>();
+    for (const r of existingRows || []) {
+      const arr = byMonth.get(r.month_index) || [];
+      arr.push({ user_id: r.user_id, status: r.status });
+      byMonth.set(r.month_index, arr);
+    }
 
     for (const item of maintenance) {
       const idx = Number(item.month_index);
@@ -196,13 +296,32 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
         skipped.push(`месяц ${item.month_index}: неверный номер месяца`);
         continue;
       }
-      const current = existing.get(idx);
-      if (current?.status === 'accrued') {
-        skipped.push(`месяц ${idx}: уже начислено, сотрудник не меняется`);
+      const current = byMonth.get(idx) || [];
+      if (current.some((r) => r.status === 'accrued')) {
+        skipped.push(`месяц ${idx}: уже начислено, состав не меняется`);
         continue;
       }
-      if (!item.user_id) {
-        if (!current) continue;
+      const next = uniq(item.user_ids || []);
+      if (next.length > 3) {
+        skipped.push(`месяц ${idx}: не более трех сопровождающих`);
+        continue;
+      }
+      const currentIds = current.map((r) => r.user_id);
+      const currentEffective = currentIds.length > 0 ? currentIds : effectiveParticipants;
+      if (mode === 'participant') {
+        if (next.length === 0) {
+          skipped.push(`месяц ${idx}: участник может только исключать сопровождающих`);
+          continue;
+        }
+        if (next.some((id) => !currentEffective.includes(id))) {
+          skipped.push(`месяц ${idx}: участник может только исключать сопровождающих`);
+          continue;
+        }
+      }
+      const same = next.length === currentIds.length && next.every((id) => currentIds.includes(id));
+      if (same) continue;
+
+      if (currentIds.length > 0) {
         const { error } = await admin
           .from('connection_maintenance_assignments')
           .delete()
@@ -210,28 +329,61 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
           .eq('month_index', idx)
           .eq('status', 'planned');
         if (error) return fail(error.message, 'DB_ERROR', 500);
-        maintenanceUpdated++;
-        continue;
       }
-      if (current && current.user_id === item.user_id) continue;
-      const { error } = await admin.from('connection_maintenance_assignments').upsert(
-        {
-          connection_id: connectionId,
-          month_index: idx,
-          user_id: item.user_id,
-          assigned_by: actor.user_id,
-          assigned_at: nowIso,
-          status: 'planned',
-        },
-        { onConflict: 'connection_id,month_index' }
-      );
-      if (error) return fail(error.message, 'DB_ERROR', 500);
+      if (next.length > 0) {
+        const { error } = await admin.from('connection_maintenance_assignments').insert(
+          next.map((user_id) => ({
+            connection_id: connectionId,
+            month_index: idx,
+            user_id,
+            assigned_by: actor.user_id,
+            assigned_at: nowIso,
+            status: 'planned' as const,
+          }))
+        );
+        if (error) return fail(error.message, 'DB_ERROR', 500);
+      }
       maintenanceUpdated++;
     }
   }
 
   scheduleTelegramDispatch();
-  return { success: true, connectionId, managerChanged, confirmed, maintenanceUpdated, skipped };
+  return { success: true, connectionId, participantsChanged, managerChanged, confirmed, maintenanceUpdated, skipped };
+}
+
+/**
+ * Удаление подключения (одиночное и массовое): консультант у продавца снимается, назначения
+ * сопровождения, участники и начисления по подключению удаляются из обоих регистров.
+ * Область видимости и право connections.delete проверяет вызывающий маршрут.
+ */
+export async function deleteConnection(connectionId: string): Promise<ServiceResult<{ deletedId: string; sellerPhone: string | null }>> {
+  const admin = createAdminClient();
+  const { data: conn, error: getErr } = await admin
+    .from('connections')
+    .select('connection_id, seller_phone, manager_id')
+    .eq('connection_id', connectionId)
+    .maybeSingle();
+  if (getErr) return fail(getErr.message, 'DB_ERROR', 500);
+  if (!conn) return fail('Подключение не найдено', 'NOT_FOUND', 404);
+
+  if (conn.seller_phone) {
+    const { error: sellerErr } = await admin.from('sellers').update({ manager_id: null }).eq('seller_phone', conn.seller_phone);
+    if (sellerErr) console.error('[deleteConnection] Ошибка сброса консультанта продавца:', sellerErr);
+  }
+
+  await admin.from('connection_maintenance_assignments').delete().eq('connection_id', connectionId);
+  await admin.from('connection_participants').delete().eq('connection_id', connectionId);
+  await admin.from('connection_accruals').delete().eq('connection_id', connectionId);
+  await admin.from('employee_payouts').delete().eq('connection_id', connectionId).eq('operation_sign', '+');
+  try {
+    await admin.from('client_maintenance').delete().eq('connection_id', connectionId);
+  } catch {}
+
+  const { error: delErr } = await admin.from('connections').delete().eq('connection_id', connectionId);
+  if (delErr) return fail(delErr.message, 'DB_ERROR', 500);
+
+  scheduleTelegramDispatch();
+  return { success: true, deletedId: connectionId, sellerPhone: conn.seller_phone ?? null };
 }
 
 interface AssignParams {

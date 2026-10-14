@@ -626,13 +626,15 @@ export const api = {
       return res;
     },
     /** Сотрудники подключения (042): подключивший (с подтверждением) и сопровождение по месяцам */
+    /** Сотрудники подключения (042/043): участники (первый — основной) и сопровождающие по месяцам */
     assignStaff: async (
       id: string,
-      data: { manager_id?: string | null; maintenance?: { month_index: number; user_id: string | null }[] }
+      data: { participants?: string[]; maintenance?: { month_index: number; user_ids: string[] }[] }
     ) => {
       const res = await request<{
         success: boolean;
         connectionId: string;
+        participantsChanged: boolean;
         managerChanged: boolean;
         confirmed: boolean;
         maintenanceUpdated: number;
@@ -645,7 +647,7 @@ export const api = {
       return res;
     },
     batch: async (data: {
-      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected' | 'assign_staff';
+      action: 'update_maintenance_months' | 'accrue_selected' | 'confirm_selected' | 'assign_staff' | 'delete_selected';
       connection_ids: string[];
       payload?: {
         months_total?: number;
@@ -653,8 +655,8 @@ export const api = {
         mode?: string;
         month?: string;
         settlement_month?: string;
-        manager_id?: string | null;
-        maintenance?: { month_index: number; user_id: string | null }[];
+        participants?: string[];
+        maintenance?: { month_index: number; user_ids: string[] }[];
       };
     }) => {
       const res = await request<any>('/api/v1/connections/batch', {

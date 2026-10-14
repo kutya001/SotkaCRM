@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
-import { connectionOwnScopeFilter, loadMaintenanceAssignments } from '@/lib/services/connections';
+import { connectionOwnScopeFilter, loadMaintenanceAssignments, loadParticipants } from '@/lib/services/connections';
 
 export async function GET(req: NextRequest) {
   try {
@@ -110,7 +110,10 @@ export async function GET(req: NextRequest) {
     }
 
     // Сопровождение по месяцам (042) и список сотрудников для назначения (право «connections.edit»)
-    const assignmentsMap = await loadMaintenanceAssignments(connectionIds);
+    const [assignmentsMap, participantsMap] = await Promise.all([
+      loadMaintenanceAssignments(connectionIds),
+      loadParticipants(connectionIds),
+    ]);
     let employees: { user_id: string; full_name: string; login: string; role: string; color: string | null }[] = [];
     if (ctx.can('connections.edit')) {
       const { data: users } = await supabase
@@ -148,6 +151,7 @@ export async function GET(req: NextRequest) {
         assigned_user: c.assigned_by ? managersMap.get(c.assigned_by) || null : null,
         confirmed_user: c.confirmed_by ? managersMap.get(c.confirmed_by) || null : null,
         maintenance_assignments: assignmentsMap.get(c.connection_id) || [],
+        participants: participantsMap.get(c.connection_id) || [],
       };
     });
 

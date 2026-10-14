@@ -64,8 +64,10 @@ export interface ConnectionItem {
     role: string;
     color?: string;
   } | null;
-  /** Сопровождение по месяцам (042): без записи месяц сопровождает подключивший */
+  /** Сопровождение по месяцам (042/043): несколько сотрудников на месяц; без записей — все участники */
   maintenance_assignments?: MaintenanceAssignmentItem[];
+  /** Участники подключения (043): основной (manager_id) первым; бонус делится поровну */
+  participants?: ConnectionEmployeeOption[];
 }
 
 export interface ConnectionEmployeeOption {

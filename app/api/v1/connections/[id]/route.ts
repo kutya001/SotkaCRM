@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { connectionOwnScopeFilter, isConnectionInScope, loadMaintenanceAssignments, maintenanceConnectionIdsFor } from '@/lib/services/connections';
+import { connectionOwnScopeFilter, deleteConnection, isConnectionInScope, loadMaintenanceAssignments, loadParticipants, maintenanceConnectionIdsFor } from '@/lib/services/connections';
 
 export async function GET(
   req: NextRequest,
@@ -58,12 +58,16 @@ export async function GET(
       confirmedUser = cu;
     }
 
-    const assignmentsMap = await loadMaintenanceAssignments([conn.connection_id]);
+    const [assignmentsMap, participantsMap] = await Promise.all([
+      loadMaintenanceAssignments([conn.connection_id]),
+      loadParticipants([conn.connection_id]),
+    ]);
 
     const result = {
       ...conn,
       confirmed_user: confirmedUser,
       maintenance_assignments: assignmentsMap.get(conn.connection_id) || [],
+      participants: participantsMap.get(conn.connection_id) || [],
       bonus_connection: Number(conn.bonus_connection_accrued || 0),
       bonus_maintenance: Number(conn.bonus_maintenance_accrued || 0),
       total_bonuses: Number(conn.total_bonuses_accrued || 0),
@@ -160,66 +164,27 @@ export async function DELETE(
     const ctx = await requirePermission('connections.delete');
     const supabase = createAdminClient();
 
-    // 1. Поиск подключения для извлечения seller_phone
     const { data: conn, error: getErr } = await supabase
       .from('connections')
       .select('connection_id, seller_phone, manager_id')
       .eq('connection_id', id)
       .maybeSingle();
-
     if (getErr) throw getErr;
     if (!conn) {
       return apiError('Подключение не найдено', 'NOT_FOUND', 404);
     }
-    if (!isConnectionInScope(ctx, conn)) {
+    const maintenanceIds = ctx.canViewAll('connections') ? [] : await maintenanceConnectionIdsFor(ctx.profile.user_id);
+    if (!isConnectionInScope(ctx, conn, maintenanceIds)) {
       return apiError('Подключение вне вашей области видимости', 'FORBIDDEN', 403);
     }
 
-    // 2. Сброс назначенного консультанта у продавца в NULL
-    if (conn.seller_phone) {
-      const { error: sellerErr } = await supabase
-        .from('sellers')
-        .update({ manager_id: null })
-        .eq('seller_phone', conn.seller_phone);
-
-      if (sellerErr) {
-        console.error('[DELETE connection] Ошибка сброса консультанта продавца:', sellerErr);
-      }
-    }
-
-    // 3. Удаление назначений сопровождения (042) и связанных начислений из обоих регистров
-    await supabase.from('connection_maintenance_assignments').delete().eq('connection_id', id);
-    await supabase
-      .from('connection_accruals')
-      .delete()
-      .eq('connection_id', id);
-
-    await supabase
-      .from('employee_payouts')
-      .delete()
-      .eq('connection_id', id)
-      .eq('operation_sign', '+');
-
-    // 4. Попытка удаления из client_maintenance (если таблица задействована)
-    try {
-      await supabase
-        .from('client_maintenance')
-        .delete()
-        .eq('connection_id', id);
-    } catch {}
-
-    // 5. Удаление самого подключения
-    const { error: delErr } = await supabase
-      .from('connections')
-      .delete()
-      .eq('connection_id', id);
-
-    if (delErr) throw delErr;
+    const res = await deleteConnection(id);
+    if (!res.success) return apiError(res.error, res.code, res.status);
 
     return apiSuccess({
       success: true,
       deleted_id: id,
-      reset_seller_phone: conn.seller_phone,
+      reset_seller_phone: res.sellerPhone,
     });
   } catch (err) {
     return handleApiError(err);

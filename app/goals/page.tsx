@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
@@ -344,42 +345,44 @@ export default function GoalsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1 col-span-2 lg:col-span-1">
-            <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" /> Общий план {summary.teamMonthly ? `(${formatPeriodLabel(summary.teamMonthly.period_kind, summary.teamMonthly.period_start)})` : ''}
-            </span>
-            {summary.teamMonthly ? (
-              <ProgressBar item={summary.teamMonthly} />
-            ) : (
-              <p className="text-xs text-zinc-400">{isAdmin ? 'Общий план на текущий период не поставлен' : 'Не поставлен'}</p>
-            )}
+        <CollapsibleStats storageKey="goals">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1 col-span-2 lg:col-span-1">
+              <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" /> Общий план {summary.teamMonthly ? `(${formatPeriodLabel(summary.teamMonthly.period_kind, summary.teamMonthly.period_start)})` : ''}
+              </span>
+              {summary.teamMonthly ? (
+                <ProgressBar item={summary.teamMonthly} />
+              ) : (
+                <p className="text-xs text-zinc-400">{isAdmin ? 'Общий план на текущий период не поставлен' : 'Не поставлен'}</p>
+              )}
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5" /> Персональные (текущие)
+              </span>
+              <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
+                {summary.personalActual}
+                <span className="text-xs text-blue-600/70 dark:text-blue-400/70 font-medium"> / {summary.personalTotal}</span>
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Выполнено
+              </span>
+              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
+                {summary.done}
+                <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70 font-medium"> из {summary.active}</span>
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" /> Отстают от графика
+              </span>
+              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{summary.behind}</p>
+            </div>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5" /> Персональные (текущие)
-            </span>
-            <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
-              {summary.personalActual}
-              <span className="text-xs text-blue-600/70 dark:text-blue-400/70 font-medium"> / {summary.personalTotal}</span>
-            </p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Выполнено
-            </span>
-            <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
-              {summary.done}
-              <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70 font-medium"> из {summary.active}</span>
-            </p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5" /> Отстают от графика
-            </span>
-            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{summary.behind}</p>
-          </div>
-        </div>
+        </CollapsibleStats>
 
         <DataJournal<PlanItem>
           data={visible}

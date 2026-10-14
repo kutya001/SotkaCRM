@@ -157,6 +157,41 @@ export function Modal({
   const titleId = React.useId();
   const overlayMouseDownTarget = React.useRef<EventTarget | null>(null);
 
+  // Закрытие свайпом вниз на телефоне: жест начинается с ручки или шапки шторки
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  const swipe = React.useRef<{ startY: number; startAt: number; dy: number; active: boolean }>({ startY: 0, startAt: 0, dy: 0, active: false });
+
+  const onSwipeStart = (e: React.TouchEvent) => {
+    if (!mobileSheet || busy) return;
+    swipe.current = { startY: e.touches[0].clientY, startAt: Date.now(), dy: 0, active: true };
+  };
+  const onSwipeMove = (e: React.TouchEvent) => {
+    if (!swipe.current.active || !panelRef.current) return;
+    const dy = Math.max(0, e.touches[0].clientY - swipe.current.startY);
+    swipe.current.dy = dy;
+    panelRef.current.style.transition = 'none';
+    panelRef.current.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+  };
+  const onSwipeEnd = () => {
+    if (!swipe.current.active || !panelRef.current) return;
+    const { dy, startAt } = swipe.current;
+    swipe.current.active = false;
+    const fast = dy > 40 && Date.now() - startAt < 250;
+    const panel = panelRef.current;
+    if (dy > 110 || fast) {
+      panel.style.transition = 'transform 0.18s ease-in';
+      panel.style.transform = 'translateY(110%)';
+      window.setTimeout(() => {
+        panel.style.transform = '';
+        panel.style.transition = '';
+        onClose();
+      }, 160);
+    } else {
+      panel.style.transition = 'transform 0.2s ease-out';
+      panel.style.transform = '';
+    }
+  };
+
   if (!open || !mounted) return null;
 
   const handleOverlayMouseDown = (e: React.MouseEvent) => {
@@ -185,6 +220,7 @@ export function Modal({
       onClick={handleOverlayClick}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
@@ -196,13 +232,26 @@ export function Modal({
         )}
       >
         {mobileSheet && (
-          <div className="lg:hidden pt-3 pb-1 flex justify-center" aria-hidden>
+          <div
+            className="lg:hidden pt-3 pb-1 flex justify-center touch-none"
+            aria-hidden
+            onTouchStart={onSwipeStart}
+            onTouchMove={onSwipeMove}
+            onTouchEnd={onSwipeEnd}
+            onTouchCancel={onSwipeEnd}
+          >
             <div className="w-12 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-full" />
           </div>
         )}
 
         {(title || Icon || !hideClose || headerRight) && (
-          <div className="px-6 pt-5 pb-4 border-b border-zinc-200/70 dark:border-zinc-800/70">
+          <div
+            className="px-6 pt-5 pb-4 border-b border-zinc-200/70 dark:border-zinc-800/70"
+            onTouchStart={onSwipeStart}
+            onTouchMove={onSwipeMove}
+            onTouchEnd={onSwipeEnd}
+            onTouchCancel={onSwipeEnd}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 {Icon && (

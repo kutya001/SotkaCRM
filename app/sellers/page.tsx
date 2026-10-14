@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef, type StatusOption, type DataJournalTab } from '@/components/ui/DataJournal';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
@@ -1329,83 +1330,85 @@ export default function SellersPage() {
     >
       <div className="space-y-4">
         {/* ЯРУС 2: ВЕРХНИЙ БЛОК МЕТРИК / KPI КАРТОЧКИ (Адаптивная сетка: 2x2 + баланс на мобильных, 5 в ряд на десктопе) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
-          {/* Всего продавцов */}
-          <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
-              <Store className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                Всего продавцов
+        <CollapsibleStats storageKey="sellers">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+            {/* Всего продавцов */}
+            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+                <Store className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
               </div>
-              <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
-                {stats.total}
+              <div className="min-w-0">
+                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                  Всего продавцов
+                </div>
+                <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
+                  {stats.total}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Активных */}
-          <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
-              <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                Активные
+            {/* Активных */}
+            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
               </div>
-              <div className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                {stats.active}
+              <div className="min-w-0">
+                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                  Активные
+                </div>
+                <div className="text-base sm:text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                  {stats.active}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Без куратора */}
-          <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
-              <UserMinus className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                Без куратора
+            {/* Без куратора */}
+            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
+                <UserMinus className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
               </div>
-              <div className="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
-                {Math.max(0, stats.total - stats.assigned)}
+              <div className="min-w-0">
+                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                  Без куратора
+                </div>
+                <div className="text-base sm:text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+                  {Math.max(0, stats.total - stats.assigned)}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Закреплено */}
-          <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
-              <UserCheck className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                С куратором
+            {/* Закреплено */}
+            <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center flex-shrink-0">
+                <UserCheck className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
               </div>
-              <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
-                {stats.assigned}
-                <span className="text-[11px] text-zinc-400 font-normal"> / {stats.total}</span>
+              <div className="min-w-0">
+                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                  С куратором
+                </div>
+                <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">
+                  {stats.assigned}
+                  <span className="text-[11px] text-zinc-400 font-normal"> / {stats.total}</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Общий баланс */}
-          <div className="col-span-2 sm:col-span-1 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
-              <Wallet className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
-                Общий баланс
+            {/* Общий баланс */}
+            <div className="col-span-2 sm:col-span-1 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
+                <Wallet className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
               </div>
-              <div className="text-sm sm:text-base lg:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100 truncate">
-                {stats.totalBalance.toLocaleString('ru-RU')} KGS
+              <div className="min-w-0">
+                <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
+                  Общий баланс
+                </div>
+                <div className="text-sm sm:text-base lg:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100 truncate">
+                  {stats.totalBalance.toLocaleString('ru-RU')} KGS
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </CollapsibleStats>
 
         {/* УНИВЕРСАЛЬНЫЙ РЕЕСТР DATAJOURNAL (ЯРУС 3) */}
         {isLoading ? (

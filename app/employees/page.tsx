@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef, type DataJournalTab } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { useToast } from '@/components/ui/Toast';
@@ -674,38 +675,40 @@ export default function EmployeesPage() {
         <EmployeesMapModal isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} />
 
         {/* Карточки оперативной статистики по сотрудникам */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[11px] text-zinc-400 font-medium">Всего в штате</span>
-            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">
-              {totalCount}
-            </p>
+        <CollapsibleStats storageKey="employees">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+              <span className="text-[11px] text-zinc-400 font-medium">Всего в штате</span>
+              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">
+                {totalCount}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Администраторы</span>
+              <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
+                {adminsCount}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Консультанты</span>
+              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
+                {consultantsCount}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">SMM-операторы</span>
+              <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 font-mono">
+                {smmCount}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1 col-span-2 sm:col-span-1">
+              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Заблокировано</span>
+              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
+                {blockedCount}
+              </p>
+            </div>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Администраторы</span>
-            <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 font-mono">
-              {adminsCount}
-            </p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Консультанты</span>
-            <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">
-              {consultantsCount}
-            </p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-purple-500/10 dark:bg-purple-500/5 border border-purple-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-purple-600 dark:text-purple-400 font-semibold">SMM-операторы</span>
-            <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 font-mono">
-              {smmCount}
-            </p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1 col-span-2 sm:col-span-1">
-            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Заблокировано</span>
-            <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">
-              {blockedCount}
-            </p>
-          </div>
-        </div>
+        </CollapsibleStats>
 
         {/* Таблица DataJournal */}
         <DataJournal<EmployeeItem>

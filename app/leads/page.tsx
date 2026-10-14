@@ -49,6 +49,11 @@ import {
   Store,
   Trash2,
   ShieldAlert,
+  Inbox,
+  CheckCircle2,
+  BadgeCheck,
+  XCircle,
+  LayoutList,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -931,19 +936,19 @@ function LeadsContent() {
   const leadTabs: DataJournalTab[] = React.useMemo(() => {
     if (currentUserRole === 'consultant') {
       return [
-        { id: 'all', label: 'Все в работе', count: stats.total },
-        { id: 'Назначен', label: 'Назначен', count: stats.assigned },
-        { id: 'Подписан', label: 'Подписан', count: stats.signed },
-        { id: 'Отмена', label: 'Отмена', count: stats.cancelled },
+        { id: 'all', label: 'Все в работе', count: stats.total, icon: LayoutList },
+        { id: 'Назначен', label: 'Назначен', count: stats.assigned, icon: UserCheck },
+        { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
+        { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
       ];
     }
     return [
-      { id: 'all', label: 'Все', count: stats.total },
-      { id: 'Открыт', label: 'Открыт', count: stats.open },
-      { id: 'Обработан', label: 'Обработан', count: stats.processed },
-      { id: 'Назначен', label: 'Назначен', count: stats.assigned },
-      { id: 'Подписан', label: 'Подписан', count: stats.signed },
-      { id: 'Отмена', label: 'Отмена', count: stats.cancelled },
+      { id: 'all', label: 'Все', count: stats.total, icon: LayoutList },
+      { id: 'Открыт', label: 'Открыт', count: stats.open, icon: Inbox },
+      { id: 'Обработан', label: 'Обработан', count: stats.processed, icon: CheckCircle2 },
+      { id: 'Назначен', label: 'Назначен', count: stats.assigned, icon: UserCheck },
+      { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
+      { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
     ];
   }, [currentUserRole, stats]);
 

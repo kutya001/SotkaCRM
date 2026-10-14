@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef, type DataJournalTab, type StatusOption } from '@/components/ui/DataJournal';
 import { EmployeeBadge } from '@/components/ui/EmployeeBadge';
 import { useToast } from '@/components/ui/Toast';
@@ -381,24 +382,26 @@ export default function TasksPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[11px] text-zinc-400 font-medium">В работе</span>
-            <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{counts.active}</p>
+        <CollapsibleStats storageKey="tasks">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+              <span className="text-[11px] text-zinc-400 font-medium">В работе</span>
+              <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 font-mono">{counts.active}</p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Мои</span>
+              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{counts.mine}</p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Просрочено</span>
+              <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{counts.overdue}</p>
+            </div>
+            <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Выполнено</span>
+              <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{counts.done}</p>
+            </div>
           </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Мои</span>
-            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 font-mono">{counts.mine}</p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-rose-500/10 dark:bg-rose-500/5 border border-rose-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">Просрочено</span>
-            <p className="text-2xl font-bold text-rose-700 dark:text-rose-300 font-mono">{counts.overdue}</p>
-          </div>
-          <div className="p-4 rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Выполнено</span>
-            <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 font-mono">{counts.done}</p>
-          </div>
-        </div>
+        </CollapsibleStats>
 
         <DataJournal<TaskItem>
           data={visible}

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { CollapsibleStats } from '@/components/ui/CollapsibleStats';
 import { DataJournal, type ColumnDef } from '@/components/ui/DataJournal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { formatMonth } from '@/lib/utils/format';
@@ -813,72 +814,74 @@ export default function PayoutsPage() {
     >
       <div className="space-y-4">
         {/* Сводка: остаток на начало → начислено / удержано / выплачено → остаток на конец */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
-              <Layers className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Остаток на начало</span>
-            </span>
-            <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.openingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-              {formatSom(stats.openingBalance)}
-            </p>
-            <p className="text-[10px] text-zinc-400 truncate">
-              {selectedMonth !== 'all' ? `на 01.${selectedMonth.slice(5, 7)}.${selectedMonth.slice(0, 4)}` : 'период не выбран'}
-            </p>
-          </div>
+        <CollapsibleStats storageKey="payouts">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-zinc-400 font-medium flex items-center gap-1 truncate">
+                <Layers className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Остаток на начало</span>
+              </span>
+              <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.openingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                {formatSom(stats.openingBalance)}
+              </p>
+              <p className="text-[10px] text-zinc-400 truncate">
+                {selectedMonth !== 'all' ? `на 01.${selectedMonth.slice(5, 7)}.${selectedMonth.slice(0, 4)}` : 'период не выбран'}
+              </p>
+            </div>
 
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 truncate">
-              <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Начислено (+)</span>
-            </span>
-            <p className="text-sm sm:text-xl font-bold text-emerald-700 dark:text-emerald-300 font-mono truncate">
-              +{formatSom(stats.totalAccrued)}
-            </p>
-            <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 truncate">
-              операций: {stats.accrualsCount}
-            </p>
-          </div>
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-emerald-500/10 dark:bg-emerald-500/5 border border-emerald-500/20 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1 truncate">
+                <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Начислено (+)</span>
+              </span>
+              <p className="text-sm sm:text-xl font-bold text-emerald-700 dark:text-emerald-300 font-mono truncate">
+                +{formatSom(stats.totalAccrued)}
+              </p>
+              <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 truncate">
+                операций: {stats.accrualsCount}
+              </p>
+            </div>
 
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
-              <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Удержано (−)</span>
-            </span>
-            <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
-              −{formatSom(stats.totalDeductions)}
-            </p>
-            <p className="text-[10px] text-amber-700/70 dark:text-amber-400/70 truncate">
-              операций: {stats.deductionsCount}
-            </p>
-          </div>
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 truncate">
+                <TrendingDown className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Удержано (−)</span>
+              </span>
+              <p className="text-sm sm:text-xl font-bold text-amber-700 dark:text-amber-300 font-mono truncate">
+                −{formatSom(stats.totalDeductions)}
+              </p>
+              <p className="text-[10px] text-amber-700/70 dark:text-amber-400/70 truncate">
+                операций: {stats.deductionsCount}
+              </p>
+            </div>
 
-          <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
-            <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
-              <Wallet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Выплачено (−)</span>
-            </span>
-            <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
-              −{formatSom(stats.totalPaid)}
-            </p>
-            <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70 truncate">
-              в т.ч. аванс: {formatSom(stats.totalAdvances)}
-            </p>
-          </div>
+            <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 shadow-sm space-y-1">
+              <span className="text-[10px] sm:text-[11px] text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1 truncate">
+                <Wallet className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Выплачено (−)</span>
+              </span>
+              <p className="text-sm sm:text-xl font-bold text-blue-700 dark:text-blue-300 font-mono truncate">
+                −{formatSom(stats.totalPaid)}
+              </p>
+              <p className="text-[10px] text-blue-600/70 dark:text-blue-400/70 truncate">
+                в т.ч. аванс: {formatSom(stats.totalAdvances)}
+              </p>
+            </div>
 
-          <div className={`col-span-2 lg:col-span-1 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl shadow-sm space-y-1 border ${stats.closingBalance < 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-white/75 dark:bg-zinc-900/75 border-emerald-500/30'}`}>
-            <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-semibold flex items-center gap-1 truncate">
-              <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
-              <span className="truncate">Остаток на конец</span>
-            </span>
-            <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.closingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
-              {formatSom(stats.closingBalance)}
-            </p>
-            <p className={`text-[10px] truncate ${stats.closingBalance < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
-              {stats.closingBalance < 0 ? 'переплата сотрудникам' : 'к выплате сотрудникам'}
-            </p>
+            <div className={`col-span-2 lg:col-span-1 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl backdrop-blur-xl shadow-sm space-y-1 border ${stats.closingBalance < 0 ? 'bg-rose-500/10 border-rose-500/30' : 'bg-white/75 dark:bg-zinc-900/75 border-emerald-500/30'}`}>
+              <span className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 font-semibold flex items-center gap-1 truncate">
+                <Receipt className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Остаток на конец</span>
+              </span>
+              <p className={`text-sm sm:text-xl font-bold font-mono truncate ${stats.closingBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                {formatSom(stats.closingBalance)}
+              </p>
+              <p className={`text-[10px] truncate ${stats.closingBalance < 0 ? 'text-rose-500' : 'text-zinc-400'}`}>
+                {stats.closingBalance < 0 ? 'переплата сотрудникам' : 'к выплате сотрудникам'}
+              </p>
+            </div>
           </div>
-        </div>
+        </CollapsibleStats>
 
         <p className="text-[11px] text-zinc-400 px-1 -mt-1">
           Остаток на конец = остаток на начало + начислено − удержано − выплачено

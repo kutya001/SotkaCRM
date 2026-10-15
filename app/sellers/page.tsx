@@ -53,6 +53,7 @@ import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
 import { CuratorSelectDropdown } from '@/components/sellers/CuratorSelectDropdown';
+import { ConnectionStaffModal, type StaffSelection } from '@/components/connections/ConnectionStaffModal';
 
 const LinkSellerLeadModal = dynamic(
   () => import('@/components/sellers/LinkSellerLeadModal').then((m) => m.LinkSellerLeadModal),
@@ -521,69 +522,74 @@ export default function SellersPage() {
   );
 
   const [takingPhone, setTakingPhone] = React.useState<string | null>(null);
+  // Быстрое действие «Подключить…»: окно выбора участников и сопровождающих (043)
+  const [connectModal, setConnectModal] = React.useState<{ open: boolean; seller: SellerItem | null }>({ open: false, seller: null });
+  const canConfirmConnections = user.can('connections.confirm');
 
   const handleTakeSelf = React.useCallback(
-    async (seller: SellerItem) => {
+    (seller: SellerItem) => {
       if (!canTakeSeller(seller)) return;
-      const ok = await confirm({
-        title: 'Взять продавца себе?',
-        subtitle: `${seller.seller_name || seller.store} (${formatPhoneDisplay(seller.seller_phone)})`,
-        description:
-          'Вы станете консультантом продавца. Бонус за подключение будет начислен после подтверждения администратором.',
-        tone: 'info',
-        icon: UserPlus,
-        confirmLabel: 'Взять себе',
-      });
-      if (!ok) return;
+      setConnectModal({ open: true, seller });
+    },
+    [canTakeSeller]
+  );
 
-      setTakingPhone(seller.seller_phone);
-      const previousSellers = sellers;
-      const me = managers.find((m) => m.user_id === currentUserId);
-      // Оптимистичное обновление: консультант — текущий консультант, подключение ожидает подтверждения
-      setSellers((prev) =>
-        prev.map((s) =>
-          s.seller_phone === seller.seller_phone
-            ? {
-                ...s,
+  const handleConnectSubmit = async (selection: StaffSelection) => {
+    const seller = connectModal.seller;
+    if (!seller) return;
+    const participants = selection.participants && selection.participants.length > 0 ? selection.participants : [currentUserId];
+    setTakingPhone(seller.seller_phone);
+    const previousSellers = sellers;
+    const me = managers.find((m) => m.user_id === currentUserId);
+    const confirmation: 'pending' | 'confirmed' = canConfirmConnections ? 'confirmed' : 'pending';
+    // Оптимистичное обновление: консультант — создающий сотрудник
+    setSellers((prev) =>
+      prev.map((s) =>
+        s.seller_phone === seller.seller_phone
+          ? {
+              ...s,
+              manager_id: currentUserId,
+              manager_user: me
+                ? { user_id: me.user_id, full_name: me.full_name, role: me.role, login: me.login, color: me.color }
+                : { user_id: currentUserId, full_name: user.userName || 'Вы', role: 'consultant', login: user.userLogin || '' },
+              connection: { connection_id: s.connection?.connection_id || '', manager_id: currentUserId, confirmation_status: confirmation },
+            }
+          : s
+      )
+    );
+
+    try {
+      const res = await api.sellers.connect(seller.seller_phone, { participants, maintenance: selection.maintenance });
+      showToast(res.message || 'Продавец подключен', confirmation === 'confirmed' ? 'success' : 'info');
+      if (res.skipped && res.skipped.length > 0) showToast(res.skipped.join('; '), 'info');
+      setConnectModal({ open: false, seller: null });
+      setModalState((prev) =>
+        prev.selectedSeller?.seller_phone === seller.seller_phone
+          ? {
+              ...prev,
+              selectedSeller: {
+                ...prev.selectedSeller,
                 manager_id: currentUserId,
                 manager_user: me
                   ? { user_id: me.user_id, full_name: me.full_name, role: me.role, login: me.login, color: me.color }
-                  : { user_id: currentUserId, full_name: user.userName || 'Вы', role: 'consultant', login: user.userLogin || '' },
-                connection: { connection_id: s.connection?.connection_id || '', manager_id: currentUserId, confirmation_status: 'pending' },
-              }
-            : s
-        )
+                  : prev.selectedSeller.manager_user,
+                connection: { connection_id: res.connection_id || '', manager_id: currentUserId, confirmation_status: res.confirmation_status || confirmation },
+              },
+            }
+          : prev
       );
-
-      try {
-        const res = await api.sellers.takeSelf(seller.seller_phone);
-        showToast(res.message || 'Продавец закреплен за вами. Ожидает подтверждения администратора', 'info');
-        setModalState((prev) =>
-          prev.selectedSeller?.seller_phone === seller.seller_phone
-            ? {
-                ...prev,
-                selectedSeller: {
-                  ...prev.selectedSeller,
-                  manager_id: currentUserId,
-                  manager_user: me
-                    ? { user_id: me.user_id, full_name: me.full_name, role: me.role, login: me.login, color: me.color }
-                    : prev.selectedSeller.manager_user,
-                  connection: { connection_id: res.connection_id || '', manager_id: currentUserId, confirmation_status: 'pending' },
-                },
-              }
-            : prev
-        );
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
+      setSellers(previousSellers);
+      showToast(err.message || 'Не удалось подключить продавца', 'error');
+      if (err.code === 'SELLER_ALREADY_TAKEN') {
+        setConnectModal({ open: false, seller: null });
         await fetchSellersData(1, searchQuery, true);
-      } catch (err: any) {
-        setSellers(previousSellers);
-        showToast(err.message || 'Не удалось взять продавца', 'error');
-        if (err.code === 'SELLER_ALREADY_TAKEN') await fetchSellersData(1, searchQuery, true);
-      } finally {
-        setTakingPhone(null);
       }
-    },
-    [canTakeSeller, confirm, sellers, managers, currentUserId, user.userName, user.userLogin, showToast, fetchSellersData, searchQuery]
-  );
+    } finally {
+      setTakingPhone(null);
+    }
+  };
 
   /**
    * Консультант продавца для не-администратора: бейдж и статус подтверждения.
@@ -604,18 +610,18 @@ export default function SellersPage() {
                 handleTakeSelf(seller);
               }}
               leftIcon={<UserPlus className="w-3 h-3" strokeWidth={2} />}
-              title="Стать консультантом этого продавца (подтверждает администратор)"
+              title="Подключить продавца: вы — обязательный участник, можно добавить коллег"
             >
-              Взять себе
+              Подключить…
             </Button>
           );
         }
         return (
           <span
             className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-md"
-            title="Свободный продавец: «Взять себе» — в меню строки (ПКМ / «⋯»)"
+            title="Свободный продавец: «Подключить…» — в меню строки (ПКМ / «⋯»)"
           >
-            {takingPhone === seller.seller_phone ? 'Закрепляем…' : 'Свободен'}
+            {takingPhone === seller.seller_phone ? 'Подключаем…' : 'Свободен'}
           </span>
         );
       }
@@ -1275,10 +1281,10 @@ export default function SellersPage() {
           {canTakeRow && (
             <JournalMenuItem
               icon={UserPlus}
-              label={takingPhone === row.seller_phone ? 'Закрепляем…' : 'Взять себе'}
+              label={takingPhone === row.seller_phone ? 'Подключаем…' : 'Подключить…'}
               tone="info"
               disabled={takingPhone === row.seller_phone}
-              title="Стать консультантом этого продавца (подтверждает администратор)"
+              title="Подключить продавца: вы — обязательный участник, можно добавить коллег и сопровождающих"
               onClick={() => handleTakeSelf(row)}
             />
           )}
@@ -1513,6 +1519,26 @@ export default function SellersPage() {
             deleteLabel="Удалить навсегда (удален в HQ)"
           />
         )}
+
+        {/* Подключить продавца: участники (создающий обязателен) и сопровождение по месяцам (043) */}
+        <ConnectionStaffModal
+          open={connectModal.open}
+          onClose={() => !takingPhone && setConnectModal({ open: false, seller: null })}
+          mode="create"
+          connections={[]}
+          employees={managers.map((m) => ({ user_id: m.user_id, full_name: m.full_name, login: m.login, role: m.role, color: m.color ?? null }))}
+          canEdit
+          canConfirm={canConfirmConnections}
+          currentUserId={currentUserId}
+          lockedUserIds={currentUserId ? [currentUserId] : []}
+          subtitle={
+            connectModal.seller
+              ? `${connectModal.seller.seller_name || connectModal.seller.store} · ${formatPhoneDisplay(connectModal.seller.seller_phone)}`
+              : undefined
+          }
+          busy={Boolean(takingPhone)}
+          onSubmit={handleConnectSubmit}
+        />
 
         {/* МОДАЛЬНОЕ ОКНО ПРИВЯЗКИ ПРОДАВЦА К ЛИДУ */}
         {linkLeadModal.isOpen && (

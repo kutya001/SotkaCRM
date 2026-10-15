@@ -412,6 +412,25 @@ export const api = {
       return res;
     },
     /** Консультант берет свободного одобренного продавца себе (подключение ждет подтверждения) */
+    /** Подключить продавца с участниками и сопровождением по месяцам (043); создающий — обязательный участник */
+    connect: async (
+      sellerPhoneOrId: string,
+      data: { participants: string[]; maintenance?: { month_index: number; user_ids: string[] }[] }
+    ) => {
+      const res = await request<{
+        success: boolean;
+        seller_phone: string;
+        connection_id?: string;
+        confirmation_status?: 'pending' | 'confirmed';
+        skipped?: string[];
+        message?: string;
+      }>(`/api/v1/sellers/${encodeURIComponent(sellerPhoneOrId)}/connect`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+      invalidateNamespaces('sellers', 'connections', 'leads', 'payouts', 'dashboard', 'analytics');
+      return res;
+    },
     takeSelf: async (sellerPhoneOrId: string) => {
       const res = await request<{
         success: boolean;

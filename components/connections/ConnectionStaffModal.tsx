@@ -30,6 +30,16 @@ interface ConnectionStaffModalProps {
   currentUserId: string;
   busy?: boolean;
   onSubmit: (selection: StaffSelection) => Promise<void> | void;
+  /** create — новое подключение продавца (участники обязательны, нет текущего состояния) */
+  mode?: 'edit' | 'create';
+  /** Участники, которых нельзя исключить (например, создающий подключение сотрудник) */
+  lockedUserIds?: string[];
+  /** Подпись окна (режим create: продавец) */
+  subtitle?: string;
+  /** Число месяцев сопровождения в режиме create */
+  defaultMonthsCount?: number;
+  title?: string;
+  submitLabel?: string;
 }
 
 /** Месяц сопровождения по номеру: старт сопровождения + (номер − 1) */
@@ -52,6 +62,7 @@ function PeoplePicker({
   removeOnly,
   max = MAX_PARTICIPANTS,
   emptyHint,
+  lockedIds = [],
 }: {
   options: ConnectionEmployeeOption[];
   value: string[];
@@ -61,6 +72,8 @@ function PeoplePicker({
   removeOnly?: boolean;
   max?: number;
   emptyHint?: string;
+  /** Нельзя снять (обязательные участники) */
+  lockedIds?: string[];
 }) {
   const byId = new Map(options.map((o) => [o.user_id, o]));
   const visible = removeOnly ? options.filter((o) => value.includes(o.user_id)) : options;
@@ -69,8 +82,9 @@ function PeoplePicker({
       <div className="flex flex-wrap gap-1.5">
         {visible.map((o) => {
           const selected = value.includes(o.user_id);
+          const locked = selected && lockedIds.includes(o.user_id);
           const canAdd = !selected && value.length < max && !removeOnly;
-          const isDisabled = disabled || (!selected && !canAdd);
+          const isDisabled = disabled || locked || (!selected && !canAdd);
           return (
             <button
               key={o.user_id}
@@ -82,10 +96,16 @@ function PeoplePicker({
                   ? 'bg-blue-500/15 border-blue-500/40 text-blue-700 dark:text-blue-300'
                   : 'bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
               }`}
-              title={selected ? 'Исключить' : 'Добавить'}
+              title={locked ? 'Обязательный участник' : selected ? 'Исключить' : 'Добавить'}
             >
               <EmployeeBadge name={o.full_name} color={o.color} size="xs" />
-              {selected ? <X className="w-3 h-3" strokeWidth={2.5} /> : <span className="w-3 h-3 rounded-full border border-current opacity-50" />}
+              {locked ? (
+                <Check className="w-3 h-3" strokeWidth={2.5} />
+              ) : selected ? (
+                <X className="w-3 h-3" strokeWidth={2.5} />
+              ) : (
+                <span className="w-3 h-3 rounded-full border border-current opacity-50" />
+              )}
             </button>
           );
         })}
@@ -117,13 +137,24 @@ export function ConnectionStaffModal({
   currentUserId,
   busy = false,
   onSubmit,
+  mode = 'edit',
+  lockedUserIds = [],
+  subtitle,
+  defaultMonthsCount = 2,
+  title,
+  submitLabel,
 }: ConnectionStaffModalProps) {
-  const single = connections.length === 1 ? connections[0] : null;
-  const participantMode = !canEdit;
+  const isCreate = mode === 'create';
+  const single = !isCreate && connections.length === 1 ? connections[0] : null;
+  const participantMode = !canEdit && !isCreate;
   const monthsCount = React.useMemo(
-    () => Math.max(1, ...connections.map((c) => Number(c.maintenance_months_total || c.maintenance_months_limit || 2))),
-    [connections]
+    () =>
+      isCreate
+        ? Math.max(1, defaultMonthsCount)
+        : Math.max(1, ...connections.map((c) => Number(c.maintenance_months_total || c.maintenance_months_limit || 2))),
+    [connections, isCreate, defaultMonthsCount]
   );
+  const lockedKey = lockedUserIds.join(',');
 
   const currentParticipants = React.useMemo(() => {
     if (!single) return [] as string[];
@@ -149,7 +180,14 @@ export function ConnectionStaffModal({
     if (!open) return;
     const m: Record<number, string[]> = {};
     const modes: Record<number, 'keep' | 'set'> = {};
-    if (single) {
+    if (isCreate) {
+      setParticipantsMode('set');
+      setParticipants(lockedKey ? lockedKey.split(',') : []);
+      for (let i = 1; i <= monthsCount; i++) {
+        m[i] = [];
+        modes[i] = 'set';
+      }
+    } else if (single) {
       setParticipantsMode('set');
       setParticipants(currentParticipants);
       for (let i = 1; i <= monthsCount; i++) {
@@ -167,13 +205,17 @@ export function ConnectionStaffModal({
     }
     setMaintenance(m);
     setMaintenanceMode(modes);
-  }, [open, single, monthsCount, currentParticipants]);
+  }, [open, single, monthsCount, currentParticipants, isCreate, lockedKey]);
 
   const accruedFor = (index: number) =>
     single ? (single.maintenance_assignments || []).filter((x) => x.month_index === index && x.status === 'accrued') : [];
 
-  const participantsChanged = participantsMode === 'set' && (!single || !sameSet(participants, currentParticipants));
-  const needsConfirm = single ? single.confirmation_status !== 'confirmed' : connections.some((c) => c.confirmation_status !== 'confirmed');
+  const participantsChanged = participantsMode === 'set' && (isCreate || !single || !sameSet(participants, currentParticipants));
+  const needsConfirm = isCreate
+    ? canConfirm
+    : single
+    ? single.confirmation_status !== 'confirmed'
+    : connections.some((c) => c.confirmation_status !== 'confirmed');
 
   const maintenanceChanges = React.useMemo(() => {
     const list: { month_index: number; user_ids: string[] }[] = [];
@@ -193,7 +235,8 @@ export function ConnectionStaffModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [maintenance, maintenanceMode, monthsCount, single, participantMode]);
 
-  const participantsValid = participantsMode !== 'set' || participants.length >= 1;
+  const participantsValid =
+    participantsMode !== 'set' || (participants.length >= 1 && lockedUserIds.every((id) => participants.includes(id)));
   const hasChanges =
     (participantsChanged && participantsValid) ||
     (participantsMode === 'set' && participantsValid && needsConfirm && !participantMode) ||
@@ -202,10 +245,10 @@ export function ConnectionStaffModal({
   const handleSubmit = async () => {
     await onSubmit({
       participants:
-        participantsMode === 'set' && participantsValid && (participantsChanged || (needsConfirm && !participantMode))
+        participantsMode === 'set' && participantsValid && (isCreate || participantsChanged || (needsConfirm && !participantMode))
           ? participants
           : undefined,
-      maintenance: maintenanceChanges,
+      maintenance: isCreate ? maintenanceChanges.filter((m) => m.user_ids.length > 0) : maintenanceChanges,
     });
   };
 
@@ -225,8 +268,8 @@ export function ConnectionStaffModal({
     <Modal
       open={open}
       onClose={() => !busy && onClose()}
-      title="Сотрудники подключения"
-      subtitle={single ? `${single.seller_name} · ${single.store || 'Без магазина'}` : `Выбрано подключений: ${connections.length}`}
+      title={title || (isCreate ? 'Подключить продавца' : 'Сотрудники подключения')}
+      subtitle={subtitle || (single ? `${single.seller_name} · ${single.store || 'Без магазина'}` : `Выбрано подключений: ${connections.length}`)}
       icon={Users}
       tone="info"
       size="lg"
@@ -237,7 +280,7 @@ export function ConnectionStaffModal({
             Отмена
           </Button>
           <Button variant="primary" loading={busy} disabled={!hasChanges} onClick={handleSubmit} leftIcon={<Check className="w-3.5 h-3.5" strokeWidth={1.75} />}>
-            {participantMode ? 'Сохранить' : 'Назначить'}
+            {submitLabel || (isCreate ? 'Подключить' : participantMode ? 'Сохранить' : 'Назначить')}
           </Button>
         </>
       }
@@ -272,7 +315,8 @@ export function ConnectionStaffModal({
               value={participants}
               onChange={setParticipants}
               removeOnly={participantMode}
-              disabled={!participantMode && !canConfirm}
+              disabled={!participantMode && !isCreate && !canConfirm}
+              lockedIds={lockedUserIds}
               emptyHint="Сотрудников нет"
             />
           ) : (
@@ -282,15 +326,25 @@ export function ConnectionStaffModal({
             <p className="text-[11px] text-rose-500">В подключении должен остаться хотя бы один участник.</p>
           )}
           <p className="text-[10px] text-zinc-400 leading-relaxed">
-            Первый участник — основной (подключивший, консультант продавца). Бонус за подключение делится поровну между
-            участниками; при изменении состава неоплаченные доли пересчитываются.
-            {!participantMode && !canConfirm && ' Для смены состава нужно право подтверждать подключения.'}
+            {isCreate
+              ? 'Вы — обязательный участник подключения (консультант продавца). Можно добавить до двух коллег: бонус за подключение делится поровну.'
+              : 'Первый участник — основной (подключивший, консультант продавца). Бонус за подключение делится поровну между участниками; при изменении состава неоплаченные доли пересчитываются.'}
+            {!participantMode && !isCreate && !canConfirm && ' Для смены состава нужно право подтверждать подключения.'}
           </p>
+          {isCreate && !canConfirm && (
+            <ModalCallout tone="info">
+              Подключение попадет на подтверждение администратору; бонусы начисляются после подтверждения.
+            </ModalCallout>
+          )}
           {!participantMode && participantsMode === 'set' && needsConfirm && participants.length > 0 && (
             <ModalCallout tone="success">
               <span className="inline-flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5" strokeWidth={2} />
-                {single ? 'Подключение будет подтверждено.' : 'Неподтвержденные подключения из выбранных будут подтверждены.'}
+                {isCreate
+                  ? 'Подключение будет подтверждено сразу.'
+                  : single
+                  ? 'Подключение будет подтверждено.'
+                  : 'Неподтвержденные подключения из выбранных будут подтверждены.'}
               </span>
             </ModalCallout>
           )}

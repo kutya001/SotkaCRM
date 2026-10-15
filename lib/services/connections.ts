@@ -160,6 +160,8 @@ interface StaffParams {
    * participant — участник подключения: может только исключать (себя или коллег) из участников и из месяцев сопровождения
    */
   mode: 'admin' | 'participant';
+  /** В режиме admin назначение участников подтверждает подключение (по умолчанию); false — не трогать статус */
+  allowConfirm?: boolean;
 }
 
 export interface StaffResult {
@@ -180,7 +182,7 @@ const uniq = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
  * только при начислении за месяц; уже начисленные месяцы не меняются.
  */
 export async function assignConnectionStaff(params: StaffParams): Promise<ServiceResult<StaffResult>> {
-  const { connectionId, maintenance = [], actor, mode } = params;
+  const { connectionId, maintenance = [], actor, mode, allowConfirm = true } = params;
   const admin = createAdminClient();
 
   const { data: conn, error: connErr } = await admin
@@ -223,7 +225,7 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
   if (requested) {
     const nextManager = requested[0];
     const needsManager = nextManager !== conn.manager_id;
-    const needsConfirm = mode === 'admin' && conn.confirmation_status !== 'confirmed';
+    const needsConfirm = mode === 'admin' && allowConfirm && conn.confirmation_status !== 'confirmed';
     if (needsManager || needsConfirm) {
       const restart = conn.confirmation_status === 'rejected';
       const now = new Date();
@@ -384,6 +386,64 @@ export async function deleteConnection(connectionId: string): Promise<ServiceRes
 
   scheduleTelegramDispatch();
   return { success: true, deletedId: connectionId, sellerPhone: conn.seller_phone ?? null };
+}
+
+interface CreateSellerConnectionParams {
+  sellerPhone: string;
+  /** Полный состав участников; создающий сотрудник обязан быть в списке */
+  participants: string[];
+  maintenance?: MaintenanceAssignmentInput[];
+  actor: Actor;
+  /** Право подтверждать подключения: подключение создается сразу подтвержденным */
+  canConfirm: boolean;
+}
+
+/**
+ * Подключение продавца сотрудником (быстрое действие в модуле «Продавцы», 043):
+ * создающий — обязательный участник и основной (консультант продавца); можно добавить до двух коллег
+ * и задать сопровождающих по месяцам (по умолчанию — все участники). Без права подтверждать —
+ * подключение ожидает подтверждения администратора.
+ */
+export async function createSellerConnection(
+  params: CreateSellerConnectionParams
+): Promise<ServiceResult<{ connectionId: string; confirmationStatus: ConnectionConfirmationStatus; skipped: string[] }>> {
+  const { sellerPhone, actor, canConfirm, maintenance = [] } = params;
+  const participants = uniq(params.participants);
+  if (!participants.includes(actor.user_id)) {
+    return fail('Вы должны быть участником создаваемого подключения', 'ACTOR_NOT_PARTICIPANT', 422);
+  }
+  if (participants.length > 3) return fail('В подключении может быть не более трех участников', 'VALIDATION_ERROR', 422);
+  // Основной — создающий сотрудник
+  const ordered = [actor.user_id, ...participants.filter((id) => id !== actor.user_id)];
+
+  const created = await assignSellerToManager({
+    sellerPhone,
+    managerId: actor.user_id,
+    actor,
+    confirmation: canConfirm ? 'confirmed' : 'pending',
+    expectUnassigned: true,
+    requireApproved: true,
+  });
+  if (!created.success) return created;
+  const connectionId = created.connectionId;
+  if (!connectionId) return fail('Подключение не создано', 'DB_ERROR', 500);
+
+  const staff = await assignConnectionStaff({
+    connectionId,
+    participants: ordered,
+    maintenance,
+    actor,
+    mode: 'admin',
+    allowConfirm: false,
+  });
+  if (!staff.success) return staff;
+
+  return {
+    success: true,
+    connectionId,
+    confirmationStatus: created.confirmationStatus || (canConfirm ? 'confirmed' : 'pending'),
+    skipped: staff.skipped,
+  };
 }
 
 interface AssignParams {

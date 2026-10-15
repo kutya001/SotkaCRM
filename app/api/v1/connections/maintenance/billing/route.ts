@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
+import { notifyMaintenanceAccruals } from '@/lib/services/connection-notifications';
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
 
     const billingMonth = body.billing_month || body.target_month || new Date().toISOString().substring(0, 7);
 
+    const startedAtIso = new Date().toISOString();
     const { data, error } = await supabase.rpc('run_maintenance_billing', {
       p_billing_month: billingMonth,
     });
@@ -30,6 +32,8 @@ export async function POST(req: NextRequest) {
     revalidatePath('/payouts');
     revalidatePath('/analytics');
     revalidatePath('/profile');
+    // Сопровождение: одно сообщение на сотрудника со списком «продавец — сумма» (044)
+    await notifyMaintenanceAccruals({ sinceIso: startedAtIso }).catch((err) => console.warn('[billing] Сводка Telegram не отправлена:', err));
 
     const res = data as any;
     return apiSuccess({

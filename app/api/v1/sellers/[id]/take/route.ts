@@ -4,6 +4,7 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { findSellerByKey } from '@/lib/services/sellers';
 import { assignSellerToManager } from '@/lib/services/connections';
+import { notifyConnectionPendingToAdmins } from '@/lib/services/connection-notifications';
 
 /**
  * «Взять себе»: сотрудник с правом «sellers.take» становится консультантом свободного одобренного продавца.
@@ -46,6 +47,13 @@ export async function POST(
 
     if (!res.success) {
       return apiError(res.error, res.code, res.status);
+    }
+
+    // Ожидает подтверждения: запрос администраторам с одноразовой ссылкой (044)
+    if (!autoConfirm && res.connectionId) {
+      await notifyConnectionPendingToAdmins({ connectionId: res.connectionId, appOrigin: req.nextUrl.origin }).catch((err) =>
+        console.warn('[take] Уведомление администраторам не отправлено:', err)
+      );
     }
 
     return apiSuccess({

@@ -55,6 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       maintenance: parsed.data.maintenance,
       actor: profile,
       canConfirm,
+      appOrigin: req.nextUrl.origin,
     });
     if (!res.success) return apiError(res.error, res.code, res.status);
 

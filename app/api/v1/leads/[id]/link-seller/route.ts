@@ -26,6 +26,7 @@ export async function POST(
       sellerPhone,
       managerId: body.manager_id,
       via: 'lead',
+      appOrigin: req.nextUrl.origin,
     });
 
     if (!result.success) {

@@ -4,6 +4,7 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { notifyMaintenanceAccruals } from '@/lib/services/connection-notifications';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
 
 export async function POST(req: NextRequest) {
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     let resultData: any = null;
+    const startedAtIso = new Date().toISOString();
     // RPC начислений доступны только service_role (миграция 029), право «connections.accrue» проверено выше;
     // нативный движок тоже пишет сервисным клиентом (RLS разрешает запись начислений только администратору)
     const adminSupabase = createAdminClient();
@@ -342,6 +344,8 @@ export async function POST(req: NextRequest) {
     revalidatePath('/connections');
     revalidatePath('/payouts');
     revalidatePath('/profile');
+    // Сопровождение: одно сообщение на сотрудника со списком «продавец — сумма» (044)
+    await notifyMaintenanceAccruals({ sinceIso: startedAtIso }).catch((err) => console.warn('[accrue-all] Сводка Telegram не отправлена:', err));
     scheduleTelegramDispatch();
 
     return apiSuccess(resultData);

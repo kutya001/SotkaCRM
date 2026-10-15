@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import { connectionOrderError, type ConnectionAccrualHistoryRow } from '@/lib/payroll/connection-order';
 import { assignConnectionStaff, connectionOwnScopeFilter, deleteConnection, setConnectionConfirmation } from '@/lib/services/connections';
+import { notifyMaintenanceAccruals } from '@/lib/services/connection-notifications';
 
 /** Право на конкретное массовое действие (в дополнение к «connections.bulk») */
 const BATCH_ACTION_PERMISSION: Record<string, string> = {
@@ -171,6 +172,7 @@ export async function POST(req: NextRequest) {
     if (action === 'accrue_selected') {
       const mode = (payload?.mode || 'maintenance').toLowerCase();
       const settlementMonth = payload?.month || payload?.settlement_month || new Date().toISOString().slice(0, 7);
+      const startedAtIso = new Date().toISOString();
 
       // 2.1. Попытка вызова RPC-процедуры в СУБД
       try {
@@ -182,6 +184,8 @@ export async function POST(req: NextRequest) {
         });
 
         if (!rpcErr && rpcRes && (rpcRes as any).success) {
+          // Сопровождение: одно сообщение на сотрудника со списком «продавец — сумма» (044)
+          await notifyMaintenanceAccruals({ sinceIso: startedAtIso }).catch((err) => console.warn('[batch] Сводка Telegram не отправлена:', err));
           scheduleTelegramDispatch();
           return apiSuccess({
             success: true,
@@ -436,6 +440,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      await notifyMaintenanceAccruals({ sinceIso: startedAtIso }).catch((err) => console.warn('[batch] Сводка Telegram не отправлена:', err));
       scheduleTelegramDispatch();
       return apiSuccess({
         success: true,

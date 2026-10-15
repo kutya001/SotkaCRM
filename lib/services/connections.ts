@@ -162,6 +162,11 @@ interface StaffParams {
   mode: 'admin' | 'participant';
   /** В режиме admin назначение участников подтверждает подключение (по умолчанию); false — не трогать статус */
   allowConfirm?: boolean;
+  /**
+   * Заполнить сопровождение по месяцам участниками (явные строки вместо «по умолчанию»):
+   * месяцы без строк или со строками, равными прежнему составу, получают новый состав
+   */
+  materializeMaintenance?: boolean;
 }
 
 export interface StaffResult {
@@ -182,7 +187,7 @@ const uniq = (ids: string[]) => Array.from(new Set(ids.filter(Boolean)));
  * только при начислении за месяц; уже начисленные месяцы не меняются.
  */
 export async function assignConnectionStaff(params: StaffParams): Promise<ServiceResult<StaffResult>> {
-  const { connectionId, maintenance = [], actor, mode, allowConfirm = true } = params;
+  const { connectionId, maintenance = [], actor, mode, allowConfirm = true, materializeMaintenance = true } = params;
   const admin = createAdminClient();
 
   const { data: conn, error: connErr } = await admin
@@ -277,9 +282,38 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
     if (needsManager) participantsChanged = true;
   }
 
-  // 2. Сопровождение по месяцам: planned-назначения заменяются набором; accrued месяцы не трогаем
+  // 2. Сопровождение по месяцам: planned-назначения заменяются набором; accrued месяцы не трогаем.
+  //    При смене состава участников месяцы «по умолчанию» (без строк или со строками прежнего состава)
+  //    явно заполняются новым составом, чтобы сопровождающие были видны сразу (044).
   let maintenanceUpdated = 0;
-  if (maintenance.length > 0) {
+  const maintenanceInput: MaintenanceAssignmentInput[] = [...maintenance];
+  if (requested && materializeMaintenance && (participantsChanged || maintenanceInput.length === 0)) {
+    const monthsTotal = Math.max(1, Number(conn.maintenance_months_total || conn.maintenance_months_limit || 2));
+    const explicit = new Set(maintenanceInput.map((m) => Number(m.month_index)));
+    const { data: rows } = await admin
+      .from('connection_maintenance_assignments')
+      .select('month_index, user_id, status')
+      .eq('connection_id', connectionId);
+    const byMonth = new Map<number, { user_id: string; status: string }[]>();
+    for (const r of rows || []) {
+      const arr = byMonth.get(r.month_index) || [];
+      arr.push({ user_id: r.user_id, status: r.status });
+      byMonth.set(r.month_index, arr);
+    }
+    for (let i = 1; i <= monthsTotal; i++) {
+      if (explicit.has(i)) continue;
+      const current = byMonth.get(i) || [];
+      if (current.some((r) => r.status === 'accrued')) continue;
+      const ids = current.map((r) => r.user_id);
+      const wasDefault =
+        ids.length === 0 || (ids.length === currentParticipants.length && ids.every((id) => currentParticipants.includes(id)));
+      if (!wasDefault) continue;
+      const same = ids.length === requested.length && requested.every((id) => ids.includes(id));
+      if (same) continue;
+      maintenanceInput.push({ month_index: i, user_ids: requested });
+    }
+  }
+  if (maintenanceInput.length > 0) {
     const effectiveParticipants = requested || currentParticipants;
     const { data: existingRows } = await admin
       .from('connection_maintenance_assignments')
@@ -292,7 +326,7 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
       byMonth.set(r.month_index, arr);
     }
 
-    for (const item of maintenance) {
+    for (const item of maintenanceInput) {
       const idx = Number(item.month_index);
       if (!Number.isInteger(idx) || idx < 1 || idx > 24) {
         skipped.push(`месяц ${item.month_index}: неверный номер месяца`);
@@ -396,6 +430,8 @@ interface CreateSellerConnectionParams {
   actor: Actor;
   /** Право подтверждать подключения: подключение создается сразу подтвержденным */
   canConfirm: boolean;
+  /** Origin запроса — для одноразовой ссылки подтверждения в Telegram */
+  appOrigin?: string | null;
 }
 
 /**
@@ -407,7 +443,7 @@ interface CreateSellerConnectionParams {
 export async function createSellerConnection(
   params: CreateSellerConnectionParams
 ): Promise<ServiceResult<{ connectionId: string; confirmationStatus: ConnectionConfirmationStatus; skipped: string[] }>> {
-  const { sellerPhone, actor, canConfirm, maintenance = [] } = params;
+  const { sellerPhone, actor, canConfirm, maintenance = [], appOrigin } = params;
   const participants = uniq(params.participants);
   if (!participants.includes(actor.user_id)) {
     return fail('Вы должны быть участником создаваемого подключения', 'ACTOR_NOT_PARTICIPANT', 422);
@@ -437,6 +473,14 @@ export async function createSellerConnection(
     allowConfirm: false,
   });
   if (!staff.success) return staff;
+
+  // Ожидает подтверждения: запрос администраторам с составом участников и одноразовой ссылкой (044)
+  if (!canConfirm) {
+    const { notifyConnectionPendingToAdmins } = await import('@/lib/services/connection-notifications');
+    await notifyConnectionPendingToAdmins({ connectionId, appOrigin }).catch((err) =>
+      console.warn('[createSellerConnection] Уведомление администраторам не отправлено:', err)
+    );
+  }
 
   return {
     success: true,

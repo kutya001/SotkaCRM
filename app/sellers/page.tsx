@@ -52,8 +52,8 @@ import dynamic from 'next/dynamic';
 import { useUser } from '@/components/auth/AuthProvider';
 import type { UserRole } from '@/types/database.types';
 import { EmployeeBadge, EmployeeColorDot } from '@/components/ui/EmployeeBadge';
-import { CuratorSelectDropdown } from '@/components/sellers/CuratorSelectDropdown';
 import { ConnectionStaffModal, type StaffSelection } from '@/components/connections/ConnectionStaffModal';
+import type { ConnectionItem } from '@/app/connections/actions';
 
 const LinkSellerLeadModal = dynamic(
   () => import('@/components/sellers/LinkSellerLeadModal').then((m) => m.LinkSellerLeadModal),
@@ -133,7 +133,6 @@ export default function SellersPage() {
   const user = useUser();
   const currentUserId = user.profile?.user_id || '';
   // Права назначенной роли
-  const canAssign = user.can('sellers.assign');
   const canTake = user.can('sellers.take');
   const canLinkLead = user.can('sellers.link_lead');
   const canUnlinkLead = user.can('sellers.unlink_lead');
@@ -474,51 +473,14 @@ export default function SellersPage() {
     fetchSellersData();
   }, [fetchSellersData]);
 
-  const handleAssignManager = async (sellerPhone: string, managerId: string | null) => {
-    const previousSellers = [...sellers];
-    const targetManager = managers.find((m) => m.user_id === managerId);
-
-    // Оптимистичное обновление
-    setSellers((prev) =>
-      prev.map((s) => {
-        if (s.seller_phone === sellerPhone) {
-          return {
-            ...s,
-            manager_id: managerId,
-            manager_user: targetManager
-              ? {
-                  user_id: targetManager.user_id,
-                  full_name: targetManager.full_name,
-                  role: targetManager.role,
-                  login: targetManager.login,
-                  color: targetManager.color,
-                }
-              : null,
-          };
-        }
-        return s;
-      })
-    );
-
-    try {
-      await api.sellers.update(sellerPhone, { manager_id: managerId });
-      showToast('Консультант назначен. Связь в подключениях синхронизирована', 'success');
-      await fetchSellersData(1, searchQuery, true);
-    } catch (err: any) {
-      setSellers(previousSellers);
-      showToast(err.message || 'Ошибка при назначении консультанта', 'error');
-    }
-  };
-
   // Консультант берет свободного одобренного продавца себе (подключение ждет подтверждения администратора)
   const canTakeSeller = React.useCallback(
     (seller: SellerItem) =>
       canTake &&
-      !canAssign &&
       !seller.manager_id &&
       seller.moderation === 'approved' &&
       !seller.is_deleted_from_source,
-    [canTake, canAssign]
+    [canTake]
   );
 
   const [takingPhone, setTakingPhone] = React.useState<string | null>(null);
@@ -591,6 +553,66 @@ export default function SellersPage() {
     }
   };
 
+  // Сотрудники существующего подключения продавца: окно из модуля «Подключения» (админ — любой состав, участник — исключение)
+  const canEditConnections = user.can('connections.edit');
+  const [staffEdit, setStaffEdit] = React.useState<{ open: boolean; connection: ConnectionItem | null; loadingPhone: string | null }>({
+    open: false,
+    connection: null,
+    loadingPhone: null,
+  });
+  const [isStaffSaving, setIsStaffSaving] = React.useState(false);
+
+  const isParticipantOfSeller = React.useCallback(
+    (seller: SellerItem) => {
+      if (!currentUserId || !seller.connection) return false;
+      if (seller.manager_id === currentUserId) return true;
+      return (seller.connection.participants || []).some((p) => p.user_id === currentUserId);
+    },
+    [currentUserId]
+  );
+  const canManageSellerStaff = React.useCallback(
+    (seller: SellerItem) =>
+      Boolean(seller.connection?.connection_id) && seller.connection?.confirmation_status !== 'rejected' && (canEditConnections || isParticipantOfSeller(seller)),
+    [canEditConnections, isParticipantOfSeller]
+  );
+
+  const openSellerStaff = React.useCallback(
+    async (seller: SellerItem) => {
+      const connectionId = seller.connection?.connection_id;
+      if (!connectionId) return;
+      setStaffEdit((prev) => ({ ...prev, loadingPhone: seller.seller_phone }));
+      try {
+        const conn = (await api.connections.getById(connectionId, { bypassCache: true })) as ConnectionItem;
+        setStaffEdit({ open: true, connection: conn, loadingPhone: null });
+      } catch (err: any) {
+        showToast(err.message || 'Не удалось загрузить подключение', 'error');
+        setStaffEdit({ open: false, connection: null, loadingPhone: null });
+      }
+    },
+    [showToast]
+  );
+
+  const handleStaffEditSubmit = async (selection: StaffSelection) => {
+    const conn = staffEdit.connection;
+    if (!conn) return;
+    setIsStaffSaving(true);
+    try {
+      const res = await api.connections.assignStaff(conn.connection_id, selection);
+      const parts: string[] = [];
+      if (res.participantsChanged) parts.push('состав участников изменен');
+      if (res.confirmed) parts.push('подключение подтверждено');
+      if (res.maintenanceUpdated > 0) parts.push(`сопровождение: ${res.maintenanceUpdated} мес.`);
+      showToast(parts.length > 0 ? `Сотрудники назначены: ${parts.join(', ')}` : 'Изменений нет', 'success');
+      if (res.skipped.length > 0) showToast(res.skipped.join('; '), 'info');
+      setStaffEdit({ open: false, connection: null, loadingPhone: null });
+      await fetchSellersData(1, searchQuery, true);
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось назначить сотрудников', 'error');
+    } finally {
+      setIsStaffSaving(false);
+    }
+  };
+
   /**
    * Консультант продавца для не-администратора: бейдж и статус подтверждения.
    * В ячейке реестра — только отображение («Взять себе» — в контекстном меню строки);
@@ -625,12 +647,23 @@ export default function SellersPage() {
           </span>
         );
       }
-      if (!seller.manager_user) {
+      const people =
+        seller.connection?.participants && seller.connection.participants.length > 0
+          ? seller.connection.participants
+          : seller.manager_user
+          ? [seller.manager_user]
+          : [];
+      if (people.length === 0) {
         return <span className="text-[11px] text-zinc-400 italic">— Не назначен —</span>;
       }
       return (
         <div className="flex flex-col items-start gap-1 min-w-0">
-          <EmployeeBadge name={seller.manager_user.full_name} color={seller.manager_user.color} size={size} />
+          <div className="flex flex-wrap items-center gap-1">
+            {people.map((p) => (
+              <EmployeeBadge key={p.user_id} name={p.full_name} color={p.color} size={people.length > 1 ? 'xs' : size} />
+            ))}
+            {people.length > 1 && <span className="text-[10px] font-mono text-zinc-400">1/{people.length}</span>}
+          </div>
           <ConnectionConfirmationBadge
             status={seller.connection?.confirmation_status}
             reason={seller.connection?.rejection_reason}
@@ -880,9 +913,9 @@ export default function SellersPage() {
       },
       {
         key: 'manager_id',
-        label: 'Консультант',
-        width: 190,
-        minWidth: 160,
+        label: 'Участники подключения',
+        width: 210,
+        minWidth: 170,
         sortable: true,
         filterable: true,
         groupable: true,
@@ -891,29 +924,8 @@ export default function SellersPage() {
           { value: '', label: '— Не назначен —' },
           ...managers.map((m) => ({ value: m.user_id, label: m.full_name })),
         ],
-        renderCell: (row: SellerItem) => {
-          if (canAssign) {
-            return (
-              <div className="flex flex-col gap-1">
-                <CuratorSelectDropdown
-                  value={row.manager_id}
-                  managers={managers}
-                  onChange={async (val) => {
-                    await handleAssignManager(row.seller_phone, val);
-                  }}
-                  size="sm"
-                  className="w-[170px]"
-                />
-                <ConnectionConfirmationBadge
-                  status={row.manager_id ? row.connection?.confirmation_status : null}
-                  reason={row.connection?.rejection_reason}
-                  size="xs"
-                />
-              </div>
-            );
-          }
-          return renderCuratorReadOnly(row, 'sm');
-        },
+        // Назначение сотрудников — в меню строки («Подключить…» / «Сотрудники подключения…»); ячейка — только отображение
+        renderCell: (row: SellerItem) => renderCuratorReadOnly(row, 'sm'),
       },
       {
         key: 'linked_lead',
@@ -961,7 +973,7 @@ export default function SellersPage() {
         },
       },
     ],
-    [canAssign, canLinkLead, managers, handleAssignManager, hasAvailableLeads, renderCuratorReadOnly]
+    [canLinkLead, managers, hasAvailableLeads, renderCuratorReadOnly]
   );
 
   // Конфигурация полей для EntityModal
@@ -1106,48 +1118,29 @@ export default function SellersPage() {
     },
     {
       name: 'manager_id',
-      label: 'Ответственный консультант',
+      label: 'Участники подключения',
       type: 'text',
       immutable: true,
-      renderCustomView: (_val: any, data: SellerItem) => {
-        if (canAssign) {
-          return (
-            <div className="w-full space-y-1.5">
-              <CuratorSelectDropdown
-                value={data?.manager_id}
-                managers={managers}
-                onChange={async (val) => {
-                  await handleAssignManager(data.seller_phone, val);
-                  setModalState((prev) =>
-                    prev.selectedSeller
-                      ? {
-                          ...prev,
-                          selectedSeller: {
-                            ...prev.selectedSeller,
-                            manager_id: val,
-                            manager_user: val
-                              ? managers.find((m) => m.user_id === val) || null
-                              : null,
-                            connection: val
-                              ? { connection_id: prev.selectedSeller.connection?.connection_id || '', manager_id: val, confirmation_status: 'confirmed' }
-                              : null,
-                          },
-                        }
-                      : prev
-                  );
-                }}
-                size="md"
-                className="w-full"
-              />
-              <ConnectionConfirmationBadge
-                status={data?.manager_id ? data?.connection?.confirmation_status : null}
-                reason={data?.connection?.rejection_reason}
-              />
-            </div>
-          );
-        }
-        return renderCuratorReadOnly(data, 'sm', true);
-      },
+      renderCustomView: (_val: any, data: SellerItem) => (
+        <div className="w-full space-y-2">
+          {renderCuratorReadOnly(data, 'sm', true)}
+          {canManageSellerStaff(data) && (
+            <Button
+              variant="outline"
+              size="xs"
+              loading={staffEdit.loadingPhone === data.seller_phone}
+              onClick={(e) => {
+                e.stopPropagation();
+                openSellerStaff(data);
+              }}
+              leftIcon={<Users className="w-3 h-3" strokeWidth={2} />}
+              title={canEditConnections ? 'Участники и сопровождающие по месяцам' : 'Исключить себя или коллегу из подключения / сопровождения'}
+            >
+              Сотрудники подключения…
+            </Button>
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -1270,14 +1263,25 @@ export default function SellersPage() {
   const renderCustomRowActions = React.useCallback(
     (row: SellerItem) => {
       const canTakeRow = canTakeSeller(row);
+      const canStaff = canManageSellerStaff(row);
       const canLink = hasAvailableLeads && canLinkLead && !row.linked_lead && !row.manager_id;
 
-      if (!canTakeRow && !canLink && !canDeleteSeller) {
+      if (!canTakeRow && !canStaff && !canLink && !canDeleteSeller) {
         return null;
       }
 
       return (
         <>
+          {canStaff && (
+            <JournalMenuItem
+              icon={Users}
+              label={staffEdit.loadingPhone === row.seller_phone ? 'Загрузка…' : 'Сотрудники подключения…'}
+              tone="info"
+              disabled={staffEdit.loadingPhone === row.seller_phone}
+              title={canEditConnections ? 'Участники и сопровождающие по месяцам' : 'Исключить себя или коллегу из подключения / сопровождения'}
+              onClick={() => openSellerStaff(row)}
+            />
+          )}
           {canTakeRow && (
             <JournalMenuItem
               icon={UserPlus}
@@ -1309,7 +1313,7 @@ export default function SellersPage() {
         </>
       );
     },
-    [canTakeSeller, hasAvailableLeads, canLinkLead, canDeleteSeller, takingPhone, handleTakeSelf]
+    [canTakeSeller, canManageSellerStaff, canEditConnections, staffEdit.loadingPhone, openSellerStaff, hasAvailableLeads, canLinkLead, canDeleteSeller, takingPhone, handleTakeSelf]
   );
 
   // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
@@ -1538,6 +1542,19 @@ export default function SellersPage() {
           }
           busy={Boolean(takingPhone)}
           onSubmit={handleConnectSubmit}
+        />
+
+        {/* Сотрудники существующего подключения (участники / сопровождение по месяцам) */}
+        <ConnectionStaffModal
+          open={staffEdit.open}
+          onClose={() => !isStaffSaving && setStaffEdit({ open: false, connection: null, loadingPhone: null })}
+          connections={staffEdit.connection ? [staffEdit.connection] : []}
+          employees={managers.map((m) => ({ user_id: m.user_id, full_name: m.full_name, login: m.login, role: m.role, color: m.color ?? null }))}
+          canEdit={canEditConnections}
+          canConfirm={canConfirmConnections}
+          currentUserId={currentUserId}
+          busy={isStaffSaving}
+          onSubmit={handleStaffEditSubmit}
         />
 
         {/* МОДАЛЬНОЕ ОКНО ПРИВЯЗКИ ПРОДАВЦА К ЛИДУ */}

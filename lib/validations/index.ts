@@ -169,7 +169,7 @@ export const LeadsBatchActionSchema = z.object({
   lead_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional(),
   status: LeadStatusSchema.optional(),
   cancel_reason: z.string().optional().nullable(),
-  assigned_to: z.string().uuid().nullable().optional(),
+  assigned_to: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника').nullable().optional(),
   payload: z.any().optional(),
 }).refine((data) => (data.ids && data.ids.length > 0) || (data.lead_ids && data.lead_ids.length > 0), {
   message: 'Необходимо выбрать хотя бы один лид',
@@ -226,7 +226,7 @@ export const SellersBatchActionSchema = z.object({
   action: z.enum(['change_manager', 'delete']),
   ids: z.array(z.string().min(1)).optional(),
   seller_ids: z.array(z.string().min(1)).optional(),
-  manager_id: z.string().uuid().nullable().optional(),
+  manager_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника').nullable().optional(),
   payload: z.any().optional(),
 }).refine((data) => (data.ids && data.ids.length > 0) || (data.seller_ids && data.seller_ids.length > 0), {
   message: 'Необходимо выбрать хотя бы одного продавца',

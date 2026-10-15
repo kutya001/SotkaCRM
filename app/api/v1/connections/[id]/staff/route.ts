@@ -1,18 +1,19 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { PG_UUID_REGEX } from '@/lib/validations';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { assignConnectionStaff, participantIdsOf } from '@/lib/services/connections';
 
 const StaffSchema = z.object({
   /** Полный состав участников: первый — основной (подключивший) */
-  participants: z.array(z.string().uuid()).min(1).max(3).optional(),
+  participants: z.array(z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника')).min(1).max(3).optional(),
   maintenance: z
     .array(
       z.object({
         month_index: z.number().int().min(1).max(24),
         /** Пустой список — сопровождают все участники */
-        user_ids: z.array(z.string().uuid()).max(3),
+        user_ids: z.array(z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника')).max(3),
       })
     )
     .max(24)

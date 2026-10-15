@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { PG_UUID_REGEX } from '@/lib/validations';
 import { revalidatePath, revalidateTag } from 'next/cache';
 import { requirePermission } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -15,13 +16,13 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 const BatchSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('set_active'),
-    ids: z.array(z.string().uuid('Некорректный идентификатор сотрудника')).min(1, 'Выберите хотя бы одного сотрудника').max(500),
+    ids: z.array(z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника')).min(1, 'Выберите хотя бы одного сотрудника').max(500),
     is_active: z.boolean({ message: 'Не указан флаг активности' }),
   }),
   z.object({
     action: z.literal('set_role'),
-    ids: z.array(z.string().uuid('Некорректный идентификатор сотрудника')).min(1, 'Выберите хотя бы одного сотрудника').max(500),
-    role_id: z.string().uuid('Некорректный идентификатор роли'),
+    ids: z.array(z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника')).min(1, 'Выберите хотя бы одного сотрудника').max(500),
+    role_id: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор роли'),
   }),
 ]);
 

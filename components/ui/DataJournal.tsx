@@ -1075,30 +1075,9 @@ const DataJournalCardInner = <T extends Record<string, any>>({
             </>
           )}
 
-          {onRowClick && (
-            <button
-              type="button"
-              onClick={() => onRowClick(row)}
-              className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-              title="Просмотр записи"
-            >
-              <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
-            </button>
-          )}
-
-          {customRowActions && onRowContextMenu && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRowContextMenu(e, row);
-              }}
-              className="p-2 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-              title="Действия"
-              aria-label="Действия"
-            >
-              <MoreHorizontal className="w-3.5 h-3.5" strokeWidth={2} />
-            </button>
+          {/* Действия строки — значками прямо в карточке (просмотр — нажатием на карточку) */}
+          {customRowActions && (
+            <JournalMenuVariantContext.Provider value="icon">{customRowActions(row)}</JournalMenuVariantContext.Provider>
           )}
         </div>
 
@@ -1328,8 +1307,8 @@ function DataJournalContextMenuInner<T extends Record<string, any>>({
       {customRowActions && (
         <div
           className="pt-1 border-t border-zinc-200/50 dark:border-zinc-800/50 space-y-0.5"
-          // Любое действие закрывает меню (capture — до обработчика самой кнопки)
-          onClickCapture={() => setMenu(null)}
+          // Любое действие закрывает меню: обработчик кнопки выполняется первым (всплытие), затем меню закрывается
+          onClick={() => setMenu(null)}
         >
           {customRowActions(menu.row)}
         </div>
@@ -1350,6 +1329,19 @@ const MENU_TONE_CLASS: Record<JournalMenuTone, string> = {
   purple: 'text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 [&_svg]:text-purple-500',
 };
 
+/** Тон значка действия в карточке */
+const ICON_TONE_CLASS: Record<JournalMenuTone, string> = {
+  default: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700',
+  info: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20',
+  success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20',
+  warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20',
+  danger: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20',
+  purple: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20',
+};
+
+/** Вид пункта действия: строка меню (ПКМ) или значок в карточке */
+const JournalMenuVariantContext = React.createContext<'menu' | 'icon'>('menu');
+
 export interface JournalMenuItemProps {
   icon?: React.ElementType;
   label: React.ReactNode;
@@ -1362,9 +1354,44 @@ export interface JournalMenuItemProps {
 }
 
 /**
- * Единый пункт контекстного меню строки (ПКМ / «⋯» / карточка): используется в customRowActions всех модулей.
+ * Единый пункт действия строки: в контекстном меню (ПКМ / «⋯») — строка с подписью,
+ * в карточке — значок (подпись во всплывающей подсказке). Используется в customRowActions всех модулей.
  */
 export function JournalMenuItem({ icon: Icon, label, onClick, href, tone = 'default', disabled, title }: JournalMenuItemProps) {
+  const variant = React.useContext(JournalMenuVariantContext);
+  const labelText = typeof label === 'string' ? label : undefined;
+
+  if (variant === 'icon') {
+    const iconCls = `p-2 rounded-xl transition-colors inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed ${ICON_TONE_CLASS[tone]}`;
+    const content = Icon ? (
+      <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+    ) : (
+      <span className="text-[11px] font-semibold leading-none">{label}</span>
+    );
+    if (href) {
+      return (
+        <a href={href} target="_blank" rel="noreferrer" className={iconCls} title={title || labelText} aria-label={labelText}>
+          {content}
+        </a>
+      );
+    }
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        title={title || labelText}
+        aria-label={labelText}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick?.();
+        }}
+        className={iconCls}
+      >
+        {content}
+      </button>
+    );
+  }
+
   const cls = `w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${MENU_TONE_CLASS[tone]}`;
   if (href) {
     return (
@@ -1375,16 +1402,7 @@ export function JournalMenuItem({ icon: Icon, label, onClick, href, tone = 'defa
     );
   }
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick?.();
-      }}
-      className={cls}
-    >
+    <button type="button" disabled={disabled} title={title} onClick={() => onClick?.()} className={cls}>
       {Icon && <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} />}
       <span className="truncate">{label}</span>
     </button>

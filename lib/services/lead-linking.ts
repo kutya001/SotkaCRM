@@ -22,6 +22,8 @@ export interface LeadLinkParams {
   sellerPhone: string;
   /** Желаемый консультант — учитывается только при праве «sellers.assign» */
   managerId?: string | null;
+  /** Origin запроса — для одноразовой ссылки подтверждения в Telegram (044) */
+  appOrigin?: string | null;
   /**
    * Откуда инициировано связывание: со стороны лида («leads.link_seller») или продавца («sellers.link_lead»).
    * Если не указано — достаточно любого из двух прав.
@@ -108,6 +110,14 @@ export async function linkLeadToSellerAtomic(ctx: LeadLinkActor, params: LeadLin
 
   if (!res.success) {
     return { success: false, error: res.error || 'Ошибка связывания лида с продавцом' };
+  }
+
+  // Ожидает подтверждения: запрос администраторам с составом участников и одноразовой ссылкой (044)
+  if (res.confirmation_status === 'pending' && res.connection_id) {
+    const { notifyConnectionPendingToAdmins } = await import('@/lib/services/connection-notifications');
+    await notifyConnectionPendingToAdmins({ connectionId: res.connection_id, appOrigin: params.appOrigin }).catch((err) =>
+      console.warn('[link_lead_to_seller] Уведомление администраторам не отправлено:', err)
+    );
   }
 
   scheduleTelegramDispatch();

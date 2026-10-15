@@ -43,7 +43,7 @@ export async function POST(
     }
 
     // Атомарная процедура в СУБД с блокировкой FOR UPDATE (область лида проверяется в хелпере)
-    const res = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone, via: 'seller' });
+    const res = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone, via: 'seller', appOrigin: req.nextUrl.origin });
 
     if (!res.success) {
       return apiError(res.error || 'Ошибка при связывании продавца с лидом', 'LINK_FAILED', 400);

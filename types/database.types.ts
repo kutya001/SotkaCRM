@@ -880,6 +880,36 @@ export type Database = {
         }
         Relationships: []
       }
+      telegram_connection_confirmations: {
+        Row: {
+          id: string
+          connection_id: string
+          admin_user_id: string
+          token_hash: string
+          created_at: string
+          expires_at: string
+          used_at: string | null
+        }
+        Insert: {
+          id?: string
+          connection_id: string
+          admin_user_id: string
+          token_hash: string
+          created_at?: string
+          expires_at: string
+          used_at?: string | null
+        }
+        Update: {
+          id?: string
+          connection_id?: string
+          admin_user_id?: string
+          token_hash?: string
+          created_at?: string
+          expires_at?: string
+          used_at?: string | null
+        }
+        Relationships: []
+      }
       roles: {
         Row: {
           base_role: Database["public"]["Enums"]["user_role"]

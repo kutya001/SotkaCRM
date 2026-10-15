@@ -78,6 +78,8 @@ export interface SellerItem {
     manager_id: string;
     confirmation_status: ConnectionConfirmationStatus;
     rejection_reason?: string | null;
+    /** Участники подключения (043): основной первым */
+    participants?: { user_id: string; full_name: string; role: string; login: string; color: string | null }[];
   } | null;
 }
 

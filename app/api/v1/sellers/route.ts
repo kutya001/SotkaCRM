@@ -103,8 +103,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Текущее подключение продавца (самое свежее) — статус подтверждения администратором
-    const connectionsMap = new Map<string, { connection_id: string; manager_id: string; confirmation_status: string; rejection_reason: string | null }>();
+    // Текущее подключение продавца (самое свежее) — статус подтверждения и участники (043)
+    type ParticipantRef = { user_id: string; full_name: string; role: string; login: string; color: string | null };
+    const connectionsMap = new Map<
+      string,
+      { connection_id: string; manager_id: string; confirmation_status: string; rejection_reason: string | null; participants: ParticipantRef[] }
+    >();
     if (connectionsRes.data) {
       for (const c of connectionsRes.data as any[]) {
         if (!connectionsMap.has(c.seller_phone)) {
@@ -113,8 +117,35 @@ export async function GET(req: NextRequest) {
             manager_id: c.manager_id,
             confirmation_status: c.confirmation_status,
             rejection_reason: c.rejection_reason,
+            participants: [],
           });
         }
+      }
+    }
+    const connectionIds = Array.from(connectionsMap.values()).map((c) => c.connection_id);
+    if (connectionIds.length > 0) {
+      const { data: partRows } = await supabase
+        .from('connection_participants')
+        .select('connection_id, user_id, added_at')
+        .in('connection_id', connectionIds)
+        .order('added_at', { ascending: true });
+      const extraIds = Array.from(new Set((partRows || []).map((r) => r.user_id).filter((id) => !managersMap.has(id))));
+      if (extraIds.length > 0) {
+        const { data: extraUsers } = await supabase.from('users').select('user_id, full_name, role, login, color').in('user_id', extraIds);
+        (extraUsers || []).forEach((m) => managersMap.set(m.user_id, m));
+      }
+      const byConn = new Map<string, string[]>();
+      for (const r of partRows || []) {
+        const arr = byConn.get(r.connection_id) || [];
+        arr.push(r.user_id);
+        byConn.set(r.connection_id, arr);
+      }
+      for (const conn of connectionsMap.values()) {
+        const ids = [conn.manager_id, ...(byConn.get(conn.connection_id) || []).filter((id) => id !== conn.manager_id)].filter(Boolean);
+        conn.participants = ids.map((id) => {
+          const u = managersMap.get(id);
+          return u ? { ...u, color: u.color ?? null } : { user_id: id, full_name: 'Сотрудник', role: '', login: '', color: null };
+        });
       }
     }
 

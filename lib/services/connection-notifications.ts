@@ -243,18 +243,34 @@ export async function confirmConnectionByToken(
   return { ok: true, info: { ...info, used_at: new Date().toISOString(), connection: { ...info.connection, confirmation_status: 'confirmed' } } };
 }
 
+/** Допуск на расхождение часов сервера приложения и БД при отборе проводок запуска */
+const ACCRUAL_CLOCK_SKEW_MS = 2000;
+
+export interface MaintenanceNotifyOptions {
+  /** Момент запуска начисления (проводки, созданные с этого момента) */
+  sinceIso: string;
+  /** Подключения запуска (выборочное начисление): сводка только по ним, параллельные запуски не смешиваются */
+  connectionIds?: string[];
+}
+
 /**
- * Сводка начисленного сопровождения: одно сообщение на сотрудника со строками «продавец — сумма»
- * по проводкам сопровождения, созданным после sinceIso (запуск начисления).
+ * Сводка начисленного сопровождения: одно сообщение на сотрудника и расчетный месяц
+ * со строками «продавец — сумма» по проводкам сопровождения этого запуска начисления.
  */
-export async function notifyMaintenanceAccruals(options: { sinceIso: string }): Promise<{ notified: number }> {
+export async function notifyMaintenanceAccruals(options: MaintenanceNotifyOptions): Promise<{ notified: number }> {
   const admin = createAdminClient();
-  const { data: rows } = await admin
+  const since = new Date(new Date(options.sinceIso).getTime() - ACCRUAL_CLOCK_SKEW_MS).toISOString();
+  let query = admin
     .from('employee_payouts')
     .select('user_id, employee_id, amount, settlement_month, accrual_month, seller_phone, connection_id')
     .eq('operation_type', 'accrual_maintenance')
     .eq('operation_sign', '+')
-    .gte('created_at', options.sinceIso);
+    .gte('created_at', since);
+  if (options.connectionIds) {
+    if (options.connectionIds.length === 0) return { notified: 0 };
+    query = query.in('connection_id', options.connectionIds);
+  }
+  const { data: rows } = await query;
   const payouts = rows || [];
   if (payouts.length === 0) return { notified: 0 };
 
@@ -262,24 +278,27 @@ export async function notifyMaintenanceAccruals(options: { sinceIso: string }): 
   const { data: sellers } = phones.length > 0 ? await admin.from('sellers').select('seller_phone, seller_name, store').in('seller_phone', phones) : { data: [] };
   const sellerMap = new Map((sellers || []).map((s) => [s.seller_phone, s]));
 
-  const byUser = new Map<string, { month: string; lines: string[]; total: number }>();
+  // Группировка по сотруднику и расчетному месяцу: начисления за разные месяцы — отдельными сообщениями
+  const byUserMonth = new Map<string, { userId: string; month: string; lines: string[]; total: number }>();
   for (const p of payouts) {
     const userId = p.employee_id || p.user_id;
     if (!userId) continue;
     const seller = p.seller_phone ? sellerMap.get(p.seller_phone) : null;
     const name = seller?.seller_name || seller?.store || (p.seller_phone ? `+${p.seller_phone}` : 'продавец');
     const label = seller?.store && seller.store !== name ? `${name} (${seller.store})` : name;
-    const entry = byUser.get(userId) || { month: p.settlement_month || p.accrual_month || '', lines: [], total: 0 };
+    const month = p.settlement_month || p.accrual_month || '';
+    const key = `${userId}:${month}`;
+    const entry = byUserMonth.get(key) || { userId, month, lines: [], total: 0 };
     entry.lines.push(`${label} — ${fmtMoney(p.amount)} сом`);
     entry.total += Number(p.amount) || 0;
-    byUser.set(userId, entry);
+    byUserMonth.set(key, entry);
   }
 
   let notified = 0;
-  for (const [userId, entry] of byUser) {
+  for (const entry of byUserMonth.values()) {
     const monthLabel = entry.month ? formatMonth(entry.month) : '';
     await enqueue(
-      userId,
+      entry.userId,
       'payroll',
       `Сопровождение${monthLabel ? ` за ${monthLabel}` : ''}: +${fmtMoney(entry.total)} сом`,
       entry.lines.join('\n')

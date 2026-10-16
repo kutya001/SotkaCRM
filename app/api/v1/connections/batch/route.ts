@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
 
         if (!rpcErr && rpcRes && (rpcRes as any).success) {
           // Сопровождение: одно сообщение на сотрудника со списком «продавец — сумма» (044)
-          await notifyMaintenanceAccruals({ sinceIso: startedAtIso }).catch((err) => console.warn('[batch] Сводка Telegram не отправлена:', err));
+          await notifyMaintenanceAccruals({ sinceIso: startedAtIso, connectionIds: connection_ids }).catch((err) => console.warn('[batch] Сводка Telegram не отправлена:', err));
           scheduleTelegramDispatch();
           return apiSuccess({
             success: true,
@@ -440,7 +440,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await notifyMaintenanceAccruals({ sinceIso: startedAtIso }).catch((err) => console.warn('[batch] Сводка Telegram не отправлена:', err));
+      await notifyMaintenanceAccruals({ sinceIso: startedAtIso, connectionIds: connection_ids }).catch((err) => console.warn('[batch] Сводка Telegram не отправлена:', err));
       scheduleTelegramDispatch();
       return apiSuccess({
         success: true,

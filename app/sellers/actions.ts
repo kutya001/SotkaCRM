@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAuth, requirePermission, type AuthContext } from '@/lib/auth/check-role';
 import type { Database, UserRole, SellerModerationStatus, ConnectionConfirmationStatus } from '@/types/database.types';
@@ -475,14 +476,26 @@ export async function assignSellerManager(
 
     // Подключение сразу подтверждено, если у назначающего есть право подтверждать (миграция 037);
     // иначе ожидает подтверждения
+    const confirmation = ctx.can('connections.confirm') ? 'confirmed' : 'pending';
     const res = await assignSellerToManager({
       sellerPhone,
       managerId,
       actor: profile,
-      confirmation: ctx.can('connections.confirm') ? 'confirmed' : 'pending',
+      confirmation,
     });
     if (!res.success) {
       return { success: false, error: res.error };
+    }
+
+    // Без права подтверждать: запрос администраторам с составом и одноразовой ссылкой (044)
+    if (confirmation === 'pending' && res.connectionId) {
+      const h = await headers();
+      const host = h.get('x-forwarded-host') || h.get('host');
+      const proto = h.get('x-forwarded-proto') || 'https';
+      const { notifyConnectionPendingToAdmins } = await import('@/lib/services/connection-notifications');
+      await notifyConnectionPendingToAdmins({ connectionId: res.connectionId, appOrigin: host ? `${proto}://${host}` : null }).catch(
+        (err) => console.warn('[assignSellerManager] Уведомление администраторам не отправлено:', err)
+      );
     }
 
     revalidatePath('/sellers');

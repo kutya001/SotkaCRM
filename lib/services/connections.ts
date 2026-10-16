@@ -226,35 +226,28 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
   let managerChanged = false;
   let confirmed = false;
 
-  // 1. Состав участников: основной (manager_id) + остальные (connection_participants)
+  // 1. Состав участников: основной (manager_id) + остальные (connection_participants).
+  //    Подтверждение выполняется после записи состава (1c): триггеры начисления и Telegram
+  //    должны видеть всех участников, иначе основной получит сообщение с полной суммой бонуса.
   if (requested) {
     const nextManager = requested[0];
     const needsManager = nextManager !== conn.manager_id;
     const needsConfirm = mode === 'admin' && allowConfirm && conn.confirmation_status !== 'confirmed';
-    if (needsManager || needsConfirm) {
-      const restart = conn.confirmation_status === 'rejected';
-      const now = new Date();
-      const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().substring(0, 7);
+    // 1a. Смена основного
+    if (needsManager) {
       const { error } = await admin
         .from('connections')
-        .update({
-          manager_id: nextManager,
-          ...(needsManager ? { assigned_by: actor.user_id, assigned_at: nowIso } : {}),
-          ...(needsConfirm
-            ? { confirmation_status: 'confirmed', confirmed_by: actor.user_id, confirmed_at: nowIso, rejection_reason: null }
-            : {}),
-          ...(restart && needsConfirm
-            ? { status: 'подключен', client_status: 'новый', accrual_month: nowIso.substring(0, 7), maintenance_month_start: nextMonth }
-            : {}),
-        })
+        .update({ manager_id: nextManager, assigned_by: actor.user_id, assigned_at: nowIso })
         .eq('connection_id', connectionId);
       if (error) return fail(error.message, 'DB_ERROR', 500);
-      managerChanged = needsManager;
-      confirmed = needsConfirm;
+      managerChanged = true;
+    }
+    if (needsManager || needsConfirm) {
       // Консультант в карточке продавца — основной участник
       await admin.from('sellers').update({ manager_id: nextManager }).eq('seller_phone', conn.seller_phone);
     }
 
+    // 1b. Остальные участники
     const extras = requested.slice(1);
     const { data: existingRows } = await admin
       .from('connection_participants')
@@ -280,26 +273,58 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
       participantsChanged = true;
     }
     if (needsManager) participantsChanged = true;
+
+    // 1c. Подтверждение — после состава участников
+    if (needsConfirm) {
+      const restart = conn.confirmation_status === 'rejected';
+      const now = new Date();
+      const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().substring(0, 7);
+      const { error } = await admin
+        .from('connections')
+        .update({
+          confirmation_status: 'confirmed',
+          confirmed_by: actor.user_id,
+          confirmed_at: nowIso,
+          rejection_reason: null,
+          ...(restart
+            ? { status: 'подключен', client_status: 'новый', accrual_month: nowIso.substring(0, 7), maintenance_month_start: nextMonth }
+            : {}),
+        })
+        .eq('connection_id', connectionId);
+      if (error) return fail(error.message, 'DB_ERROR', 500);
+      confirmed = true;
+    }
   }
 
+  // Назначения сопровождения читаются один раз: между блоками 2a и 2b они не меняются
+  type AssignmentRow = { month_index: number; user_id: string; status: string };
+  let assignmentRows: AssignmentRow[] | null = null;
+  const loadAssignmentsByMonth = async (): Promise<Map<number, AssignmentRow[]>> => {
+    if (!assignmentRows) {
+      const { data } = await admin
+        .from('connection_maintenance_assignments')
+        .select('month_index, user_id, status')
+        .eq('connection_id', connectionId);
+      assignmentRows = (data || []) as AssignmentRow[];
+    }
+    const byMonth = new Map<number, AssignmentRow[]>();
+    for (const r of assignmentRows) {
+      const arr = byMonth.get(r.month_index) || [];
+      arr.push(r);
+      byMonth.set(r.month_index, arr);
+    }
+    return byMonth;
+  };
+
   // 2. Сопровождение по месяцам: planned-назначения заменяются набором; accrued месяцы не трогаем.
-  //    При смене состава участников месяцы «по умолчанию» (без строк или со строками прежнего состава)
-  //    явно заполняются новым составом, чтобы сопровождающие были видны сразу (044).
+  // 2a. При смене состава участников месяцы «по умолчанию» (без строк или со строками прежнего состава)
+  //     явно заполняются новым составом (044); состав, заданный администратором вручную, сохраняется.
   let maintenanceUpdated = 0;
   const maintenanceInput: MaintenanceAssignmentInput[] = [...maintenance];
   if (requested && materializeMaintenance && (participantsChanged || maintenanceInput.length === 0)) {
     const monthsTotal = Math.max(1, Number(conn.maintenance_months_total || conn.maintenance_months_limit || 2));
     const explicit = new Set(maintenanceInput.map((m) => Number(m.month_index)));
-    const { data: rows } = await admin
-      .from('connection_maintenance_assignments')
-      .select('month_index, user_id, status')
-      .eq('connection_id', connectionId);
-    const byMonth = new Map<number, { user_id: string; status: string }[]>();
-    for (const r of rows || []) {
-      const arr = byMonth.get(r.month_index) || [];
-      arr.push({ user_id: r.user_id, status: r.status });
-      byMonth.set(r.month_index, arr);
-    }
+    const byMonth = await loadAssignmentsByMonth();
     for (let i = 1; i <= monthsTotal; i++) {
       if (explicit.has(i)) continue;
       const current = byMonth.get(i) || [];
@@ -313,18 +338,10 @@ export async function assignConnectionStaff(params: StaffParams): Promise<Servic
       maintenanceInput.push({ month_index: i, user_ids: requested });
     }
   }
+  // 2b. Применение наборов по месяцам
   if (maintenanceInput.length > 0) {
     const effectiveParticipants = requested || currentParticipants;
-    const { data: existingRows } = await admin
-      .from('connection_maintenance_assignments')
-      .select('month_index, user_id, status')
-      .eq('connection_id', connectionId);
-    const byMonth = new Map<number, { user_id: string; status: string }[]>();
-    for (const r of existingRows || []) {
-      const arr = byMonth.get(r.month_index) || [];
-      arr.push({ user_id: r.user_id, status: r.status });
-      byMonth.set(r.month_index, arr);
-    }
+    const byMonth = await loadAssignmentsByMonth();
 
     for (const item of maintenanceInput) {
       const idx = Number(item.month_index);
@@ -452,13 +469,16 @@ export async function createSellerConnection(
   // Основной — создающий сотрудник
   const ordered = [actor.user_id, ...participants.filter((id) => id !== actor.user_id)];
 
+  // Подключение создается ожидающим и подтверждается (при праве) уже после записи участников:
+  // начисление и уведомления участникам должны видеть полный состав, а не только основного
   const created = await assignSellerToManager({
     sellerPhone,
     managerId: actor.user_id,
     actor,
-    confirmation: canConfirm ? 'confirmed' : 'pending',
+    confirmation: 'pending',
     expectUnassigned: true,
     requireApproved: true,
+    materializeMaintenance: false,
   });
   if (!created.success) return created;
   const connectionId = created.connectionId;
@@ -470,7 +490,7 @@ export async function createSellerConnection(
     maintenance,
     actor,
     mode: 'admin',
-    allowConfirm: false,
+    allowConfirm: canConfirm,
   });
   if (!staff.success) return staff;
 
@@ -485,7 +505,7 @@ export async function createSellerConnection(
   return {
     success: true,
     connectionId,
-    confirmationStatus: created.confirmationStatus || (canConfirm ? 'confirmed' : 'pending'),
+    confirmationStatus: staff.confirmed ? 'confirmed' : 'pending',
     skipped: staff.skipped,
   };
 }
@@ -496,6 +516,8 @@ interface AssignParams {
   actor: Actor;
   /** confirmed — назначение администратором; pending — консультант взял продавца сам */
   confirmation: Extract<ConnectionConfirmationStatus, 'confirmed' | 'pending'>;
+  /** Заполнить сопровождение по месяцам консультантом (044); false — состав задаст вызывающий */
+  materializeMaintenance?: boolean;
   /** Продавец должен быть без консультанта (защита от гонки двух консультантов) */
   expectUnassigned?: boolean;
   /** Только одобренный модерацией продавец (самоназначение консультанта) */
@@ -544,7 +566,7 @@ async function resolvePlanPriceAndRate(
 export async function assignSellerToManager(
   params: AssignParams
 ): Promise<ServiceResult<{ connectionId?: string; confirmationStatus?: ConnectionConfirmationStatus }>> {
-  const { sellerPhone, managerId, actor, confirmation, expectUnassigned = false, requireApproved = false } = params;
+  const { sellerPhone, managerId, actor, confirmation, expectUnassigned = false, requireApproved = false, materializeMaintenance = true } = params;
   if (!sellerPhone) return fail('Не указан номер телефона продавца', 'MISSING_PHONE');
 
   const admin = createAdminClient();
@@ -609,7 +631,20 @@ export async function assignSellerToManager(
     .maybeSingle();
 
   if (existing) {
-    const restart = existing.confirmation_status === 'rejected' || existing.manager_id !== managerId;
+    const managerChanged = existing.manager_id !== managerId;
+    const restart = existing.confirmation_status === 'rejected' || managerChanged;
+    // Новый консультант: прежние участники и запланированное сопровождение прежнего состава снимаются,
+    // иначе явные строки сопровождения (044) остались бы за прежним консультантом
+    if (managerChanged) {
+      const { error: partErr } = await admin.from('connection_participants').delete().eq('connection_id', existing.connection_id);
+      if (partErr) return fail(partErr.message, 'DB_ERROR', 500);
+      const { error: maintErr } = await admin
+        .from('connection_maintenance_assignments')
+        .delete()
+        .eq('connection_id', existing.connection_id)
+        .eq('status', 'planned');
+      if (maintErr) return fail(maintErr.message, 'DB_ERROR', 500);
+    }
     const { error: connErr } = await admin
       .from('connections')
       .update({
@@ -633,6 +668,18 @@ export async function assignSellerToManager(
       })
       .eq('connection_id', existing.connection_id);
     if (connErr) return fail(connErr.message, 'DB_ERROR', 500);
+
+    // Сопровождение по месяцам заполняется новым консультантом (044)
+    if (managerChanged && materializeMaintenance) {
+      const staff = await assignConnectionStaff({
+        connectionId: existing.connection_id,
+        participants: [managerId],
+        actor,
+        mode: 'admin',
+        allowConfirm: false,
+      });
+      if (!staff.success) return staff;
+    }
 
     scheduleTelegramDispatch();
     return { success: true, connectionId: existing.connection_id, confirmationStatus: confirmation };
@@ -665,6 +712,18 @@ export async function assignSellerToManager(
     .select('connection_id')
     .single();
   if (insertErr) return fail(insertErr.message, 'DB_ERROR', 500);
+
+  // Сопровождение по месяцам заполняется консультантом сразу (044)
+  if (materializeMaintenance) {
+    const staff = await assignConnectionStaff({
+      connectionId: created.connection_id,
+      participants: [managerId],
+      actor,
+      mode: 'admin',
+      allowConfirm: false,
+    });
+    if (!staff.success) return staff;
+  }
 
   scheduleTelegramDispatch();
   return { success: true, connectionId: created.connection_id, confirmationStatus: confirmation };

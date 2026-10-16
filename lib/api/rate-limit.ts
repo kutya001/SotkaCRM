@@ -75,6 +75,11 @@ export function getRateLimitPolicy(pathname: string): RateLimitPolicy | null {
     return { limit: 120, windowSeconds: 60 };
   }
 
+  // 4. Подтверждение подключения по одноразовой ссылке без входа (044): 20 запросов в минуту
+  if (pathname.startsWith('/api/telegram/confirm/')) {
+    return { limit: 20, windowSeconds: 60 };
+  }
+
   return null;
 }
 

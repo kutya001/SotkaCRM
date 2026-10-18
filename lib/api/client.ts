@@ -308,10 +308,19 @@ export const api = {
       invalidateNamespaces('leads', 'dashboard', 'analytics');
       return res;
     },
-    linkSeller: async (id: string, sellerPhone: string, managerId?: string) => {
+    linkSeller: async (
+      id: string,
+      sellerPhone: string,
+      options?: { participants?: string[]; maintenance?: { month_index: number; user_ids: string[] }[]; managerId?: string | null }
+    ) => {
       const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/link-seller`, {
         method: 'POST',
-        body: JSON.stringify({ seller_phone: sellerPhone, manager_id: managerId }),
+        body: JSON.stringify({
+          seller_phone: sellerPhone,
+          participants: options?.participants,
+          maintenance: options?.maintenance,
+          manager_id: options?.managerId ?? undefined,
+        }),
       });
       invalidateNamespaces('leads', 'sellers', 'connections', 'dashboard', 'analytics');
       return res;
@@ -453,10 +462,14 @@ export const api = {
           bypassCache: options?.bypassCache,
         }
       ),
-    linkLead: async (sellerPhone: string, leadId: string) => {
+    linkLead: async (
+      sellerPhone: string,
+      leadId: string,
+      options?: { participants?: string[]; maintenance?: { month_index: number; user_ids: string[] }[] }
+    ) => {
       const res = await request<any>(`/api/v1/sellers/${encodeURIComponent(sellerPhone)}/link-lead`, {
         method: 'POST',
-        body: JSON.stringify({ lead_id: leadId }),
+        body: JSON.stringify({ lead_id: leadId, participants: options?.participants, maintenance: options?.maintenance }),
       });
       invalidateNamespaces('sellers', 'leads', 'connections', 'dashboard', 'analytics');
       return res;

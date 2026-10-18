@@ -17,6 +17,13 @@ export interface AvailableSellerItem {
   outlets_count: number;
   employees_count: number;
   registered_at: string | null;
+  /** Текущее подключение продавца (046): лид привяжется к нему, состав не меняется */
+  connection?: {
+    connection_id: string;
+    manager_id: string;
+    manager_name: string | null;
+    confirmation_status: 'pending' | 'confirmed';
+  } | null;
 }
 
 export interface LinkLeadResult {
@@ -76,9 +83,26 @@ export async function getAvailableSellersForMapping(
   // 3. Выборка продавцов
   let query = admin.from('sellers').select('*');
 
-  // Область данных модуля продавцов: без «sellers.view_all» — свои и свободные одобренные
+  // Область данных модуля продавцов: без «sellers.view_all» — свои (основной или участник подключения)
+  // и свободные одобренные; продавцы чужих подключений администратору видны, лид привяжется к их подключению
   if (!ctx.canViewAll('sellers')) {
-    query = query.or(`manager_id.eq.${ctx.profile.user_id},and(manager_id.is.null,moderation.eq.approved)`);
+    const { data: myParticipations } = await admin
+      .from('connection_participants')
+      .select('connection_id')
+      .eq('user_id', ctx.profile.user_id);
+    const participationIds = (myParticipations || []).map((p) => p.connection_id);
+    let myPhones: string[] = [];
+    if (participationIds.length > 0) {
+      const { data: myConnections } = await admin
+        .from('connections')
+        .select('seller_phone')
+        .in('connection_id', participationIds)
+        .neq('confirmation_status', 'rejected');
+      myPhones = (myConnections || []).map((c) => c.seller_phone).filter(Boolean);
+    }
+    const scopeParts = [`manager_id.eq.${ctx.profile.user_id}`, 'and(manager_id.is.null,moderation.eq.approved)'];
+    if (myPhones.length > 0) scopeParts.push(`seller_phone.in.(${myPhones.map((p) => `"${p}"`).join(',')})`);
+    query = query.or(scopeParts.join(','));
   }
 
   // Исключаем занятых продавцов
@@ -106,6 +130,31 @@ export async function getAvailableSellersForMapping(
     return { sellers: [], error: sellersError.message };
   }
 
+  // 4. Текущие подключения продавцов из выборки: лид привяжется к ним без изменения состава (046)
+  const phones = (sellersData || []).map((s) => s.seller_phone).filter(Boolean);
+  const connectionByPhone = new Map<string, NonNullable<AvailableSellerItem['connection']>>();
+  if (phones.length > 0) {
+    const { data: conns } = await admin
+      .from('connections')
+      .select('connection_id, seller_phone, manager_id, confirmation_status, assigned_at')
+      .in('seller_phone', phones)
+      .neq('confirmation_status', 'rejected')
+      .order('assigned_at', { ascending: false });
+    const managerIds = Array.from(new Set((conns || []).map((c) => c.manager_id).filter(Boolean)));
+    const { data: managers } =
+      managerIds.length > 0 ? await admin.from('users').select('user_id, full_name').in('user_id', managerIds) : { data: [] };
+    const managerNames = new Map((managers || []).map((m) => [m.user_id, m.full_name]));
+    for (const c of conns || []) {
+      if (connectionByPhone.has(c.seller_phone)) continue;
+      connectionByPhone.set(c.seller_phone, {
+        connection_id: c.connection_id,
+        manager_id: c.manager_id,
+        manager_name: managerNames.get(c.manager_id) || null,
+        confirmation_status: c.confirmation_status === 'confirmed' ? 'confirmed' : 'pending',
+      });
+    }
+  }
+
   const enriched: AvailableSellerItem[] = (sellersData || []).map((s) => {
     let price = 2500; // Базовая цена по умолчанию
     if (s.plan_id && plansMap.has(s.plan_id)) {
@@ -115,6 +164,7 @@ export async function getAvailableSellersForMapping(
     }
 
     return {
+      connection: connectionByPhone.get(s.seller_phone) || null,
       seller_phone: s.seller_phone,
       seller_name: s.seller_name,
       store: s.store,
@@ -161,15 +211,15 @@ export async function getConsultantRate(consultantId: string): Promise<number> {
 }
 
 /**
- * Атомарная операция связывания лида с продавцом (RPC link_lead_to_seller):
- * 1. leads: seller_phone = selectedPhone, status = 'Подписан', linked_at = now()
- * 2. sellers: manager_id = consultantId
- * 3. connections: создание записи закрепления с расчетом комиссии
+ * Связывание лида с продавцом (046): лид — RPC link_lead_to_seller (продавец, «Подписан», ответственный);
+ * подключение свободного продавца создает сервис (участники, сопровождение), подключенного — не меняется.
  */
 export async function linkLeadToSeller(params: {
   leadId: string;
   sellerPhone: string;
   managerId?: string;
+  participants?: string[];
+  maintenance?: { month_index: number; user_ids: string[] }[];
 }): Promise<LinkLeadResult> {
   try {
     const ctx = await requireAuth();

@@ -30,7 +30,12 @@ export interface LeadScopeInfo {
 
 export interface LeadAccessInfo extends LeadScopeInfo {
   status: LeadStatus | string;
+  /** Привязанный продавец: пока лид привязан, статус меняется только отвязкой */
+  seller_phone?: string | null;
 }
+
+/** Статус «Подписан» ставится только привязкой лида к продавцу (046) */
+export const LINK_ONLY_STATUS: LeadStatus = 'Подписан';
 
 export type LeadStatusCheck = { ok: true } | { ok: false; reason: string };
 
@@ -53,14 +58,21 @@ export function isLeadInScope(actor: LeadActor, lead: LeadScopeInfo): boolean {
 }
 
 function canReachStatus(actor: LeadActor, from: LeadStatus | string, to: LeadStatus): boolean {
+  if (to === LINK_ONLY_STATUS) return false;
   if (!hasPermission(actor.permissions, `leads.status.${to}`)) return false;
   if (isLeadStatusRollback(from, to) && !hasPermission(actor.permissions, 'leads.rollback')) return false;
   return true;
 }
 
+/** Лид привязан к продавцу: статус меняется только отвязкой продавца (046) */
+export function isLeadLinked(lead: Pick<LeadAccessInfo, 'seller_phone'>): boolean {
+  return Boolean(lead.seller_phone);
+}
+
 /** Статусы, в которые сотрудник может перевести данный лид (без текущего) */
 export function allowedLeadTransitions(actor: LeadActor, lead: LeadAccessInfo): LeadStatus[] {
   if (!isLeadInScope(actor, lead)) return [];
+  if (isLeadLinked(lead)) return [];
   return LEAD_STATUSES.filter((s) => s !== lead.status && canReachStatus(actor, lead.status, s));
 }
 
@@ -78,6 +90,12 @@ export function canChangeLeadStatus(
   }
   if (!isLeadInScope(actor, lead)) {
     return { ok: false, reason: 'Можно менять статус только своих лидов' };
+  }
+  if (target === LINK_ONLY_STATUS) {
+    return { ok: false, reason: 'Статус «Подписан» ставится привязкой лида к продавцу' };
+  }
+  if (isLeadLinked(lead)) {
+    return { ok: false, reason: 'Лид привязан к продавцу: сначала отвяжите продавца' };
   }
   if (!hasPermission(actor.permissions, `leads.status.${target}`)) {
     return { ok: false, reason: `Недостаточно прав для перевода лида в статус «${target}»` };

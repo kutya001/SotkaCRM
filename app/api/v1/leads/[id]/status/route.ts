@@ -33,7 +33,7 @@ export async function PATCH(
 
     const { data: targetLead } = await admin
       .from('leads')
-      .select('lead_id, created_by, assigned_to, status')
+      .select('lead_id, created_by, assigned_to, status, seller_phone')
       .eq('lead_id', id)
       .maybeSingle();
 

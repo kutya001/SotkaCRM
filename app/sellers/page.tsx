@@ -954,11 +954,11 @@ export default function SellersPage() {
           }
 
           // Привязка лида — в контекстном меню строки (ПКМ / «⋯»); ячейка — только отображение
-          if (!row.manager_id && hasAvailableLeads && canLinkLead) {
+          if (hasAvailableLeads && canLinkLead && (!row.manager_id || canViewAllSellers || isParticipantOfSeller(row))) {
             return (
               <span
                 className="text-[11px] text-blue-600 dark:text-blue-400 italic"
-                title="Привязать свободный лид можно из меню строки (ПКМ / «⋯»)"
+                title={row.manager_id ? 'Лид привяжется к подключению продавца (меню строки: ПКМ / «⋯»)' : 'Привязать свободный лид можно из меню строки (ПКМ / «⋯»)'}
               >
                 Можно связать с лидом
               </span>
@@ -967,13 +967,13 @@ export default function SellersPage() {
 
           return (
             <span className="text-[11px] text-zinc-400 italic">
-              {row.manager_id ? 'Консультант назначен' : '—'}
+              {row.manager_id ? 'Подключен' : '—'}
             </span>
           );
         },
       },
     ],
-    [canLinkLead, managers, hasAvailableLeads, renderCuratorReadOnly]
+    [canLinkLead, managers, hasAvailableLeads, renderCuratorReadOnly, canViewAllSellers, isParticipantOfSeller]
   );
 
   // Конфигурация полей для EntityModal
@@ -1264,7 +1264,12 @@ export default function SellersPage() {
     (row: SellerItem) => {
       const canTakeRow = canTakeSeller(row);
       const canStaff = canManageSellerStaff(row);
-      const canLink = hasAvailableLeads && canLinkLead && !row.linked_lead && !row.manager_id;
+      // Привязка лида (046): свободный продавец — любой с правом; подключенный — администратор или участник подключения
+      const canLink =
+        hasAvailableLeads &&
+        canLinkLead &&
+        !row.linked_lead &&
+        (!row.manager_id || canViewAllSellers || isParticipantOfSeller(row));
 
       if (!canTakeRow && !canStaff && !canLink && !canDeleteSeller) {
         return null;
@@ -1313,7 +1318,7 @@ export default function SellersPage() {
         </>
       );
     },
-    [canTakeSeller, canManageSellerStaff, canEditConnections, staffEdit.loadingPhone, openSellerStaff, hasAvailableLeads, canLinkLead, canDeleteSeller, takingPhone, handleTakeSelf]
+    [canTakeSeller, canManageSellerStaff, canEditConnections, staffEdit.loadingPhone, openSellerStaff, hasAvailableLeads, canLinkLead, canViewAllSellers, isParticipantOfSeller, canDeleteSeller, takingPhone, handleTakeSelf]
   );
 
   // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
@@ -1564,6 +1569,9 @@ export default function SellersPage() {
             onClose={() => setLinkLeadModal({ isOpen: false, seller: null })}
             seller={linkLeadModal.seller}
             onSuccess={() => fetchSellersData(1, searchQuery, true)}
+            employees={managers.map((m) => ({ user_id: m.user_id, full_name: m.full_name, login: m.login, role: m.role, color: m.color ?? null }))}
+            currentUserId={currentUserId}
+            canConfirm={canConfirmConnections}
           />
         )}
 

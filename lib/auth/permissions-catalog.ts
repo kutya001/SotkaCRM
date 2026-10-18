@@ -44,7 +44,8 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { key: 'leads.edit', label: 'Полностью редактировать карточку', hint: 'Имя, телефон, Instagram и прочие поля' },
       { key: 'leads.comment', label: 'Редактировать комментарий', hint: 'Если нет полного редактирования' },
       { key: 'leads.assign', label: 'Назначать ответственного консультанта' },
-      ...LEAD_STATUS_KEYS.map((status) => ({
+      // «Подписан» ставится только привязкой лида к продавцу (046) — отдельного права нет
+      ...LEAD_STATUS_KEYS.filter((status) => status !== 'Подписан').map((status) => ({
         key: `leads.status.${status}`,
         label: `Переводить в статус «${status}»`,
       })),
@@ -245,7 +246,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRoleCode, string[]> = {
     'dashboard.menu',
     'leads.menu',
     'leads.comment',
-    'leads.status.Подписан',
     'leads.status.Отмена',
     'leads.link_seller',
     'leads.scripts',

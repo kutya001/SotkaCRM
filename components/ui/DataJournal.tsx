@@ -2793,11 +2793,26 @@ export function DataJournal<T extends Record<string, any>>({
             )}
           </div>
 
-          {/* Переключатель вида (Таблица / Карточки) */}
-          <div className="flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-0.5 md:p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-9 md:h-11 flex-shrink-0">
+          {/* Переключатель вида на телефоне: одна кнопка, значок — текущий вид, нажатие — другой вид */}
+          <button
+            type="button"
+            onClick={() => handleToggleView(viewMode === 'table' ? 'cards' : 'table')}
+            className="md:hidden h-9 w-9 rounded-xl border flex items-center justify-center transition-all island-interactive flex-shrink-0 bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80"
+            title={viewMode === 'table' ? 'Табличный вид — переключить на карточки' : 'Карточный вид — переключить на таблицу'}
+            aria-label={viewMode === 'table' ? 'Табличный вид, переключить на карточки' : 'Карточный вид, переключить на таблицу'}
+          >
+            {viewMode === 'table' ? (
+              <Table2 className="w-4 h-4" strokeWidth={1.75} />
+            ) : (
+              <LayoutGrid className="w-4 h-4" strokeWidth={1.75} />
+            )}
+          </button>
+
+          {/* Переключатель вида на компьютере (Таблица / Карточки) */}
+          <div className="hidden md:flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-11 flex-shrink-0">
             <button
               onClick={() => handleToggleView('table')}
-              className={`w-8 h-8 md:w-9 md:h-9 p-1 md:p-2 rounded-lg transition-all flex items-center justify-center ${
+              className={`w-9 h-9 p-2 rounded-lg transition-all flex items-center justify-center ${
                 viewMode === 'table'
                   ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
@@ -2809,7 +2824,7 @@ export function DataJournal<T extends Record<string, any>>({
             </button>
             <button
               onClick={() => handleToggleView('cards')}
-              className={`w-8 h-8 md:w-9 md:h-9 p-1 md:p-2 rounded-lg transition-all flex items-center justify-center ${
+              className={`w-9 h-9 p-2 rounded-lg transition-all flex items-center justify-center ${
                 viewMode === 'cards'
                   ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'

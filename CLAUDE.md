@@ -43,9 +43,9 @@ ESLint не настроен: `npm run lint` запросит интеракти
 ### Предметная модель
 
 - **Лиды** — воронка `Открыт → Обработан → Назначен → Подписан | Отмена`. Все правила переходов — в `lib/leads/status-rules.ts` (используются и API, и UI). «Подписан» ставится только привязкой к продавцу; пока лид привязан, статус меняется только отвязкой; «Отмена» требует причину (проверяет и триггер БД).
-- **Продавцы** синхронизируются из Sotka HQ API (`lib/services/sotka-api.ts`, `app/api/sync/sotka`, контракт — `sotka-api.json`). Ключ продавца — `seller_phone`.
+- **Продавцы** синхронизируются из Sotka HQ API (`lib/services/sotka-api.ts`, `app/api/sync/sotka`, контракт — `sotka-api.json`). Ключ продавца — `seller_phone`. API Sotka вызывается только с сервера: маршрут синхронизации принимает `Bearer CRON_SECRET` (Vercel Cron) или сессию с правом `sellers.sync`. Upsert продавцов не передает `manager_id`: консультант — локальное назначение CRM и при синхронизации не затирается.
 - **Подключения** (`connections`) — закрепление продавца за сотрудниками. `manager_id` — основной участник (он же консультант продавца), остальные — в `connection_participants`, всего до трех; бонус делится поровну. Сопровождение по месяцам — `connection_maintenance_assignments` (по умолчанию все участники). Статус подтверждения `pending | confirmed | rejected`: начисление за подключение создает триггер БД при подтверждении, сопровождение начисляется только при запуске биллинга. Вся логика — `lib/services/connections.ts` (`createSellerConnection`, `assignConnectionStaff`, `assignSellerToManager`, `setConnectionConfirmation`, `deleteConnection`).
-- **Привязка лида** — `lib/services/lead-linking.ts`: SQL-функция `link_lead_to_seller` меняет только лид; свободному продавцу подключение создается через `createSellerConnection`, у подключенного лид лишь прикрепляется. Отвязка снимает ожидающее подключение и оставляет подтвержденное.
+- **Привязка лида** — `lib/services/lead-linking.ts`: связь через `leads.seller_phone = sellers.seller_phone`, один продавец — не более одного лида (в списке для привязки нет продавцов, чей телефон уже стоит у лида). SQL-функция `link_lead_to_seller` меняет только лид (продавец, «Подписан», `linked_at`, ответственный); свободному продавцу подключение создается через `createSellerConnection`, у подключенного лид лишь прикрепляется. Отвязка снимает ожидающее подключение и оставляет подтвержденное.
 - **Начисления и выплаты** — двойной реестр: `connection_accruals` (по подключениям) синхронизируется триггерами с журналом ЗП `employee_payouts`. Порядок месяцев начисления — `lib/payroll/connection-order.ts`.
 
 ### Telegram
@@ -58,7 +58,9 @@ ESLint не настроен: `npm run lint` запросит интеракти
 - Окна — `components/ui/Modal.tsx` (`Modal`, `ModalCallout`) и `ConfirmDialog.tsx`, поля и кнопки — `Field.tsx`, `Button.tsx`. Не используйте `window.confirm`.
 - Постоянная оболочка `components/layout/AppShell.tsx` монтируется один раз в `app/layout.tsx`; страница регистрирует свою конфигурацию через `AppLayout`.
 - Описания модулей не выводятся на страницах — они в справке «?» (`lib/module-help.ts`); меняя поведение модуля, обновляйте его подсказки.
-- Даты — `lib/utils/format.ts` («ДД.ММ.ГГГГ - чч:мм:сс», «ММ.ГГГГ», часовой пояс Бишкека), телефоны — `lib/utils/phone.ts` (`formatPhoneDisplay`, коды стран СНГ). Иконки — Lucide, без emoji; стиль — `UxUi.md`.
+- Даты — `lib/utils/format.ts` («ДД.ММ.ГГГГ - чч:мм:сс», «ММ.ГГГГ», часовой пояс Бишкека), телефоны — `lib/utils/phone.ts` (`formatPhoneDisplay`, коды стран СНГ).
+- Стиль — `UxUi.md` (Apple Island: матовые «островки» `rounded-2xl` / `rounded-3xl`, `backdrop-blur-xl`). Иконки — только контурные Lucide (`strokeWidth` 1.75 или 2). Emoji запрещены во всех элементах интерфейса, включая статусы и уведомления.
+- `'use client'` — только у компонентов с интерактивностью. Серверные ключи (`SUPABASE_SERVICE_ROLE_KEY`, `SOTKA_API_PASSWORD`, `TELEGRAM_BOT_TOKEN`) используются только в маршрутах, серверных действиях и `lib/services`.
 
 ## База данных и миграции
 
@@ -69,8 +71,16 @@ ESLint не настроен: `npm run lint` запросит интеракти
 
 ## Переменные окружения
 
-`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SOTKA_API_BASE_URL`, `SOTKA_API_ISO_CODE_ID`, `SOTKA_API_PHONE`, `SOTKA_API_PASSWORD`, `NEXT_PUBLIC_APP_URL` (адрес в ссылках из Telegram), `CRON_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (лимиты запросов в `lib/api/rate-limit.ts`; без них — лимит в памяти). Значения хранятся в Vercel.
+Шаблон — `.env.example`, значения хранятся в Vercel. `NEXT_PUBLIC_APP_URL` — адрес в ссылках из Telegram; `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` — лимиты запросов в `lib/api/rate-limit.ts` (без них — лимит в памяти процесса).
 
-## Прочие документы
+## Документация обновляется вместе с кодом
 
-`ТЗ.md` — техническое задание и бизнес-процессы, `DB.md` — схема БД, `UxUi.md` — дизайн-система, `sotka-api.json` — контракт внешнего API.
+Без отдельной просьбы, в том же изменении:
+
+- схема БД (колонка, индекс, триггер, функция, RLS) — раздел в `DB.md`;
+- маршруты, пагинация или маппинг полей Sotka HQ API — `sotka-api.json`;
+- новый экран, структура карточек, фильтры `DataJournal`, дизайн-токены — `UxUi.md`;
+- новая переменная окружения или внешний сервис — плейсхолдер в `.env.example`;
+- поведение модуля — подсказки в `lib/module-help.ts`.
+
+`ТЗ.md` — техническое задание и бизнес-процессы. `GEMINI.md` и `.antigravity/` — регламент и архив планов другого ассистента. Часть `GEMINI.md` устарела: роли теперь задаются таблицами `roles` / `role_permissions`, а не `users.role`, и администратор может окончательно удалять лиды (право `leads.delete`).

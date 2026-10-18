@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     // Текущее состояние выбранных лидов: права и область видимости проверяются по каждому лиду
     const { data: currentLeads, error: readError } = await admin
       .from('leads')
-      .select('lead_id, status, created_by, assigned_to')
+      .select('lead_id, status, created_by, assigned_to, seller_phone')
       .in('lead_id', targetLeadIds);
 
     if (readError) throw readError;

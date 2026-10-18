@@ -180,7 +180,7 @@ export async function DELETE(
 
     const { data: existingLead } = await admin
       .from('leads')
-      .select('lead_id, created_by, assigned_to')
+      .select('lead_id, created_by, assigned_to, seller_phone')
       .eq('lead_id', id)
       .single();
 
@@ -190,6 +190,16 @@ export async function DELETE(
 
     if (!isLeadInScope(leadActorFrom(ctx), existingLead)) {
       return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
+    }
+
+    // Привязанный лид сначала отвязывается по общему правилу (046): ожидающее подключение снимается,
+    // подтвержденное остается — продавец и подключение не остаются с «висящим» лидом
+    if (existingLead.seller_phone) {
+      const { unlinkLeadFromSeller } = await import('@/lib/services/lead-linking');
+      const unlinked = await unlinkLeadFromSeller(id);
+      if (!unlinked.success) {
+        return apiError(unlinked.error || 'Не удалось отвязать лид от продавца перед удалением', 'UNLINK_FAILED', 400);
+      }
     }
 
     // Физическое удаление (Hard Delete): сервисный клиент проходит триггер prevent_lead_delete (миграция 032).

@@ -1150,8 +1150,7 @@ function LeadsContent() {
             onClose={() => setMappingModal({ isOpen: false, lead: null })}
             lead={mappingModal.lead}
             currentUserId={currentUserId}
-            currentUserRole={currentUserRole}
-            consultants={consultants}
+            employees={consultants.map((c) => ({ user_id: c.user_id, full_name: c.full_name, login: c.login, role: c.role, color: c.color ?? null }))}
             onSuccess={async () => {
               setModalState((prev) => ({ ...prev, isOpen: false }));
               await fetchInitialData();

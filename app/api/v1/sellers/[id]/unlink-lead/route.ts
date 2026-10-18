@@ -3,92 +3,48 @@ import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { findSellerByKey } from '@/lib/services/sellers';
+import { unlinkLeadFromSeller } from '@/lib/services/lead-linking';
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handleUnlinkFromSeller(params);
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   return handleUnlinkFromSeller(params);
 }
 
+/**
+ * Отвязка лида со стороны продавца (046): лид — «Назначен»; ожидающее подключение снимается,
+ * подтвержденное остается (консультант продавца не трогается — им управляет подключение).
+ */
 async function handleUnlinkFromSeller(paramsPromise: Promise<{ id: string }>) {
   try {
     const { id } = await paramsPromise;
     await requirePermission('sellers.unlink_lead');
-    // Запись в sellers/leads после проверки права — сервисным клиентом
     const supabase = createAdminClient();
 
-    // 1. Поиск продавца по organization_id или seller_phone
     const seller = await findSellerByKey(supabase, id, ['seller_phone', 'seller_name', 'manager_id'] as const);
+    if (!seller) return apiError('Продавец не найден', 'NOT_FOUND', 404);
 
-    if (!seller) {
-      return apiError('Продавец не найден', 'NOT_FOUND', 404);
-    }
-
-    // 2. Поиск привязанного лида
-    const { data: lead, error: leadErr } = await supabase
+    const { data: lead } = await supabase
       .from('leads')
       .select('lead_id, client_name, seller_phone, status')
       .eq('seller_phone', seller.seller_phone)
       .maybeSingle();
+    if (!lead) return apiError('У продавца нет привязанного лида', 'NOT_LINKED', 400);
 
-    if (leadErr || !lead) {
-      // Если лид не найден по seller_phone, но у продавца есть manager_id, просто сбрасываем manager_id
-      await supabase
-        .from('sellers')
-        .update({ manager_id: null } as any)
-        .eq('seller_phone', seller.seller_phone);
-
-      return apiSuccess({
-        success: true,
-        seller_phone: seller.seller_phone,
-        message: 'Консультант продавца сброшен (привязанный лид не был обнаружен)',
-      });
-    }
-
-    // 3. Вызов RPC unlink_lead_and_seller
-    const { data: rpcRes, error: rpcErr } = await (createAdminClient().rpc as any)('unlink_lead_and_seller', {
-      p_lead_id: lead.lead_id,
-    });
-
-    if (!rpcErr && rpcRes && (rpcRes as any).success) {
-      return apiSuccess({
-        success: true,
-        lead_id: lead.lead_id,
-        seller_phone: seller.seller_phone,
-        message: 'Лид успешно отвязан от продавца и возвращен в статус "Назначен"',
-      });
-    }
-
-    // 4. Резервный механизм
-    await supabase
-      .from('leads')
-      .update({
-        seller_phone: null,
-        linked_at: null,
-        status: 'Назначен',
-        updated_at: new Date().toISOString(),
-      } as any)
-      .eq('lead_id', lead.lead_id);
-
-    await supabase
-      .from('sellers')
-      .update({ manager_id: null } as any)
-      .eq('seller_phone', seller.seller_phone);
+    const res = await unlinkLeadFromSeller(lead.lead_id);
+    if (!res.success) return apiError(res.error || 'Ошибка отвязки лида', 'UNLINK_FAILED', 400);
 
     return apiSuccess({
       success: true,
       lead_id: lead.lead_id,
       seller_phone: seller.seller_phone,
       new_status: 'Назначен',
-      message: 'Лид успешно отвязан от продавца',
+      connection_deleted: res.connectionDeleted,
+      message: res.connectionDeleted
+        ? 'Лид отвязан, ожидавшее подтверждения подключение снято'
+        : 'Лид отвязан от продавца и возвращен в статус «Назначен»',
     });
   } catch (err) {
     return handleApiError(err);

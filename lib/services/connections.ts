@@ -435,8 +435,21 @@ export async function deleteConnection(connectionId: string): Promise<ServiceRes
   const { error: delErr } = await admin.from('connections').delete().eq('connection_id', connectionId);
   if (delErr) return fail(delErr.message, 'DB_ERROR', 500);
 
+  // Привязанный лид возвращается в «Назначен» (046): подключения больше нет
+  if (conn.seller_phone) await unlinkLeadsOfSeller(conn.seller_phone);
+
   scheduleTelegramDispatch();
   return { success: true, deletedId: connectionId, sellerPhone: conn.seller_phone ?? null };
+}
+
+/** Лиды, привязанные к продавцу, возвращаются в «Назначен» (SQL-функция ведет только лид, 046) */
+async function unlinkLeadsOfSeller(sellerPhone: string): Promise<void> {
+  const admin = createAdminClient();
+  const { data: leads } = await admin.from('leads').select('lead_id').eq('seller_phone', sellerPhone);
+  for (const lead of leads || []) {
+    const { error } = await (admin.rpc as any)('unlink_lead_and_seller', { p_lead_id: lead.lead_id });
+    if (error) console.error('[unlinkLeadsOfSeller] unlink_lead_and_seller:', error);
+  }
 }
 
 interface CreateSellerConnectionParams {
@@ -449,6 +462,10 @@ interface CreateSellerConnectionParams {
   canConfirm: boolean;
   /** Origin запроса — для одноразовой ссылки подтверждения в Telegram */
   appOrigin?: string | null;
+  /** Основной участник (консультант продавца); по умолчанию — создающий сотрудник */
+  primaryUserId?: string;
+  /** Создающий сотрудник обязан быть участником (быстрое действие «Подключить…»); привязка лида — нет */
+  requireActorParticipant?: boolean;
 }
 
 /**
@@ -460,20 +477,21 @@ interface CreateSellerConnectionParams {
 export async function createSellerConnection(
   params: CreateSellerConnectionParams
 ): Promise<ServiceResult<{ connectionId: string; confirmationStatus: ConnectionConfirmationStatus; skipped: string[] }>> {
-  const { sellerPhone, actor, canConfirm, maintenance = [], appOrigin } = params;
-  const participants = uniq(params.participants);
-  if (!participants.includes(actor.user_id)) {
+  const { sellerPhone, actor, canConfirm, maintenance = [], appOrigin, requireActorParticipant = true } = params;
+  const primary = params.primaryUserId || actor.user_id;
+  const participants = uniq([primary, ...params.participants]);
+  if (requireActorParticipant && !participants.includes(actor.user_id)) {
     return fail('Вы должны быть участником создаваемого подключения', 'ACTOR_NOT_PARTICIPANT', 422);
   }
   if (participants.length > 3) return fail('В подключении может быть не более трех участников', 'VALIDATION_ERROR', 422);
-  // Основной — создающий сотрудник
-  const ordered = [actor.user_id, ...participants.filter((id) => id !== actor.user_id)];
+  // Основной — консультант продавца (по умолчанию создающий сотрудник)
+  const ordered = [primary, ...participants.filter((id) => id !== primary)];
 
   // Подключение создается ожидающим и подтверждается (при праве) уже после записи участников:
   // начисление и уведомления участникам должны видеть полный состав, а не только основного
   const created = await assignSellerToManager({
     sellerPhone,
-    managerId: actor.user_id,
+    managerId: primary,
     actor,
     confirmation: 'pending',
     expectUnassigned: true,
@@ -592,10 +610,11 @@ export async function assignSellerToManager(
     return fail('У продавца уже есть консультант', 'SELLER_ALREADY_TAKEN', 409);
   }
 
-  // 2. Снятие консультанта: подключение удаляется (начисления чистит триггер)
+  // 2. Снятие консультанта: подключение удаляется (начисления чистит триггер), привязанный лид — в «Назначен»
   if (!managerId) {
     const { error: delErr } = await admin.from('connections').delete().eq('seller_phone', sellerPhone);
     if (delErr) return fail(delErr.message, 'DB_ERROR', 500);
+    await unlinkLeadsOfSeller(sellerPhone);
     scheduleTelegramDispatch();
     return { success: true };
   }

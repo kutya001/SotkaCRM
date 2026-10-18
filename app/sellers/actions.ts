@@ -605,13 +605,7 @@ export async function linkSellerToLeadAction(
       return { success: false, error: 'Продавец вне вашей области видимости' };
     }
 
-    if (sellerCheck && sellerCheck.manager_id !== null) {
-      return {
-        success: false,
-        error: 'У продавца уже назначен консультант. Чтобы привязать лид, сначала снимите консультанта',
-      };
-    }
-
+    // Подключенный продавец: лид привязывается к существующему подключению (администратор или участник, 046)
     const result = await linkLeadToSellerAtomic(ctx, { leadId, sellerPhone, via: 'seller' });
 
     if (!result.success) {

@@ -7,15 +7,19 @@ import {
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
+  closestCenter,
+  rectIntersection,
   useDraggable,
-  useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { GripVertical } from 'lucide-react';
+import { SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
+import { GripHorizontal, GripVertical, RotateCcw } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { applyKanbanColumnOrder, moveKanbanColumn, parseKanbanColumnOrder } from '@/lib/utils/kanban-order';
 
 /** Колонка доски: значение группировки, в которое переносится карточка */
 export interface KanbanColumn {
@@ -98,7 +102,7 @@ function DraggableCard({
   onClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled, data: { type: 'card' } });
   return (
     <div
       ref={setNodeRef}
@@ -123,7 +127,7 @@ function DraggableCard({
   );
 }
 
-function DroppableColumn({
+function SortableColumn({
   dropId,
   column,
   count,
@@ -133,12 +137,16 @@ function DroppableColumn({
   dropId: string;
   column: KanbanColumn;
   count: number;
-  /** idle — перетаскивания нет; allowed / blocked / source — во время перетаскивания */
+  /** idle — перетаскивания нет; allowed / blocked / source — во время переноса карточки */
   state: 'idle' | 'allowed' | 'blocked' | 'source';
   children: React.ReactNode;
 }) {
-  // Запрещенная колонка остается зоной сброса: при отпускании проверка покажет причину запрета
-  const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  // Колонка — и зона сброса карточек, и сортируемый элемент (перетаскивается за ручку в заголовке).
+  // Запрещенная колонка остается зоной сброса: при отпускании проверка покажет причину запрета.
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, transform, transition, isDragging, isOver } = useSortable({
+    id: dropId,
+    data: { type: 'column' },
+  });
   const stateClass =
     state === 'allowed'
       ? isOver
@@ -152,12 +160,26 @@ function DroppableColumn({
   return (
     <section
       ref={setNodeRef}
+      style={{ transform: transform ? `translate3d(${Math.round(transform.x)}px, 0, 0)` : undefined, transition }}
       aria-label={`${column.label}: ${count}`}
-      className={`flex flex-col w-[min(18rem,82vw)] flex-shrink-0 max-h-[calc(100vh-300px)] min-h-[16rem] rounded-3xl backdrop-blur-xl bg-white/60 dark:bg-zinc-900/60 border border-white/20 dark:border-zinc-800/40 shadow-sm transition-all ${stateClass}`}
+      className={`flex flex-col w-[min(18rem,82vw)] flex-shrink-0 max-h-[calc(100vh-300px)] min-h-[16rem] rounded-3xl backdrop-blur-xl bg-white/60 dark:bg-zinc-900/60 border border-white/20 dark:border-zinc-800/40 shadow-sm ${
+        isDragging ? 'opacity-40' : ''
+      } ${stateClass}`}
     >
-      <header className="flex items-center justify-between gap-2 px-3.5 pt-3 pb-2">
+      <header className="flex items-center justify-between gap-1.5 pl-1.5 pr-3.5 pt-3 pb-2">
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label={`Переместить колонку «${column.label}»`}
+          title="Перетащите, чтобы поменять колонки местами (на телефоне — удерживайте). Порядок сохраняется в этом браузере"
+          className="h-7 w-6 flex-shrink-0 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 cursor-grab active:cursor-grabbing touch-manipulation select-none [-webkit-touch-callout:none]"
+        >
+          <GripHorizontal className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
         <span
-          className={`inline-flex items-center gap-1.5 min-w-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+          className={`inline-flex items-center gap-1.5 min-w-0 mr-auto px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
             column.colorClass || 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-300 border-zinc-500/20'
           }`}
         >
@@ -177,6 +199,7 @@ function DroppableColumn({
  * Доска канбан для DataJournal: колонки — значения выбранной группировки, карточки переносятся
  * мышью, долгим нажатием на сенсорном экране или клавиатурой (пробел — взять, стрелки, пробел — положить).
  * Разрешенные колонки подсвечиваются, запрещенные гаснут; перенос в запрещенную показывает причину.
+ * Колонки переставляются за ручку в заголовке; порядок каждой раскладки хранится только в localStorage.
  */
 export function KanbanBoard<T>({
   rows,
@@ -207,6 +230,39 @@ export function KanbanBoard<T>({
     } catch {}
   };
   const grouping = groupings.find((g) => g.id === groupingId) || groupings[0];
+
+  // Порядок колонок каждой раскладки — только в этом браузере (localStorage), на сервер не уходит
+  const orderStorageKey = (id: string) => `datajournal_${storageKey}_kanban_order_${id}`;
+  const groupingIdsKey = groupings.map((g) => g.id).join('|');
+  const [savedOrders, setSavedOrders] = React.useState<Record<string, string[]>>({});
+  React.useEffect(() => {
+    const next: Record<string, string[]> = {};
+    for (const id of groupingIdsKey.split('|')) {
+      try {
+        const order = parseKanbanColumnOrder(localStorage.getItem(`datajournal_${storageKey}_kanban_order_${id}`));
+        if (order) next[id] = order;
+      } catch {}
+    }
+    setSavedOrders(next);
+  }, [storageKey, groupingIdsKey]);
+  const saveColumnOrder = (id: string, order: string[] | null) => {
+    setSavedOrders((prev) => {
+      const next = { ...prev };
+      if (order) next[id] = order;
+      else delete next[id];
+      return next;
+    });
+    try {
+      if (order) localStorage.setItem(orderStorageKey(id), JSON.stringify(order));
+      else localStorage.removeItem(orderStorageKey(id));
+    } catch {}
+  };
+  const columns = React.useMemo(
+    () => applyKanbanColumnOrder(grouping.columns, savedOrders[grouping.id]),
+    [grouping, savedOrders]
+  );
+  const hasCustomOrder = Boolean(savedOrders[grouping.id]);
+  const [activeColumnDropId, setActiveColumnDropId] = React.useState<string | null>(null);
 
   // Перенос, ожидающий ответа сервера: карточка сразу показывается в новой колонке
   const [pending, setPending] = React.useState<Record<string, string>>({});
@@ -257,11 +313,19 @@ export function KanbanBoard<T>({
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     // Долгое нажатие: обычный свайп прокручивает доску, а не тащит карточку
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
-    useSensor(KeyboardSensor)
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+
+  // Колонку ставят по ближайшему центру соседней колонки, карточку — по пересечению с колонкой
+  const collisionDetection: CollisionDetection = (args) =>
+    args.active.data.current?.type === 'column' ? closestCenter(args) : rectIntersection(args);
 
   const handleDragStart = (e: DragStartEvent) => {
     draggingRef.current = true;
+    if (e.active.data.current?.type === 'column') {
+      setActiveColumnDropId(String(e.active.id));
+      return;
+    }
     setActiveKey(String(e.active.id));
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate?.(20);
   };
@@ -269,11 +333,22 @@ export function KanbanBoard<T>({
   const handleDragEnd = async (e: DragEndEvent) => {
     draggingRef.current = false;
     setActiveKey(null);
+    setActiveColumnDropId(null);
     suppressClickRef.current = Date.now();
-    const row = rowsByKey.get(String(e.active.id));
     const overId = e.over ? String(e.over.id) : null;
-    if (!row || !overId) return;
     const prefix = `${grouping.id}::`;
+
+    // Перестановка колонок: порядок сохраняется для текущей раскладки
+    if (e.active.data.current?.type === 'column') {
+      const activeId = String(e.active.id);
+      if (!overId || overId === activeId || !overId.startsWith(prefix) || !activeId.startsWith(prefix)) return;
+      const ids = columns.map((c) => c.id);
+      saveColumnOrder(grouping.id, moveKanbanColumn(ids, activeId.slice(prefix.length), overId.slice(prefix.length)));
+      return;
+    }
+
+    const row = rowsByKey.get(String(e.active.id));
+    if (!row || !overId) return;
     if (!overId.startsWith(prefix)) return;
     const columnId = overId.slice(prefix.length);
     const key = getRowKey(row);
@@ -318,9 +393,11 @@ export function KanbanBoard<T>({
 
   return (
     <div className="space-y-3" data-no-swipe="">
-      {/* Раскладка доски */}
-      {groupings.length > 1 && (
-        <div className="flex items-center gap-2 px-1">
+      {/* Раскладка доски и сброс порядка колонок */}
+      {(groupings.length > 1 || hasCustomOrder) && (
+        <div className="flex flex-wrap items-center gap-2 px-1">
+          {groupings.length > 1 && (
+          <>
           <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Колонки:</span>
           <div className="inline-flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-0.5 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40">
             {groupings.map((g) => {
@@ -344,6 +421,19 @@ export function KanbanBoard<T>({
               );
             })}
           </div>
+          </>
+          )}
+          {hasCustomOrder && (
+            <button
+              type="button"
+              onClick={() => saveColumnOrder(grouping.id, null)}
+              className="h-8 px-2.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors"
+              title="Вернуть исходный порядок колонок этой раскладки"
+            >
+              <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} />
+              Исходный порядок
+            </button>
+          )}
         </div>
       )}
 
@@ -352,16 +442,24 @@ export function KanbanBoard<T>({
           {emptyMessage}
         </div>
       ) : (
-        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => {
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collisionDetection}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => {
             draggingRef.current = false;
             suppressClickRef.current = Date.now();
             setActiveKey(null);
-          }}>
+            setActiveColumnDropId(null);
+          }}
+        >
+          <SortableContext items={columns.map((c) => columnDropId(grouping.id, c.id))} strategy={horizontalListSortingStrategy}>
           <div className="flex gap-3 overflow-x-auto pb-3 -mx-1 px-1">
-            {grouping.columns.map((column) => {
+            {columns.map((column) => {
               const items = byColumn.get(column.id) || [];
               return (
-                <DroppableColumn
+                <SortableColumn
                   key={column.id}
                   dropId={columnDropId(grouping.id, column.id)}
                   column={column}
@@ -401,13 +499,34 @@ export function KanbanBoard<T>({
                       );
                     })
                   )}
-                </DroppableColumn>
+                </SortableColumn>
               );
             })}
           </div>
+          </SortableContext>
 
           <DragOverlay dropAnimation={null}>
-            {activeRow ? (
+            {activeColumnDropId ? (
+              (() => {
+                const column = columns.find((c) => columnDropId(grouping.id, c.id) === activeColumnDropId);
+                if (!column) return null;
+                return (
+                  <div className="w-[min(18rem,82vw)] rounded-3xl border border-blue-500/40 bg-white dark:bg-zinc-900 shadow-2xl px-3.5 py-3 flex items-center justify-between gap-2 cursor-grabbing">
+                    <span
+                      className={`inline-flex items-center gap-1.5 min-w-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+                        column.colorClass || 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-300 border-zinc-500/20'
+                      }`}
+                    >
+                      <ColumnDot column={column} />
+                      <span className="truncate">{column.label}</span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-zinc-200/80 dark:bg-zinc-800 text-[10px] font-mono font-bold">
+                      {(byColumn.get(column.id) || []).length}
+                    </span>
+                  </div>
+                );
+              })()
+            ) : activeRow ? (
               <div className="rounded-2xl border p-3 text-xs bg-white dark:bg-zinc-900 border-blue-500/40 shadow-2xl rotate-1 w-[min(17rem,78vw)] cursor-grabbing">
                 {renderCardBody(activeRow)}
               </div>

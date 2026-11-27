@@ -83,6 +83,7 @@ export function MobileHeader({
               <button
                 type="button"
                 onClick={() => setIsMenuDrawerOpen(true)}
+                data-tour="menu"
                 className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors active:scale-95 flex-shrink-0"
                 title="Все разделы"
                 aria-label="Все разделы"
@@ -99,6 +100,7 @@ export function MobileHeader({
                 <button
                   type="button"
                   onClick={handleToggleSearch}
+                  data-tour="search"
                   className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive active:scale-95"
                   title="Поиск"
                   aria-label="Поиск"
@@ -111,6 +113,7 @@ export function MobileHeader({
                 <button
                   type="button"
                   onClick={() => setIsFilterModalOpen(true)}
+                  data-tour="filters"
                   className="relative min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-800/60 transition-colors island-interactive active:scale-95"
                   title="Фильтры"
                   aria-label="Фильтры"

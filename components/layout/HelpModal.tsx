@@ -2,9 +2,12 @@
 
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
-import { CircleHelp, Lightbulb } from 'lucide-react';
+import { CircleHelp, GraduationCap, Lightbulb, Sparkles, Compass } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 import { getModuleHelp } from '@/lib/module-help';
+import { APP_VERSION } from '@/lib/changelog';
+import { useGuide } from '@/components/onboarding/GuideProvider';
 
 interface HelpButtonProps {
   className?: string;
@@ -19,6 +22,8 @@ export function HelpButton({ className, iconClassName = 'w-4 h-4' }: HelpButtonP
   const pathname = usePathname();
   const help = React.useMemo(() => getModuleHelp(pathname), [pathname]);
   const [open, setOpen] = React.useState(false);
+  const guide = useGuide();
+  const moduleTour = guide?.currentTour || null;
 
   // Закрытие при смене маршрута
   React.useEffect(() => {
@@ -32,6 +37,7 @@ export function HelpButton({ className, iconClassName = 'w-4 h-4' }: HelpButtonP
       <button
         type="button"
         onClick={() => setOpen(true)}
+        data-tour="help"
         className={
           className ||
           'w-10 h-10 rounded-xl bg-zinc-200/50 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-zinc-700/50 flex items-center justify-center transition-colors island-interactive'
@@ -70,6 +76,66 @@ export function HelpButton({ className, iconClassName = 'w-4 h-4' }: HelpButtonP
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {guide && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                <GraduationCap className="w-3.5 h-3.5" strokeWidth={2} />
+                Обучение
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {moduleTour && (
+                  <Button
+                    size="sm"
+                    leftIcon={<GraduationCap className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                    onClick={() => {
+                      setOpen(false);
+                      guide.startTour(moduleTour.id);
+                    }}
+                  >
+                    Пройти обучение: {moduleTour.title}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<Compass className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                  onClick={() => {
+                    setOpen(false);
+                    guide.startTour('welcome');
+                  }}
+                >
+                  Знакомство с интерфейсом
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                  onClick={() => {
+                    setOpen(false);
+                    guide.openWhatsNew();
+                  }}
+                >
+                  Что нового · {APP_VERSION}
+                </Button>
+              </div>
+              {guide.disabled ? (
+                <p className="text-[11px] text-zinc-500">
+                  Подсказки обучения отключены.{' '}
+                  <button type="button" onClick={() => guide.setDisabled(false)} className="font-semibold text-blue-600 dark:text-blue-400 hover:underline">
+                    Включить снова
+                  </button>
+                </p>
+              ) : (
+                <p className="text-[11px] text-zinc-500">
+                  Подсказки модуля появляются сами при первом открытии.{' '}
+                  <button type="button" onClick={() => guide.setDisabled(true)} className="font-semibold text-zinc-600 dark:text-zinc-300 hover:underline">
+                    Не показывать
+                  </button>
+                </p>
+              )}
             </div>
           )}
         </div>

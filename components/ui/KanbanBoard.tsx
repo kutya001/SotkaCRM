@@ -108,6 +108,7 @@ function DraggableCard({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
+      data-tour="journal-row"
       onClick={onClick}
       onContextMenu={onContextMenu}
       title={dragHint}
@@ -160,6 +161,7 @@ function SortableColumn({
   return (
     <section
       ref={setNodeRef}
+      data-tour="kanban-column"
       style={{ transform: transform ? `translate3d(${Math.round(transform.x)}px, 0, 0)` : undefined, transition }}
       aria-label={`${column.label}: ${count}`}
       className={`flex flex-col w-[min(18rem,82vw)] flex-shrink-0 max-h-[calc(100vh-300px)] min-h-[16rem] rounded-3xl backdrop-blur-xl bg-white/60 dark:bg-zinc-900/60 border border-white/20 dark:border-zinc-800/40 shadow-sm ${

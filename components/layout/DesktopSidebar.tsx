@@ -7,6 +7,7 @@ import { PanelLeftClose, PanelLeftOpen, LogOut, ShieldAlert, ShieldCheck, Shield
 import type { UserRole } from '@/types/database.types';
 import { NAV_ITEMS } from '@/lib/navigation';
 import { ROLE_LABELS } from '@/lib/constants/roles';
+import { VersionBadge } from '@/components/onboarding/VersionBadge';
 
 interface DesktopSidebarProps {
   collapsed: boolean;
@@ -101,7 +102,7 @@ export function DesktopSidebar({
       </div>
 
       {/* Список разделов навигации */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5">
+      <nav data-tour="nav" className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5">
         {filteredNavItems.map((item) => {
           const isActive =
             pathname === item.href ||
@@ -128,6 +129,13 @@ export function DesktopSidebar({
 
       {/* Пользовательский профиль внизу сайдбара */}
       <div className="p-3 border-t border-zinc-200/40 dark:border-zinc-800/40">
+        {/* Версия приложения и «Что нового» */}
+        <div className="sidebar-expanded-only mb-2 flex justify-center">
+          <VersionBadge />
+        </div>
+        <div className="sidebar-collapsed-only mb-2 flex justify-center">
+          <VersionBadge variant="compact" />
+        </div>
         <div className="sidebar-expanded-only flex items-center justify-between p-2 rounded-2xl bg-zinc-200/40 dark:bg-zinc-800/40 transition-colors">
           <div className="flex items-center gap-2.5 overflow-hidden flex-1">
             <div className="w-8 h-8 rounded-xl bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-800 dark:text-zinc-200 flex-shrink-0">

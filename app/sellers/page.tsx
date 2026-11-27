@@ -1368,6 +1368,7 @@ export default function SellersPage() {
           type="button"
           onClick={handleSyncApi}
           disabled={isSyncing}
+          data-tour="sellers-sync"
           className={`h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border island-interactive flex-shrink-0 ${
             isSyncing
               ? 'bg-blue-500/10 text-blue-600 border-blue-500/30 cursor-wait'

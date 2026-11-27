@@ -9,6 +9,7 @@ import { MobileBottomBar } from '@/components/layout/MobileBottomBar';
 import { FAB } from '@/components/layout/FAB';
 import { useToast } from '@/components/ui/Toast';
 import { useUser } from '@/components/auth/AuthProvider';
+import { GuideProvider } from '@/components/onboarding/GuideProvider';
 import { Plus } from 'lucide-react';
 
 /**
@@ -137,6 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AppShellContext.Provider value={contextValue}>
+      <GuideProvider>
       <div className="min-h-screen bg-zinc-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-zinc-900 selection:text-white dark:selection:bg-white dark:selection:text-zinc-900">
         {/* ДЕСКТОПНЫЙ СЛОЙ (экран >= 1024px) */}
         <DesktopSidebar
@@ -185,6 +187,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             onClick={onCreateClick}
+            data-tour="create"
             className="hidden lg:flex fixed bottom-8 right-8 z-40 w-12 h-12 rounded-2xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 shadow-xl items-center justify-center hover:scale-105 active:scale-95 transition-all duration-150 border border-white/20 dark:border-zinc-800/40 cursor-pointer island-interactive group"
             title={createTooltip}
             aria-label={createTooltip}
@@ -196,6 +199,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <MobileBottomBar userRole={role} />
       </div>
+      </GuideProvider>
     </AppShellContext.Provider>
   );
 }

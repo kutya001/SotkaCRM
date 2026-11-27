@@ -166,6 +166,62 @@ function buildQuery(params?: Record<string, any>): string {
   return str ? `?${str}` : '';
 }
 
+/** Комментарий лида (lib/services/lead-comments.ts) */
+export interface LeadCommentDto {
+  comment_id: string;
+  lead_id: string;
+  body: string;
+  created_at: string;
+  is_legacy: boolean;
+  author: { user_id: string; full_name: string; color: string | null } | null;
+}
+
+export interface LeadCommentsResponse {
+  comments: LeadCommentDto[];
+  /** false — миграция 048 не применена: истории нет, только текущий комментарий */
+  history_available: boolean;
+  can_comment: boolean;
+}
+
+export interface OnboardingProgressDto {
+  tour_id: string;
+  status: 'in_progress' | 'completed' | 'skipped';
+  steps_seen: number;
+  total_steps: number;
+  tour_version: number;
+  started_at: string;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface TrainingReportDto {
+  /** false — миграция 049 не применена */
+  available: boolean;
+  tours: { id: string; title: string; version: number }[];
+  rows: {
+    user_id: string;
+    full_name: string;
+    login: string;
+    color: string | null;
+    role_name: string;
+    disabled_all: boolean;
+    completed: number;
+    applicable: number;
+    tours: Record<
+      string,
+      {
+        applicable: boolean;
+        status: OnboardingProgressDto['status'] | null;
+        steps_seen: number;
+        total_steps: number;
+        finished_at: string | null;
+        updated_at: string | null;
+        tour_version: number | null;
+      }
+    >;
+  }[];
+}
+
 export const api = {
   // Управление кэшем
   cache: {
@@ -266,6 +322,20 @@ export const api = {
         method: 'GET',
         bypassCache: options?.bypassCache,
       }),
+    /** Лента комментариев лида (от старых к новым) и право добавлять */
+    getComments: (id: string) =>
+      request<LeadCommentsResponse>(`/api/v1/leads/${encodeURIComponent(id)}/comments`, {
+        method: 'GET',
+        bypassCache: true,
+      }),
+    addComment: async (id: string, body: string) => {
+      const res = await request<{ comment: LeadCommentDto; history_available: boolean }>(
+        `/api/v1/leads/${encodeURIComponent(id)}/comments`,
+        { method: 'POST', body: JSON.stringify({ body }) }
+      );
+      invalidateNamespaces('leads', 'dashboard');
+      return res;
+    },
     create: async (data: any) => {
       const res = await request<any>('/api/v1/leads', {
         method: 'POST',
@@ -984,6 +1054,19 @@ export const api = {
   },
 
   // 11. Профиль
+  /** Обучение по модулям: свой прогресс и отчет администратора */
+  onboarding: {
+    getMine: () =>
+      request<{ available: boolean; progress: OnboardingProgressDto[] }>('/api/v1/onboarding', {
+        method: 'GET',
+        bypassCache: true,
+      }),
+    save: (data: { tour_id: string; status: OnboardingProgressDto['status']; steps_seen: number; total_steps: number; tour_version?: number }) =>
+      request<{ available: boolean }>('/api/v1/onboarding', { method: 'POST', body: JSON.stringify(data) }),
+    getReport: () =>
+      request<TrainingReportDto>('/api/v1/onboarding/report', { method: 'GET', bypassCache: true }),
+  },
+
   profile: {
     get: (userId?: string, options?: { bypassCache?: boolean }) =>
       request<any>(`/api/v1/profile${buildQuery({ userId })}`, {

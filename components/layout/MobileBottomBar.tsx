@@ -49,6 +49,7 @@ export function MobileBottomBar(_props: MobileBottomBarProps) {
 
   return (
     <nav
+      data-tour="nav"
       className={`lg:hidden fixed left-3 right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-40 rounded-2xl island-glass shadow-md grid ${columnsClass} h-16 px-1`}
     >
       {items.map((item) => {

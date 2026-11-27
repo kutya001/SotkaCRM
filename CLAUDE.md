@@ -13,14 +13,18 @@ npx tsc --noEmit            # проверка типов (быстрее сбо
 node scripts/build-openapi.js   # пересобрать public/openapi.json по маршрутам app/api
 ```
 
-Тестового фреймворка нет. Проверки — самостоятельные скрипты в `scripts/verify-*.mjs`, работают без базы и сети, падают с ненулевым кодом. Один «тест» = один скрипт:
+Тестового фреймворка нет. Проверки — самостоятельные скрипты в `scripts/verify-*.mjs`, падают с ненулевым кодом. Один «тест» = один скрипт:
 
 ```bash
 node --experimental-strip-types scripts/verify-lead-status-rules.mjs
-for s in scripts/verify-*.mjs; do node --experimental-strip-types "$s" || echo "FAIL $s"; done
+for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr; do
+  node --experimental-strip-types "scripts/verify-$s.mjs" || echo "FAIL $s"
+done
 ```
 
 Флаг `--experimental-strip-types` нужен: скрипты импортируют `.ts`-модули из `lib/`. Часть скриптов проверяет код текстом (наличие вызовов, токенов в миграциях) — при переименовании функций обновляйте и их.
+
+Без базы и сети работают шесть скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
 
 ESLint не настроен: `npm run lint` запросит интерактивную настройку.
 

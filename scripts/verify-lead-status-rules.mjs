@@ -46,15 +46,22 @@ assert.equal(isLeadStatusRollback('Подписан', 'Назначен'), true)
 assert.equal(isLeadStatusRollback('Отмена', 'Открыт'), true);
 assert.equal(isLeadStatusRollback('Назначен', 'Отмена'), false);
 
-// --- Администратор: любой переход, кроме текущего статуса -------------------------------
+// --- Администратор: любой переход, кроме текущего статуса и «Подписан» (только привязкой, 046) ---
 for (const status of LEAD_STATUSES) {
   const targets = allowedLeadTransitions(actor('admin'), lead(status, { created_by: OTHER, assigned_to: OTHER }));
-  assert.deepEqual(targets, LEAD_STATUSES.filter((s) => s !== status), `admin из ${status}`);
+  assert.deepEqual(targets, LEAD_STATUSES.filter((s) => s !== status && s !== 'Подписан'), `admin из ${status}`);
   for (const t of targets) assert.equal(canChangeLeadStatus(actor('admin'), lead(status), t).ok, true);
 }
 assert.equal(canChangeLeadStatus(actor('admin'), lead('Отмена'), 'Открыт').ok, true, 'откат из Отмены — админ');
 assert.equal(canChangeLeadStatus(actor('admin'), lead('Открыт'), 'Открыт').ok, false, 'тот же статус');
 assert.equal(canChangeLeadStatus(actor('admin'), lead('Открыт'), 'Чужой').ok, false, 'неизвестный статус');
+
+// --- «Подписан» только привязкой; привязанный лид меняет статус только отвязкой (046) -------
+assert.ok(!ALL_PERMISSION_KEYS.includes('leads.status.Подписан'), 'права на ручной «Подписан» нет в каталоге');
+assert.match(canChangeLeadStatus(actor('admin'), lead('Назначен'), 'Подписан').reason, /привязк/);
+const linked = lead('Подписан', { seller_phone: '996700000001' });
+assert.deepEqual(allowedLeadTransitions(actor('admin'), linked), [], 'привязанный лид');
+assert.match(canChangeLeadStatus(actor('admin'), linked, 'Отмена').reason, /отвяжите/);
 
 // --- Учредитель: видит всё, статусы не меняет --------------------------------------------
 for (const status of LEAD_STATUSES) {
@@ -75,12 +82,13 @@ assert.match(canChangeLeadStatus(actor('smm'), lead('Открыт', { created_by
 assert.equal(canEditLeadFields(actor('smm'), lead('Открыт')), true);
 assert.equal(canEditLeadFields(actor('smm'), lead('Открыт', { created_by: OTHER, assigned_to: OTHER })), false);
 
-// --- Консультант: свои лиды, Назначен → Подписан | Отмена, без отката -------------------
-assert.deepEqual(allowedLeadTransitions(actor('consultant'), lead('Назначен')), ['Подписан', 'Отмена']);
+// --- Консультант: свои лиды, Назначен → Отмена («Подписан» — привязкой), без отката -------
+assert.deepEqual(allowedLeadTransitions(actor('consultant'), lead('Назначен')), ['Отмена']);
 assert.deepEqual(allowedLeadTransitions(actor('consultant'), lead('Подписан')), ['Отмена']);
 assert.deepEqual(allowedLeadTransitions(actor('consultant'), lead('Отмена')), [], 'возврат из Отмены без права отката');
 assert.deepEqual(allowedLeadTransitions(actor('consultant'), lead('Назначен', { assigned_to: OTHER, created_by: OTHER })), [], 'чужой лид');
-assert.match(canChangeLeadStatus(actor('consultant'), lead('Отмена'), 'Подписан').reason, /Отмена/);
+const consultantWithAssign = { userId: ME, permissions: [...DEFAULT_ROLE_PERMISSIONS.consultant, 'leads.status.Назначен'] };
+assert.match(canChangeLeadStatus(consultantWithAssign, lead('Отмена'), 'Назначен').reason, /Отмена/, 'без права отката');
 assert.equal(canEditLeadFields(actor('consultant'), lead('Назначен')), false, 'без полного редактирования');
 assert.equal(canEditLeadComment(actor('consultant'), lead('Назначен')), true, 'комментарий разрешен');
 assert.equal(canEditLeadComment(actor('consultant'), lead('Назначен', { assigned_to: OTHER, created_by: OTHER })), false);

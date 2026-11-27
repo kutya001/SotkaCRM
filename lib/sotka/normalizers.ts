@@ -523,3 +523,135 @@ const SUCCEEDED_STATUSES = new Set(['succeeded', 'success', 'completed', 'paid',
 export function isSucceededTransaction(status: string | null | undefined): boolean {
   return SUCCEEDED_STATUSES.has(String(status ?? 'succeeded').trim().toLowerCase());
 }
+
+/** Состояние подписки организации на платформе Sotka */
+export type SellerSubscriptionState = 'active' | 'inactive' | 'unknown';
+
+export interface NormalizedSellerSubscription {
+  /** active — подписка действует, inactive — нет подписки, unknown — статус не распознан */
+  state: SellerSubscriptionState;
+  /** Статус как его передал Sotka HQ (для проверки и отображения) */
+  status: string | null;
+  /** Тариф подписки */
+  tariff: string | null;
+  /** Окончание оплаченного периода, если API его передал */
+  paidUntil: string | null;
+}
+
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set([
+  'active', 'activated', 'paid', 'trial', 'trialing', 'enabled', 'valid', 'ok', 'true',
+  'активна', 'активная', 'активный', 'активен', 'действует', 'действующая', 'оплачена', 'оплачено', 'пробная', 'пробный период',
+]);
+
+const INACTIVE_SUBSCRIPTION_STATUSES = new Set([
+  'inactive', 'not_active', 'expired', 'ended', 'cancelled', 'canceled', 'suspended', 'paused', 'blocked', 'unpaid',
+  'disabled', 'none', 'no', 'false', 'debt', 'overdue',
+  'неактивна', 'неактивная', 'не активна', 'истекла', 'истёк', 'истек', 'отменена', 'приостановлена', 'заблокирована',
+  'не оплачена', 'нет', 'нет подписки', 'отсутствует', 'задолженность',
+]);
+
+function textOf(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value.trim() || null;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return textOf(obj.name ?? obj.title ?? obj.label ?? obj.plan_name ?? obj.status ?? null);
+  }
+  return null;
+}
+
+function firstDefined(...values: unknown[]): unknown {
+  return values.find((v) => v !== undefined && v !== null && v !== '');
+}
+
+/**
+ * 10. Подписка организации из детальной карточки Sotka HQ
+ * (GET /api/private/v1/admin/sellers-overview/{organization_id}/, блок platform).
+ * Поддерживает статус строкой, объект subscription, явный флаг активности и дату окончания.
+ * Нет ни статуса, ни тарифа, ни флага — подписки нет. Нераспознанный статус — «unknown»
+ * (показывается как есть, в «с подпиской» / «без подписки» не попадает).
+ */
+export function normalizeSellerSubscription(
+  detail: Record<string, any> | null | undefined,
+  now: Date = new Date()
+): NormalizedSellerSubscription {
+  const d = detail && typeof detail === 'object' ? detail : {};
+  const platform = (d.platform && typeof d.platform === 'object' ? d.platform : {}) as Record<string, any>;
+  const sub = (
+    platform.subscription && typeof platform.subscription === 'object'
+      ? platform.subscription
+      : d.subscription && typeof d.subscription === 'object'
+      ? d.subscription
+      : {}
+  ) as Record<string, any>;
+
+  const status = textOf(
+    firstDefined(platform.subscription_status, sub.status, sub.state, d.subscription_status)
+  );
+  const tariff = textOf(
+    firstDefined(platform.tariff, sub.tariff, sub.plan, sub.plan_name, d.tariff)
+  );
+  const flag = firstDefined(
+    platform.subscription_active,
+    platform.has_subscription,
+    platform.is_subscribed,
+    sub.is_active,
+    sub.active
+  );
+  const paidUntil = parseDateToISO(
+    firstDefined(
+      platform.subscription_until,
+      platform.subscription_expires_at,
+      platform.paid_until,
+      sub.expires_at,
+      sub.end_date,
+      sub.paid_until,
+      sub.valid_until
+    )
+  );
+  const expired = paidUntil !== null && new Date(paidUntil).getTime() < now.getTime();
+
+  let state: SellerSubscriptionState;
+  const normalizedStatus = status?.toLowerCase().replace(/\s+/g, ' ') ?? null;
+  if (normalizedStatus && ACTIVE_SUBSCRIPTION_STATUSES.has(normalizedStatus)) {
+    state = expired ? 'inactive' : 'active';
+  } else if (normalizedStatus && INACTIVE_SUBSCRIPTION_STATUSES.has(normalizedStatus)) {
+    state = 'inactive';
+  } else if (normalizedStatus) {
+    state = 'unknown';
+  } else if (typeof flag === 'boolean') {
+    state = flag && !expired ? 'active' : 'inactive';
+  } else if (paidUntil !== null) {
+    state = expired ? 'inactive' : 'active';
+  } else if (!tariff) {
+    // Организация без подписки: Sotka HQ передает tariff и subscription_status = null
+    state = 'inactive';
+  } else {
+    // Тариф указан, а статуса нет — действие подписки не подтверждено
+    state = 'unknown';
+  }
+
+  return { state, status, tariff, paidUntil };
+}
+
+/** Поля sellers для сохранения подписки из детальной карточки Sotka HQ */
+export function sellerSubscriptionColumns(
+  detail: Record<string, any> | null | undefined,
+  now: Date = new Date()
+): {
+  subscription_state: SellerSubscriptionState;
+  hq_subscription_status: string | null;
+  hq_tariff: string | null;
+  hq_subscription_until: string | null;
+  hq_subscription_synced_at: string;
+} {
+  const sub = normalizeSellerSubscription(detail, now);
+  return {
+    subscription_state: sub.state,
+    hq_subscription_status: sub.status,
+    hq_tariff: sub.tariff,
+    hq_subscription_until: sub.paidUntil,
+    hq_subscription_synced_at: now.toISOString(),
+  };
+}

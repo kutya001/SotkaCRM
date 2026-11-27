@@ -281,6 +281,8 @@ function LeadsContent() {
         minWidth: 100,
         sortable: true,
         filterable: true,
+        // Служебная колонка: в списке и карточках скрыта, включается в настройке колонок
+        technical: true,
         renderCell: (row) => (
           <span className="font-mono text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
             {row.lead_id.substring(0, 8)}...
@@ -294,8 +296,9 @@ function LeadsContent() {
         minWidth: 150,
         sortable: true,
         filterable: true,
+        cardTitle: true,
         renderCell: (row) => (
-          <div className="space-y-0.5">
+          <div className="space-y-0.5 min-w-0">
             <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
               {row.client_name}
             </p>
@@ -352,12 +355,13 @@ function LeadsContent() {
             const isUnassigned = !row.assigned_to;
             const currentConsultant = consultants.find((c) => c.user_id === row.assigned_to);
             return (
-              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-1.5 min-w-0 max-w-full" onClick={(e) => e.stopPropagation()}>
                 <EmployeeColorDot
                   color={currentConsultant?.color || (isUnassigned ? '#9CA3AF' : undefined)}
                   size="sm"
                 />
                 <select
+                  title={currentConsultant?.full_name || 'Не назначен'}
                   value={row.assigned_to || ''}
                   onChange={async (e) => {
                     const newConsultantId = e.target.value || null;
@@ -369,7 +373,7 @@ function LeadsContent() {
                       showToast(err.message || 'Ошибка при назначении консультанта', 'error');
                     }
                   }}
-                  className={`h-7 px-2 text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
+                  className={`h-7 px-2 min-w-0 max-w-[11rem] truncate text-xs font-semibold rounded-lg shadow-sm focus:outline-none cursor-pointer transition-all ${
                     isUnassigned
                       ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 ring-1 ring-amber-500/20'
                       : 'bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:ring-1 focus:ring-blue-500'

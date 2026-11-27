@@ -6,6 +6,8 @@ import {
   normalizeSotkaSeller,
   extractSellerDetailRegisteredAt,
   normalizeSellerTransactions,
+  normalizeSellerSubscription,
+  sellerSubscriptionColumns,
 } from '../lib/sotka/normalizers.ts';
 
 // Даты: ISO, локальный формат API (UTC+6), запятая, доли секунд, слэши
@@ -71,5 +73,36 @@ assert.deepEqual(
   { total: txApi.total, topups: txApi.total_topups, charges: txApi.total_charges, amount: txApi.total_amount },
   { total: 12, topups: 100, charges: 40, amount: 60 }
 );
+
+// Подписка организации (блок platform детальной карточки)
+const NOW = new Date('2026-11-27T00:00:00Z');
+const subState = (detail) => normalizeSellerSubscription(detail, NOW).state;
+// Пример контракта: организация без подписки — tariff и subscription_status = null
+assert.equal(subState({ platform: { tariff: null, subscription_status: null } }), 'inactive');
+assert.equal(subState(null), 'inactive');
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_status: 'active' } }), 'active');
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_status: 'Активна' } }), 'active');
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_status: 'expired' } }), 'inactive');
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_status: 'Истекла' } }), 'inactive');
+// Нераспознанный статус не угадывается
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_status: 'grace_period' } }), 'unknown');
+// Тариф без статуса — действие не подтверждено
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_status: null } }), 'unknown');
+// Вложенный объект подписки, флаг и дата окончания
+assert.equal(subState({ platform: { subscription: { status: 'paid', plan: { name: 'Бизнес' } } } }), 'active');
+assert.equal(subState({ platform: { subscription: { is_active: false } } }), 'inactive');
+assert.equal(subState({ platform: { subscription_active: true } }), 'active');
+assert.equal(subState({ platform: { subscription_status: 'active', subscription_until: '2026-10-01T00:00:00Z' } }), 'inactive');
+assert.equal(subState({ platform: { tariff: 'Премиум', subscription_until: '2027-01-01T00:00:00Z' } }), 'active');
+const subFull = normalizeSellerSubscription({ platform: { tariff: { name: 'Премиум' }, subscription_status: ' Active ' } }, NOW);
+assert.deepEqual(subFull, { state: 'active', status: 'Active', tariff: 'Премиум', paidUntil: null });
+const subCols = sellerSubscriptionColumns({ platform: { tariff: 'Базовый', subscription_status: 'active' } }, NOW);
+assert.deepEqual(subCols, {
+  subscription_state: 'active',
+  hq_subscription_status: 'active',
+  hq_tariff: 'Базовый',
+  hq_subscription_until: null,
+  hq_subscription_synced_at: '2026-11-27T00:00:00.000Z',
+});
 
 console.log('verify-sotka-normalizers: OK');

@@ -39,7 +39,7 @@ import { Modal } from '@/components/ui/Modal';
 import { createPortal } from 'react-dom';
 import { useToast, type ToastType } from '@/components/ui/Toast';
 import { formatDate, formatDateTime, formatMonth } from '@/lib/utils/format';
-import { telHref, waHref } from '@/lib/utils/phone';
+import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 function UrlSearchParamsSync({ onQuery }: { onQuery: (q: string) => void }) {
@@ -99,6 +99,13 @@ export interface ColumnDef<T> {
   /** Текстовое представление значения для заголовка карточки (если значение — объект) */
   textValue?: (row: T) => string;
 }
+
+/** Версия сохраненной видимости колонок: с ней служебные колонки учитываются как явный выбор */
+const VISIBILITY_VERSION_KEY = '__v';
+const VISIBILITY_VERSION = 2;
+
+/** Сетка карточек: на телефоне одна колонка, шире — столько колонок, сколько помещается карточек от 19rem */
+const CARD_GRID_CLASS = 'grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(19rem,1fr))] gap-4';
 
 /** Значение ячейки без renderCell: даты и месяцы форматируются по типу колонки */
 function formatPlainValue<T extends Record<string, any>>(col: ColumnDef<T>, val: unknown): string {
@@ -996,7 +1003,14 @@ const DataJournalCardInner = <T extends Record<string, any>>({
         c.key !== 'id' &&
         columnTextValue(c, row) !== null
     );
-  const cardTitle = titleCol ? columnTextValue(titleCol, row) || 'Без названия' : 'Без названия';
+  const titleText = titleCol ? columnTextValue(titleCol, row) : null;
+  // Телефон — под заголовком карточки; если названия нет, заголовком становится телефон
+  const phoneText = phoneCol && cleanDigits ? formatPhoneDisplay(rawPhone) : null;
+  const cardTitle = titleText || phoneText || 'Без названия';
+  const cardSubtitle = titleText && phoneText ? phoneText : null;
+  const bodyColumns = orderedColumns
+    .filter((c) => c !== titleCol && c !== phoneCol && c.type !== 'status' && !c.technical)
+    .slice(0, 4);
 
   return (
     <div
@@ -1008,51 +1022,58 @@ const DataJournalCardInner = <T extends Record<string, any>>({
           onRowContextMenu(e, row);
         }
       }}
-      className="rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
+      className="min-w-0 rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
+          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate" title={cardTitle}>
             {cardTitle}
           </h3>
+          {cardSubtitle && (
+            <p className="mt-0.5 text-xs font-mono text-zinc-500 dark:text-zinc-400 truncate">{cardSubtitle}</p>
+          )}
         </div>
 
         {currentStatusOpt && (
           <span
-            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 ${currentStatusOpt.colorClass}`}
+            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex-shrink-0 max-w-[50%] ${currentStatusOpt.colorClass}`}
+            title={currentStatusOpt.label}
           >
-            {currentStatusOpt.icon && <currentStatusOpt.icon className="w-3.5 h-3.5" strokeWidth={2} />}
-            {currentStatusOpt.label}
+            {currentStatusOpt.icon && <currentStatusOpt.icon className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={2} />}
+            <span className="truncate">{currentStatusOpt.label}</span>
           </span>
         )}
       </div>
 
-      <div className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-300 border-t border-b border-zinc-100 dark:border-zinc-800/60 py-2.5">
-        {orderedColumns
-          .filter((c) => c !== titleCol && c.type !== 'status' && !c.technical)
-          .slice(0, 4)
-          .map((col) => {
+      {bodyColumns.length > 0 && (
+        <div className="space-y-1.5 text-xs text-zinc-600 dark:text-zinc-300 border-t border-b border-zinc-100 dark:border-zinc-800/60 py-2.5">
+          {bodyColumns.map((col) => {
             const val = row[col.key];
             return (
-              <div key={col.key} className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400 text-[11px]">{col.label}:</span>
-                <span className="font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[60%]">
-                  {col.renderCell
-                    ? col.renderCell(row, val)
-                    : col.type === 'currency'
-                    ? `${Number(val || 0).toLocaleString('ru-RU')} сом`
-                    : formatPlainValue(col, val)}
+              <div key={col.key} className="flex items-center justify-between gap-3 text-xs min-w-0">
+                <span className="text-zinc-400 text-[11px] flex-shrink-0">{col.label}:</span>
+                <span className="min-w-0 flex justify-end overflow-hidden text-right font-medium text-zinc-900 dark:text-zinc-100 [&>*]:max-w-full">
+                  {col.renderCell ? (
+                    col.renderCell(row, val)
+                  ) : (
+                    <span className="truncate">
+                      {col.type === 'currency'
+                        ? `${Number(val || 0).toLocaleString('ru-RU')} сом`
+                        : formatPlainValue(col, val)}
+                    </span>
+                  )}
                 </span>
               </div>
             );
           })}
-      </div>
+        </div>
+      )}
 
       <div
         className="flex items-center justify-between gap-1.5 pt-1"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
           {cleanDigits && (
             <>
               <a
@@ -1097,7 +1118,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
                   const opt = options.find((o) => o.value === e.target.value);
                   if (opt) void applyStatusChange(opt.value, opt.label);
                 }}
-                className="h-8 px-2 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
+                className="h-8 px-2 min-w-0 max-w-[50%] flex-shrink-0 truncate text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-800 dark:text-zinc-200 focus:outline-none"
               >
                 {!hasCurrent && (
                   <option value={currentValue} disabled>
@@ -1547,12 +1568,17 @@ export function DataJournal<T extends Record<string, any>>({
 
       const savedVis = localStorage.getItem(`datajournal_${storageKey}_visibility`);
       if (savedVis) {
-        const parsedVis = JSON.parse(savedVis) as Record<string, boolean>;
+        const parsedVis = JSON.parse(savedVis) as Record<string, boolean | number>;
+        // Служебные колонки показываются только по явному выбору в настройке нового формата:
+        // в старых сохранениях (без версии) колонка могла быть видимой до того, как стала служебной
+        const explicitTechnical = parsedVis[VISIBILITY_VERSION_KEY] === VISIBILITY_VERSION;
         setVisibleColumns(
-          initialColumns.reduce(
-            (acc, col) => ({ ...acc, [col.key]: parsedVis[col.key] ?? !col.technical }),
-            {} as Record<string, boolean>
-          )
+          initialColumns.reduce((acc, col) => {
+            const saved = parsedVis[col.key];
+            const visible =
+              col.technical && !explicitTechnical ? false : typeof saved === 'boolean' ? saved : !col.technical;
+            return { ...acc, [col.key]: visible };
+          }, {} as Record<string, boolean>)
         );
       }
 
@@ -1568,7 +1594,12 @@ export function DataJournal<T extends Record<string, any>>({
   const toggleColumnVisibility = (key: string) => {
     const updated = { ...visibleColumns, [key]: !visibleColumns[key] };
     setVisibleColumns(updated);
-    localStorage.setItem(`datajournal_${storageKey}_visibility`, JSON.stringify(updated));
+    try {
+      localStorage.setItem(
+        `datajournal_${storageKey}_visibility`,
+        JSON.stringify({ ...updated, [VISIBILITY_VERSION_KEY]: VISIBILITY_VERSION })
+      );
+    } catch {}
   };
 
   const persistColumnsOrder = (order: string[]) => {
@@ -3215,7 +3246,7 @@ export function DataJournal<T extends Record<string, any>>({
                   </div>
 
                   {/* Карточки группы */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
+                  <div className={CARD_GRID_CLASS}>
                     {group.items.map((row) => {
                       const rowKey = String(row[keyField]);
                       if (renderCard) {
@@ -3306,7 +3337,7 @@ export function DataJournal<T extends Record<string, any>>({
       ) : (
         /* СТАНДАРТНЫЙ КАРТОЧНЫЙ ВИД */
         <div className="space-y-6">
-          <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-4">
+          <div className={`relative z-10 ${CARD_GRID_CLASS}`}>
             {paginatedData.length === 0 ? (
               <div className="col-span-full p-8 text-center rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 text-xs text-zinc-400">
                 {emptyMessage}

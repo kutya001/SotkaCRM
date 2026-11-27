@@ -957,6 +957,11 @@ export type Database = {
           hq_charges_total: number | null
           hq_topups_total: number | null
           hq_tx_synced_at: string | null
+          subscription_state: 'active' | 'inactive' | 'unknown'
+          hq_subscription_status: string | null
+          hq_tariff: string | null
+          hq_subscription_until: string | null
+          hq_subscription_synced_at: string | null
           is_active: boolean
           is_deleted_from_source: boolean
           last_activity: string | null
@@ -980,6 +985,11 @@ export type Database = {
           hq_charges_total?: number | null
           hq_topups_total?: number | null
           hq_tx_synced_at?: string | null
+          subscription_state?: 'active' | 'inactive' | 'unknown'
+          hq_subscription_status?: string | null
+          hq_tariff?: string | null
+          hq_subscription_until?: string | null
+          hq_subscription_synced_at?: string | null
           is_active?: boolean
           is_deleted_from_source?: boolean
           last_activity?: string | null
@@ -1003,6 +1013,11 @@ export type Database = {
           hq_charges_total?: number | null
           hq_topups_total?: number | null
           hq_tx_synced_at?: string | null
+          subscription_state?: 'active' | 'inactive' | 'unknown'
+          hq_subscription_status?: string | null
+          hq_tariff?: string | null
+          hq_subscription_until?: string | null
+          hq_subscription_synced_at?: string | null
           is_active?: boolean
           is_deleted_from_source?: boolean
           last_activity?: string | null

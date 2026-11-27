@@ -45,6 +45,9 @@ import {
   XCircle,
   ArrowDownToLine,
   ArrowUpFromLine,
+  BadgeCheck,
+  BadgeX,
+  CircleHelp,
 } from 'lucide-react';
 import { SellerTransactionsTab } from '@/components/sellers/SellerTransactionsTab';
 import { createClient } from '@/lib/supabase/client';
@@ -86,6 +89,53 @@ const SELLER_MODERATION_OPTIONS: StatusOption[] = [
     dotColor: 'bg-zinc-500',
   },
 ];
+
+type SubscriptionFilter = 'all' | 'active' | 'inactive' | 'unknown';
+
+/** Подписка организации в Sotka HQ (047): метка в шапке карточки, колонке, группировке и фильтре */
+const SUBSCRIPTION_OPTIONS: StatusOption[] = [
+  {
+    value: 'active',
+    label: 'Подписка активна',
+    colorClass: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    dotColor: 'bg-emerald-500',
+    icon: BadgeCheck,
+  },
+  {
+    value: 'inactive',
+    label: 'Без подписки',
+    colorClass: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
+    dotColor: 'bg-rose-500',
+    icon: BadgeX,
+  },
+  {
+    value: 'unknown',
+    label: 'Не проверено',
+    colorClass: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30',
+    dotColor: 'bg-zinc-400',
+    icon: CircleHelp,
+  },
+];
+
+function subscriptionStateOf(seller: Pick<SellerItem, 'subscription_state'>): 'active' | 'inactive' | 'unknown' {
+  return seller.subscription_state === 'active' || seller.subscription_state === 'inactive'
+    ? seller.subscription_state
+    : 'unknown';
+}
+
+/** Подсказка к метке подписки: статус и тариф в Sotka HQ, срок, время проверки */
+function subscriptionHint(seller: SellerItem): string {
+  const parts: string[] = [];
+  if (seller.hq_tariff) parts.push(`Тариф: ${seller.hq_tariff}`);
+  if (seller.hq_subscription_status) parts.push(`Статус в Sotka HQ: ${seller.hq_subscription_status}`);
+  if (seller.hq_subscription_until) parts.push(`Оплачено до: ${formatDateTime(seller.hq_subscription_until)}`);
+  parts.push(
+    seller.hq_subscription_synced_at
+      ? `Проверено: ${formatDateTime(seller.hq_subscription_synced_at)}`
+      : 'Подписка еще не сверялась с Sotka HQ'
+  );
+  return parts.join('\n');
+}
 
 /** Бейдж статуса подтверждения подключения администратором (миграция 037) */
 function ConnectionConfirmationBadge({
@@ -237,6 +287,7 @@ export default function SellersPage() {
   );
   const [filterActive, setFilterActive] = React.useState<string>('all');
   const [filterManager, setFilterManager] = React.useState<string>('all');
+  const [filterSubscription, setFilterSubscription] = React.useState<SubscriptionFilter>('all');
   const [hasAvailableLeads, setHasAvailableLeads] = React.useState<boolean>(false);
 
   const formatPhone = (p?: string | null) => formatPhoneDisplay(p);
@@ -318,9 +369,17 @@ export default function SellersPage() {
       if (filterManager === 'my' && s.manager_id !== currentUserId) return false;
       if (filterManager === 'unassigned' && s.manager_id) return false;
       if (filterManager !== 'all' && filterManager !== 'my' && filterManager !== 'unassigned' && s.manager_id !== filterManager) return false;
+      if (filterSubscription !== 'all' && subscriptionStateOf(s) !== filterSubscription) return false;
       return true;
     });
-  }, [baseSellers, curatorTab, currentUserId, filterActive, filterManager]);
+  }, [baseSellers, curatorTab, currentUserId, filterActive, filterManager, filterSubscription]);
+
+  // Разделение по подписке Sotka HQ в текущей выборке (модерация): для показателей и фильтра
+  const subscriptionCounts = React.useMemo(() => {
+    const counts = { active: 0, inactive: 0, unknown: 0 };
+    for (const s of baseSellers) counts[subscriptionStateOf(s)]++;
+    return counts;
+  }, [baseSellers]);
 
   // Итоги транзакций Sotka HQ: дозаполняются в фоне для продавцов без итогов или с устаревшими (> 24 ч)
   const hqRefreshRef = React.useRef<Promise<void> | null>(null);
@@ -346,8 +405,12 @@ export default function SellersPage() {
   React.useEffect(() => {
     if (hqAutoRequestedRef.current || sellers.length === 0 || !user.can('sellers.transactions')) return;
     const staleBefore = Date.now() - 24 * 3_600_000;
+    // Итоги транзакций устарели или подписка организации еще не сверялась с Sotka HQ (047)
     const needsRefresh = sellers.some(
-      (s) => s.organization_id && !s.is_deleted_from_source && (!s.hq_tx_synced_at || new Date(s.hq_tx_synced_at).getTime() < staleBefore)
+      (s) =>
+        s.organization_id &&
+        !s.is_deleted_from_source &&
+        (!s.hq_tx_synced_at || new Date(s.hq_tx_synced_at).getTime() < staleBefore || !s.hq_subscription_synced_at)
     );
     if (!needsRefresh) return;
     hqAutoRequestedRef.current = true;
@@ -714,6 +777,35 @@ export default function SellersPage() {
         ),
       },
       {
+        // Статусная колонка: в карточке метка подписки выводится в шапке, в таблице — с тарифом
+        key: 'subscription_state',
+        label: 'Подписка',
+        type: 'status',
+        width: 170,
+        minWidth: 140,
+        sortable: true,
+        filterable: true,
+        groupable: true,
+        statusOptions: SUBSCRIPTION_OPTIONS,
+        renderCell: (row: SellerItem) => {
+          const opt = SUBSCRIPTION_OPTIONS.find((o) => o.value === subscriptionStateOf(row)) || SUBSCRIPTION_OPTIONS[2];
+          const Icon = opt.icon;
+          return (
+            <div className="min-w-0" title={subscriptionHint(row)}>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border ${opt.colorClass}`}
+              >
+                {Icon && <Icon className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={2} />}
+                {opt.label}
+              </span>
+              {row.hq_tariff && (
+                <div className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400 truncate">{row.hq_tariff}</div>
+              )}
+            </div>
+          );
+        },
+      },
+      {
         key: 'linked_lead',
         label: 'Связанный лид',
         width: 170,
@@ -1039,6 +1131,42 @@ export default function SellersPage() {
       immutable: true,
     },
     {
+      name: 'subscription_state',
+      label: 'Подписка в Sotka HQ',
+      type: 'text',
+      immutable: true,
+      renderCustomView: (_val: any, data: SellerItem) => {
+        const opt = SUBSCRIPTION_OPTIONS.find((o) => o.value === subscriptionStateOf(data)) || SUBSCRIPTION_OPTIONS[2];
+        const Icon = opt.icon;
+        return (
+          <div className="space-y-1 text-right">
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border ${opt.colorClass}`}>
+              {Icon && <Icon className="w-3.5 h-3.5" strokeWidth={2} />}
+              {opt.label}
+            </span>
+            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 space-y-0.5">
+              {data.hq_tariff && <div>Тариф: {data.hq_tariff}</div>}
+              {data.hq_subscription_status && <div>Статус в Sotka HQ: {data.hq_subscription_status}</div>}
+              {data.hq_subscription_until && (
+                <div>
+                  Оплачено до: <FormattedDate date={data.hq_subscription_until} type="dateTime" />
+                </div>
+              )}
+              <div>
+                {data.hq_subscription_synced_at ? (
+                  <>
+                    Проверено: <FormattedDate date={data.hq_subscription_synced_at} type="dateTime" />
+                  </>
+                ) : (
+                  'Подписка еще не сверялась с Sotka HQ'
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
       name: 'moderation',
       label: 'Статус модерации',
       type: 'text',
@@ -1147,11 +1275,28 @@ export default function SellersPage() {
   // Расчет количества активных фильтров (ЯРУС 1)
   const activeFilterCount =
     (filterActive !== 'all' ? 1 : 0) +
-    (filterManager !== 'all' ? 1 : 0);
+    (filterManager !== 'all' ? 1 : 0) +
+    (filterSubscription !== 'all' ? 1 : 0);
 
   // Содержимое всплывающего окна фильтров TopHeader / MobileHeader
   const filterContent = (
     <div className="space-y-3.5">
+
+      <div>
+        <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
+          Подписка в Sotka HQ
+        </label>
+        <select
+          value={filterSubscription}
+          onChange={(e) => setFilterSubscription(e.target.value as SubscriptionFilter)}
+          className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
+        >
+          <option value="all">Все организации</option>
+          <option value="active">С активной подпиской ({subscriptionCounts.active})</option>
+          <option value="inactive">Без подписки ({subscriptionCounts.inactive})</option>
+          <option value="unknown">Не проверено ({subscriptionCounts.unknown})</option>
+        </select>
+      </div>
 
       <div>
         <label className="text-xs font-semibold text-zinc-600 dark:text-zinc-400 block mb-1.5">
@@ -1204,6 +1349,7 @@ export default function SellersPage() {
             setCuratorTab(canViewAllSellers ? 'all' : 'my');
             setFilterActive('all');
             setFilterManager('all');
+            setFilterSubscription('all');
           }}
           className="w-full h-9 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-colors flex items-center justify-center gap-1.5"
         >
@@ -1323,7 +1469,7 @@ export default function SellersPage() {
 
   // Статистика модуля: показывается над тулбаром DataJournal и сворачивается его кнопкой
   const sellersStats = (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2 sm:gap-3">
       {/* Всего продавцов */}
       <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
         <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
@@ -1334,6 +1480,42 @@ export default function SellersPage() {
           <div className="text-base sm:text-lg font-bold font-mono text-zinc-900 dark:text-zinc-100">{stats.total}</div>
         </div>
       </div>
+
+      {/* Подписка Sotka HQ: плитки — переключатели фильтра по подписке (в текущей выборке модерации) */}
+      {(
+        [
+          { state: 'active' as const, label: 'С подпиской', tone: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-500/10', ring: 'ring-emerald-500/60', Icon: BadgeCheck },
+          { state: 'inactive' as const, label: 'Без подписки', tone: 'text-rose-600 dark:text-rose-400', iconBg: 'bg-rose-500/10', ring: 'ring-rose-500/60', Icon: BadgeX },
+        ]
+      ).map(({ state, label, tone, iconBg, ring, Icon }) => {
+        const selected = filterSubscription === state;
+        return (
+          <button
+            key={state}
+            type="button"
+            onClick={() => setFilterSubscription(selected ? 'all' : state)}
+            aria-pressed={selected}
+            title={
+              (selected ? 'Показать всех продавцов' : `Показать только: ${label.toLowerCase()}`) +
+              (subscriptionCounts.unknown > 0 ? `\nНе проверено в Sotka HQ: ${subscriptionCounts.unknown}` : '')
+            }
+            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3 text-left transition-all ${
+              selected ? `ring-2 ${ring}` : 'hover:border-zinc-300 dark:hover:border-zinc-700'
+            }`}
+          >
+            <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl ${iconBg} ${tone} flex items-center justify-center flex-shrink-0`}>
+              <Icon className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{label}</div>
+              <div className={`text-base sm:text-lg font-bold font-mono ${tone}`}>{subscriptionCounts[state]}</div>
+              {state === 'inactive' && subscriptionCounts.unknown > 0 && (
+                <div className="text-[10px] text-zinc-400 truncate">не проверено: {subscriptionCounts.unknown}</div>
+              )}
+            </div>
+          </button>
+        );
+      })}
 
       {/* Активных */}
       <div className="p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
@@ -1374,7 +1556,7 @@ export default function SellersPage() {
       </div>
 
       {/* Общий баланс */}
-      <div className="col-span-2 sm:col-span-1 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
+      <div className="col-span-2 xl:col-span-1 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl island-glass border border-white/20 dark:border-zinc-800/40 flex items-center gap-2.5 sm:gap-3">
         <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center flex-shrink-0">
           <Wallet className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={1.75} />
         </div>

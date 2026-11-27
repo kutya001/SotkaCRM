@@ -3056,3 +3056,13 @@ GRANT EXECUTE ON FUNCTION public.get_sellers_kpi_stats() TO authenticated;
 
 ### 35.3. Интерфейс
 * Окна привязки (`LeadSellerMappingModal`, `LinkSellerLeadModal`): для свободного продавца после выбора открывается `ConnectionStaffModal` в режиме создания (основной — ответственный за лид, администратор в окне лида может выбрать другого); для подключенного продавца — подсказка и привязка одним действием. Фильтр «только Подписан» в окне продавца убран. Список продавцов для привязки (`getAvailableSellersForMapping`) без `sellers.view_all` включает свои подключения (основной или участник) и свободных одобренных; каждому продавцу добавлено `connection` (консультант, статус).
+
+## 36. Спецификация Миграции 047 (`047_seller_subscription.sql`)
+
+### 36.1. Подписка организации в Sotka HQ
+* Новые колонки `sellers`: `subscription_state VARCHAR(10) NOT NULL DEFAULT 'unknown'` с ограничением `sellers_subscription_state_check` (`active` — подписка действует, `inactive` — подписки нет, `unknown` — статус не распознан или еще не проверялся), `hq_subscription_status TEXT` и `hq_tariff TEXT` (значения Sotka HQ как есть), `hq_subscription_until TIMESTAMPTZ` (окончание оплаченного периода, если API его передает), `hq_subscription_synced_at TIMESTAMPTZ` (время последней сверки). Индекс `idx_sellers_subscription_state`.
+* Источник — детальная карточка организации `GET /api/private/v1/admin/sellers-overview/{organization_id}/`, блок `platform` (`tariff`, `subscription_status`; поддерживаются также вложенный объект `subscription`, флаги `subscription_active` / `has_subscription` и даты окончания). Нормализация — `normalizeSellerSubscription` / `sellerSubscriptionColumns` в `lib/sotka/normalizers.ts`: известный «активный» статус — `active` (если дата окончания не прошла), известный «неактивный» — `inactive`, ни статуса, ни тарифа, ни флага — `inactive` (так Sotka HQ отдает организацию без подписки), нераспознанный статус или тариф без статуса — `unknown`.
+* Заполняется сервером при каждой загрузке карточки организации: `refreshSellersHqTotals` (`lib/services/hq-totals.ts`; продавцы без сверки подписки обновляются вне очереди) и `GET /api/v1/sellers/[id]/transactions`. Upsert синхронизации реестра эти колонки не передает и не затирает. До применения миграции код работает без них (итоги транзакций сохраняются, подписка — нет).
+
+### 36.2. Интерфейс
+* Модуль «Продавцы»: колонка «Подписка» (статусная: метка в шапке карточки, в таблице — с тарифом; фильтр и группировка), плитки «С подпиской» / «Без подписки» в показателях (нажатие — фильтр; «не проверено: N»), фильтр «Подписка в Sotka HQ» в панели фильтров, блок подписки в карточке продавца (тариф, статус Sotka HQ, оплачено до, время сверки).

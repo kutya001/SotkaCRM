@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { authenticateSotkaAdmin, fetchSellerDetail, logoutSotkaSession } from '@/lib/services/sotka-api';
-import { normalizeSellerTransactions } from '@/lib/sotka';
+import { normalizeSellerTransactions, sellerSubscriptionColumns } from '@/lib/sotka';
 import { findSellerByKey } from '@/lib/services/sellers';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -53,16 +53,22 @@ export async function GET(
       const detail = await fetchSellerDetail(token, seller.organization_id);
       const transactions = normalizeSellerTransactions(detail?.transactions);
 
-      // Итоги пополнений/списаний кэшируются в карточке продавца для колонки реестра
+      // Итоги пополнений/списаний и подписка организации кэшируются в карточке продавца для реестра
       try {
-        await createAdminClient()
+        const totals = {
+          hq_topups_total: transactions.total_topups,
+          hq_charges_total: transactions.total_charges,
+          hq_tx_synced_at: new Date().toISOString(),
+        };
+        const { error: saveErr } = await createAdminClient()
           .from('sellers')
-          .update({
-            hq_topups_total: transactions.total_topups,
-            hq_charges_total: transactions.total_charges,
-            hq_tx_synced_at: new Date().toISOString(),
-          } as any)
+          .update({ ...totals, ...sellerSubscriptionColumns(detail) })
           .eq('seller_phone', seller.seller_phone);
+        // До применения миграции 047 колонок подписки нет — итоги сохраняются без них
+        if (saveErr) {
+          console.warn('[Seller Transactions] Подписка не сохранена:', saveErr.message);
+          await createAdminClient().from('sellers').update(totals).eq('seller_phone', seller.seller_phone);
+        }
       } catch (cacheErr: any) {
         console.warn('[Seller Transactions] Не удалось сохранить итоги транзакций:', cacheErr?.message);
       }

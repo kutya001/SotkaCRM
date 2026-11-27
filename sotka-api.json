@@ -186,6 +186,14 @@
             "total_amount": 0
           }
         }
+      },
+      "crm_db_mapping": {
+        "subscription_state": "normalizeSellerSubscription(detail).state: 'active' | 'inactive' | 'unknown' (tariff и subscription_status = null — подписки нет)",
+        "hq_subscription_status": "detail.platform.subscription_status",
+        "hq_tariff": "detail.platform.tariff",
+        "hq_subscription_until": "parseDateToISO(detail.platform.subscription_until || detail.platform.subscription.expires_at)",
+        "hq_topups_total": "normalizeSellerTransactions(detail.transactions).total_topups",
+        "hq_charges_total": "normalizeSellerTransactions(detail.transactions).total_charges"
       }
     },
 

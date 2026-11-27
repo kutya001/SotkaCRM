@@ -65,6 +65,12 @@ export interface SellerItem {
   hq_topups_total?: number | null;
   hq_charges_total?: number | null;
   hq_tx_synced_at?: string | null;
+  /** Подписка организации в Sotka HQ (047): active / inactive / unknown (не распознана или не проверялась) */
+  subscription_state?: 'active' | 'inactive' | 'unknown';
+  hq_subscription_status?: string | null;
+  hq_tariff?: string | null;
+  hq_subscription_until?: string | null;
+  hq_subscription_synced_at?: string | null;
   manager_user?: {
     user_id: string;
     full_name: string;

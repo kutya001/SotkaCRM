@@ -352,6 +352,7 @@ export default function PlansPage() {
       minWidth: 160,
       sortable: true,
       filterable: true,
+      cardTitle: true,
       renderCell: (row) => (
         <div className="flex items-center gap-2">
           <Tag className="w-3.5 h-3.5 text-blue-500" strokeWidth={1.75} />

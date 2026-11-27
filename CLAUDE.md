@@ -17,14 +17,14 @@ node scripts/build-openapi.js   # пересобрать public/openapi.json п�
 
 ```bash
 node --experimental-strip-types scripts/verify-lead-status-rules.mjs
-for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr; do
+for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr kanban-order; do
   node --experimental-strip-types "scripts/verify-$s.mjs" || echo "FAIL $s"
 done
 ```
 
 Флаг `--experimental-strip-types` нужен: скрипты импортируют `.ts`-модули из `lib/`. Часть скриптов проверяет код текстом (наличие вызовов, токенов в миграциях) — при переименовании функций обновляйте и их.
 
-Без базы и сети работают шесть скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
+Без базы и сети работают семь скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
 
 ESLint не настроен: `npm run lint` запросит интерактивную настройку.
 
@@ -58,7 +58,7 @@ ESLint не настроен: `npm run lint` запросит интеракти
 
 ### Интерфейс
 
-- Все таблицы модулей — `components/ui/DataJournal.tsx` (таблица/карточки, вкладки-фильтры, колонки, массовые действия). Вид «Канбан» включается свойством `kanban` (`KanbanConfig` из `components/ui/KanbanBoard.tsx`, перетаскивание — `@dnd-kit/core`): модуль задает раскладки колонок, `canMove` (true или причина запрета) и `onMove`; правила переноса должны совпадать с серверными. Действия строки задаются через `customRowActions` элементами `JournalMenuItem` и показываются в контекстном меню (ПКМ / «⋯»), в карточках — значками.
+- Все таблицы модулей — `components/ui/DataJournal.tsx` (таблица/карточки, вкладки-фильтры, колонки, массовые действия). Вид «Канбан» включается свойством `kanban` (`KanbanConfig` из `components/ui/KanbanBoard.tsx`, перетаскивание — `@dnd-kit/core`): модуль задает раскладки колонок, `canMove` (true или причина запрета) и `onMove`; правила переноса должны совпадать с серверными. Порядок колонок пользователь меняет сам (`@dnd-kit/sortable`), он хранится только в `localStorage` (`lib/utils/kanban-order.ts`). Действия строки задаются через `customRowActions` элементами `JournalMenuItem` и показываются в контекстном меню (ПКМ / «⋯»), в карточках — значками.
 - Окна — `components/ui/Modal.tsx` (`Modal`, `ModalCallout`) и `ConfirmDialog.tsx`, поля и кнопки — `Field.tsx`, `Button.tsx`. Не используйте `window.confirm`.
 - Постоянная оболочка `components/layout/AppShell.tsx` монтируется один раз в `app/layout.tsx`; страница регистрирует свою конфигурацию через `AppLayout`.
 - Описания модулей не выводятся на страницах — они в справке «?» (`lib/module-help.ts`); меняя поведение модуля, обновляйте его подсказки.

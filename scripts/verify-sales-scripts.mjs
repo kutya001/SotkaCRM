@@ -27,6 +27,14 @@ assert.match(SALES_SCRIPTS.find((s) => s.id === 'tariff-premium').text, /мод�
 assert.match(SALES_SCRIPTS.find((s) => s.id === 'tariff-basic').text, /Модуля рассрочек в «Базовом» нет/);
 assert.match(SALES_SCRIPTS.find((s) => s.id === 'tariff-business').text, /IMEI/);
 assert.match(SALES_SCRIPTS.find((s) => s.id === 'objection-price').text, /около 50 сом в день/);
+const byId = (id) => SALES_SCRIPTS.find((s) => s.id === id);
+assert.match(byId('greet-price').text, /Подключение бесплатное/);
+assert.ok(byId('greet-price').text.includes(formatTariffPrice(PLATFORM_TARIFFS[0].price)), 'в ответе о цене — цена «Базового»');
+assert.match(byId('tariff-recommend-premium').text, /2 599 сом/);
+const about = byId('about-platform').text;
+for (const part of ['Sotka Market', 'IMEI', 'POS-терминал', 'https://sotka.kg']) assert.ok(about.includes(part), `о платформе: нет «${part}»`);
+// Emoji запрещены в интерфейсе CRM — тексты скриптов показываются в нем
+for (const s of SALES_SCRIPTS) assert.ok(!/\p{Extended_Pictographic}/u.test(s.text + s.title), `${s.id}: emoji в тексте`);
 
 // Подстановки
 const greet = 'Здравствуйте, {имя}! Меня зовут {менеджер}, Sotka.kg.';
@@ -36,6 +44,8 @@ assert.equal(fillScript(greet, {}), 'Здравствуйте! Меня зову
 assert.equal(fillScript('{имя}, подскажите, вы ИП?', {}), 'Подскажите, вы ИП?');
 assert.equal(fillScript('{имя}, подскажите, вы ИП?', { clientName: 'Айгуль' }), 'Айгуль, подскажите, вы ИП?');
 assert.equal(fillScript('Строка 1\n• пункт  два', {}), 'Строка 1\n• пункт два');
+assert.equal(fillScript('Записал вас, {имя}. Будем к [16:00].', {}), 'Записал вас. Будем к [16:00].');
+assert.equal(fillScript('Абзац\n\nВторой', {}), 'Абзац\n\nВторой');
 for (const s of SALES_SCRIPTS) {
   const filled = fillScript(s.text, {});
   assert.ok(!/\{имя\}|\{менеджер\}/.test(filled), `${s.id}: подстановка осталась без имени клиента`);

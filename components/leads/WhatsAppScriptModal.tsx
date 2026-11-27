@@ -277,8 +277,9 @@ export function WhatsAppScriptModal({ target, onClose, managerName }: WhatsAppSc
                               </span>
                             )}
                           </p>
-                          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-2 whitespace-pre-line">
-                            {fillScript(script.text, fillContext)}
+                          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-2">
+                            {/* Превью в две строки: абзацы и пункты списка — через пробел */}
+                            {fillScript(script.text, fillContext).replace(/\s*\n+\s*/g, ' ')}
                           </p>
                         </div>
                         <ChevronRight className="w-4 h-4 text-zinc-300 flex-shrink-0 mt-0.5" strokeWidth={1.75} />

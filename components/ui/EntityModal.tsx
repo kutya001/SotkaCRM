@@ -95,6 +95,8 @@ export interface EntityModalProps<T extends Record<string, any>> {
   onLinkSeller?: (data: T) => void;
   /** Кнопка WhatsApp вызывает обработчик (например, выбор скрипта) вместо прямой ссылки wa.me */
   onWhatsApp?: (data: T) => void;
+  /** Дополнительные быстрые действия в панели под шапкой (режим просмотра), например «Комментарий» */
+  headerActions?: (data: T) => React.ReactNode;
   onDelete?: (data: T) => void;
   deleteLabel?: string;
   createSubmitLabel?: string;
@@ -154,6 +156,7 @@ export function EntityModal<T extends Record<string, any>>({
   onStatusChange,
   onLinkSeller,
   onWhatsApp,
+  headerActions,
   onDelete,
   deleteLabel = 'Удалить навсегда',
   createSubmitLabel = 'Сохранить запись',
@@ -327,6 +330,7 @@ export function EntityModal<T extends Record<string, any>>({
                 Привязать
               </Button>
             )}
+            {headerActions?.(data)}
           </div>
 
           {canQuickChangeStatus && (

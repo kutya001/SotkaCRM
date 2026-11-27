@@ -25,7 +25,6 @@ import {
   canAssignLead,
   canChangeLeadStatus,
   canEditLeadFields,
-  canEditLeadComment,
   isCancelStatus,
   reassignBlockReason,
 } from '@/lib/leads/status-rules';
@@ -43,12 +42,20 @@ const WhatsAppScriptModal = dynamic(
   { ssr: false }
 );
 
+const LeadCommentsModal = dynamic(
+  () => import('@/components/leads/LeadCommentsModal').then((m) => m.LeadCommentsModal),
+  { ssr: false }
+);
+
 const LeadSellerMappingModal = dynamic(
   () => import('@/components/leads/LeadSellerMappingModal').then((m) => m.LeadSellerMappingModal),
   { ssr: false }
 );
 import { useToast } from '@/components/ui/Toast';
 import type { WhatsAppTarget } from '@/components/leads/WhatsAppScriptModal';
+import type { LeadCommentsTarget } from '@/components/leads/LeadCommentsModal';
+import { Button } from '@/components/ui/Button';
+import type { LeadCommentDto } from '@/lib/api/client';
 import { api } from '@/lib/api/client';
 import {
   getConsultantsList,
@@ -73,6 +80,7 @@ import {
   Workflow,
   Users,
   UserX,
+  MessageSquareText,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -125,6 +133,14 @@ function LeadsContent() {
   const [waTarget, setWaTarget] = React.useState<WhatsAppTarget | null>(null);
   const openWhatsApp = React.useCallback((lead: LeadItem) => {
     setWaTarget({ phone: lead.phone, countryCode: lead.country_code, clientName: lead.client_name });
+  }, []);
+  // История комментариев лида и быстрое добавление
+  const [commentsTarget, setCommentsTarget] = React.useState<LeadCommentsTarget | null>(null);
+  // Последний комментарий, добавленный при открытой карточке: читается при отрисовке поля, не меняя данные
+  // карточки (иначе форма сбросилась бы вместе с несохраненными правками)
+  const latestCommentRef = React.useRef<Record<string, string>>({});
+  const openComments = React.useCallback((lead: Pick<LeadItem, 'lead_id' | 'client_name'>) => {
+    setCommentsTarget({ lead_id: lead.lead_id, client_name: lead.client_name });
   }, []);
 
   // Единый поиск и фильтры верхней панели
@@ -443,7 +459,7 @@ function LeadsContent() {
       },
       {
         key: 'comment',
-        label: 'Заметки',
+        label: 'Последний комментарий',
         width: 220,
         minWidth: 160,
         sortable: false,
@@ -531,9 +547,29 @@ function LeadsContent() {
       },
       {
         name: 'comment',
-        label: 'Комментарий и история контакта',
+        label: modalState.mode === 'create' ? 'Комментарий' : 'Последний комментарий',
         type: 'textarea',
         placeholder: 'Заметки по клиенту, детали разговора, пожелания...',
+        // После создания комментарий не правится в форме: новые добавляются в историю («Комментарий»)
+        immutable: modalState.mode !== 'create',
+        renderCustomView:
+          modalState.mode === 'create'
+            ? undefined
+            : (val, lead) => (
+                <div className="w-full space-y-2 py-0.5">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                    {latestCommentRef.current[lead.lead_id] ?? (val || '—')}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openComments(lead)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    История комментариев и новый комментарий
+                  </button>
+                </div>
+              ),
       },
       {
         name: 'cancel_reason',
@@ -553,16 +589,17 @@ function LeadsContent() {
         hidden: (lead) => !isCancelStatus(lead.status),
       },
     ],
-    [consultants, currentUserRole, currentUserId, canAssignLeads, canEditFullLead, canViewAllLeads]
+    [consultants, currentUserRole, currentUserId, canAssignLeads, canEditFullLead, canViewAllLeads, modalState.mode, openComments]
   );
 
   // Права на редактирование полей текущего лида в EntityModal (единые правила по правам роли)
+  // Комментарий в форме не правится (история — кнопка «Комментарий»), поэтому «Изменить» — только при
+  // полном редактировании или праве назначения
   const canEditCurrentLead = React.useMemo(
     () =>
       Boolean(modalState.selectedLead) &&
-      (canEditLeadFields(leadActor, modalState.selectedLead as LeadItem) ||
-        canEditLeadComment(leadActor, modalState.selectedLead as LeadItem)),
-    [leadActor, modalState.selectedLead]
+      (canEditLeadFields(leadActor, modalState.selectedLead as LeadItem) || canAssignLeads),
+    [leadActor, modalState.selectedLead, canAssignLeads]
   );
 
   // Статусы, в которые текущий пользователь может перевести открытый в карточке лид
@@ -586,6 +623,7 @@ function LeadsContent() {
 
   // Обработчики строк DataJournal
   const handleRowClick = (lead: LeadItem) => {
+    latestCommentRef.current = {};
     setModalState({
       isOpen: true,
       mode: 'view',
@@ -734,12 +772,16 @@ function LeadsContent() {
   // Обработчики формы EntityModal (статус через форму не меняется — только панель быстрых действий)
   const handleSaveLead = async (updated: LeadItem) => {
     try {
+      // Только поля, которые роль может менять: иначе сервер отклоняет все сохранение (403)
       await api.leads.update(updated.lead_id, {
-        client_name: updated.client_name,
-        phone: updated.phone,
-        country_code: updated.country_code,
-        instagram: updated.instagram,
-        comment: updated.comment,
+        ...(canEditLeadFields(leadActor, updated)
+          ? {
+              client_name: updated.client_name,
+              phone: updated.phone,
+              country_code: updated.country_code,
+              instagram: updated.instagram,
+            }
+          : {}),
         ...(canAssignLeads ? { assigned_to: updated.assigned_to || null } : {}),
       });
       await fetchInitialData();
@@ -1042,6 +1084,7 @@ function LeadsContent() {
       <button
         type="button"
         onClick={() => setIsScriptsOpen(true)}
+        data-tour="leads-scripts"
         className="h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center md:gap-2 transition-all active:scale-95 shadow-sm border border-zinc-200/50 dark:border-zinc-700/50 island-interactive flex-shrink-0"
         title="Скрипты продаж"
         aria-label="Скрипты продаж"
@@ -1059,10 +1102,15 @@ function LeadsContent() {
       const canLinkRow = canLinkSeller && !row.seller_phone && row.status !== 'Отмена';
       const isLinked = Boolean(row.seller_phone);
 
-      if (!canLinkRow && !isLinked && !canDeleteLeads) return null;
-
       return (
         <>
+          <JournalMenuItem
+            icon={MessageSquareText}
+            label="Комментарии"
+            tone="info"
+            title="История комментариев и новый комментарий"
+            onClick={() => openComments(row)}
+          />
           {canLinkRow && (
             <JournalMenuItem
               icon={Link2}
@@ -1093,14 +1141,21 @@ function LeadsContent() {
         </>
       );
     },
-    [canLinkSeller, canDeleteLeads, handleLinkSeller, router]
+    [canLinkSeller, canDeleteLeads, handleLinkSeller, router, openComments]
   );
+
+  // Новый комментарий — последний комментарий лида в реестре и открытой карточке
+  const handleCommentAdded = React.useCallback((leadId: string, comment: LeadCommentDto) => {
+    latestCommentRef.current[leadId] = comment.body;
+    setLeads((prev) => prev.map((l) => (l.lead_id === leadId ? { ...l, comment: comment.body } : l)));
+  }, []);
 
   const isAnyModalOpen =
     modalState.isOpen ||
     mappingModal.isOpen ||
     isScriptsOpen ||
     waTarget !== null ||
+    commentsTarget !== null ||
     cancelDialog.isOpen ||
     leadToDelete !== null;
   // Имя для подстановки {менеджер} в скрипты (заглушка профиля — не имя)
@@ -1242,6 +1297,19 @@ function LeadsContent() {
             onStatusChange={allowedStatusesForModal.length > 0 ? handleStatusChangeInModal : undefined}
             onLinkSeller={canLinkSeller ? handleLinkSeller : undefined}
             onWhatsApp={canOpenScripts ? openWhatsApp : undefined}
+            headerActions={(lead) => (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300"
+                leftIcon={<MessageSquareText className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                onClick={() => openComments(lead)}
+                title="История комментариев и новый комментарий"
+                data-tour="lead-comment-button"
+              >
+                Комментарий
+              </Button>
+            )}
             onDelete={canDeleteLeads ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
             linkedBanner={
@@ -1276,6 +1344,11 @@ function LeadsContent() {
             onClose={() => setIsScriptsOpen(false)}
             managerName={scriptManagerName}
           />
+        )}
+
+        {/* История комментариев лида и новый комментарий */}
+        {commentsTarget && (
+          <LeadCommentsModal target={commentsTarget} onClose={() => setCommentsTarget(null)} onAdded={handleCommentAdded} />
         )}
 
         {/* WhatsApp: открыть чат без текста или с выбранным скриптом */}

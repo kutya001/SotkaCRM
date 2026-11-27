@@ -5,7 +5,8 @@ const openapi = {
   openapi: "3.0.3",
   info: {
     title: "SotkaCRM REST API & Gateway",
-    version: "1.0.0",
+    // Версия приложения (package.json = первая запись lib/changelog.ts)
+    version: require('../package.json').version,
     description: "Формализованная спецификация REST API SotkaCRM (v1) и интеграционного шлюза Sotka HQ. Охватывает авторизацию, управление лидами (с инвариантом soft-delete/отмены), базой продавцов, подключениями, выплатами сотрудникам, тарифами, ставками и аналитикой."
   },
   servers: [
@@ -379,6 +380,106 @@ const openapi = {
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/leads/{id}/comments": {
+      get: {
+        tags: ["Leads"],
+        summary: "История комментариев лида",
+        description: "Комментарии от старых к новым с авторами. history_available = false — миграция 048 не применена (только текущий комментарий). can_comment — может ли текущий сотрудник добавить комментарий.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+        responses: {
+          200: {
+            description: "Лента комментариев",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    comments: { type: "array", items: { $ref: "#/components/schemas/LeadComment" } },
+                    history_available: { type: "boolean" },
+                    can_comment: { type: "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          403: { description: "Лид вне области видимости" },
+          404: { description: "Лид не найден" }
+        }
+      },
+      post: {
+        tags: ["Leads"],
+        summary: "Добавить комментарий к лиду",
+        description: "Комментарий от имени текущего сотрудника; становится последним комментарием лида (leads.comment). Права: leads.comment или leads.edit и лид в области видимости.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { type: "object", required: ["body"], properties: { body: { type: "string", minLength: 1, maxLength: 4000 } } } } }
+        },
+        responses: {
+          201: {
+            description: "Комментарий добавлен",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { comment: { $ref: "#/components/schemas/LeadComment" }, history_available: { type: "boolean" } }
+                }
+              }
+            }
+          },
+          403: { description: "Нет права комментировать этот лид" },
+          422: { description: "Пустой или слишком длинный текст" }
+        }
+      }
+    },
+    "/api/v1/onboarding": {
+      get: {
+        tags: ["Profile"],
+        summary: "Мое прохождение обучения по модулям",
+        description: "available = false — миграция 049 не применена (прогресс хранится только в браузере).",
+        responses: {
+          200: {
+            description: "Прогресс по турам",
+            content: { "application/json": { schema: { type: "object", properties: { available: { type: "boolean" }, progress: { type: "array", items: { $ref: "#/components/schemas/OnboardingProgress" } } } } } }
+          }
+        }
+      },
+      post: {
+        tags: ["Profile"],
+        summary: "Отметить начало, завершение или пропуск тура обучения",
+        description: "tour_id — id тура из lib/onboarding/tours.ts или «all» (status skipped — обучение отключено целиком, in_progress — включено снова).",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["tour_id", "status", "steps_seen", "total_steps"],
+                properties: {
+                  tour_id: { type: "string" },
+                  status: { type: "string", enum: ["in_progress", "completed", "skipped"] },
+                  steps_seen: { type: "integer", minimum: 0 },
+                  total_steps: { type: "integer", minimum: 0 },
+                  tour_version: { type: "integer", minimum: 1 }
+                }
+              }
+            }
+          }
+        },
+        responses: { 200: { description: "Сохранено (available = false — до миграции 049 не сохраняется)" }, 422: { description: "Неизвестный тур или неверные значения" } }
+      }
+    },
+    "/api/v1/onboarding/report": {
+      get: {
+        tags: ["Employees"],
+        summary: "Прохождение обучения всеми сотрудниками",
+        description: "Право employees.training. Строки — активные сотрудники, tours — туры модулей; applicable = false — модуль недоступен роли сотрудника.",
+        responses: {
+          200: { description: "Отчет по обучению" },
+          403: { description: "Нет права employees.training" }
         }
       }
     },
@@ -1282,6 +1383,34 @@ const openapi = {
       }
     },
     schemas: {
+      LeadComment: {
+        type: "object",
+        properties: {
+          comment_id: { type: "string" },
+          lead_id: { type: "string", format: "uuid" },
+          body: { type: "string" },
+          created_at: { type: "string", format: "date-time" },
+          is_legacy: { type: "boolean", description: "Перенесен из прежнего поля «Комментарий» (автор неизвестен)" },
+          author: {
+            type: "object",
+            nullable: true,
+            properties: { user_id: { type: "string" }, full_name: { type: "string" }, color: { type: "string", nullable: true } }
+          }
+        }
+      },
+      OnboardingProgress: {
+        type: "object",
+        properties: {
+          tour_id: { type: "string" },
+          status: { type: "string", enum: ["in_progress", "completed", "skipped"] },
+          steps_seen: { type: "integer" },
+          total_steps: { type: "integer" },
+          tour_version: { type: "integer" },
+          started_at: { type: "string", format: "date-time" },
+          finished_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time" }
+        }
+      },
       RateLimitErrorResponse: {
         type: "object",
         properties: {

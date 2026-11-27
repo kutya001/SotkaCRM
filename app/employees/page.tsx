@@ -20,6 +20,7 @@ import {
 } from '@/app/rates/actions';
 import { useUser } from '@/components/auth/AuthProvider';
 import { RolesAccessPanel } from '@/components/employees/RolesAccessPanel';
+import { TrainingProgressPanel } from '@/components/employees/TrainingProgressPanel';
 import { api as apiClient, type RoleItem } from '@/lib/api/client';
 import {
   Users,
@@ -41,6 +42,7 @@ import {
   MapPin,
   Send,
   ShieldHalf,
+  GraduationCap,
   EyeOff,
   Eye,
   AtSign,
@@ -82,6 +84,7 @@ export default function EmployeesPage() {
   const canResetPassword = user.can('employees.reset_password');
   const canManageRates = user.can('rates.manage');
   const canSeeRoles = user.can('employees.menu');
+  const canSeeTraining = user.can('employees.training');
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [currentUserRole, setCurrentUserRole] = React.useState<UserRole>('consultant');
@@ -89,7 +92,7 @@ export default function EmployeesPage() {
   const [currentUserLogin, setCurrentUserLogin] = React.useState('admin');
 
   // Вкладки модуля: реестр сотрудников и роли с доступами
-  const [pageTab, setPageTab] = React.useState<'employees' | 'roles'>('employees');
+  const [pageTab, setPageTab] = React.useState<'employees' | 'roles' | 'training'>('employees');
 
   // Справочник ролей для назначения сотрудникам
   const [roles, setRoles] = React.useState<RoleItem[]>([]);
@@ -847,7 +850,7 @@ export default function EmployeesPage() {
       <div className="space-y-4 pb-16">
         {/* Разделы модуля: реестр сотрудников / роли и доступы */}
         <div className="flex items-center">
-          <div className="inline-flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-2xl border border-zinc-200/40 dark:border-zinc-700/40 h-10">
+          <div data-tour="employees-sections" className="inline-flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-2xl border border-zinc-200/40 dark:border-zinc-700/40 h-10">
             <button
               type="button"
               onClick={() => setPageTab('employees')}
@@ -876,10 +879,26 @@ export default function EmployeesPage() {
                 <span>Роли — Доступы</span>
               </button>
             )}
+            {canSeeTraining && (
+              <button
+                type="button"
+                onClick={() => setPageTab('training')}
+                className={`h-8 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  pageTab === 'training'
+                    ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                }`}
+                aria-pressed={pageTab === 'training'}
+              >
+                <GraduationCap className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>Обучение</span>
+              </button>
+            )}
           </div>
         </div>
 
         {pageTab === 'roles' && canSeeRoles && <RolesAccessPanel />}
+        {pageTab === 'training' && canSeeTraining && <TrainingProgressPanel />}
 
         <EmployeesMapModal isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} />
 

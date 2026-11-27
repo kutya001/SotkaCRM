@@ -633,6 +633,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
       key={rowKey}
       ref={measureRef}
       data-index={virtualIndex}
+      data-tour="journal-row"
       onContextMenu={(e) => {
         if (onRowContextMenu) {
           e.preventDefault();
@@ -1032,6 +1033,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   return (
     <div
       key={rowKey}
+      data-tour="journal-row"
       onClick={() => onRowClick && onRowClick(row)}
       onContextMenu={(e) => {
         if (onRowContextMenu) {
@@ -1105,6 +1107,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
                 <button
                   type="button"
                   onClick={() => onWhatsApp(row)}
+                  data-tour="row-whatsapp"
                   className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
                   title="WhatsApp"
                   aria-label="WhatsApp"
@@ -1116,6 +1119,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
                   href={waHref(rawPhone)}
                   target="_blank"
                   rel="noreferrer"
+                  data-tour="row-whatsapp"
                   className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
                   title="WhatsApp"
                 >
@@ -2257,6 +2261,7 @@ export function DataJournal<T extends Record<string, any>>({
     tabs && tabs.length > 0 ? (
       <div
         data-no-swipe=""
+        data-tour="journal-tabs"
         className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 w-full min-w-0 whitespace-nowrap"
       >
         <button
@@ -2340,6 +2345,7 @@ export function DataJournal<T extends Record<string, any>>({
               <button
                 type="button"
                 onClick={onCreateClick}
+                data-tour="create"
                 className="h-9 w-9 md:w-11 md:h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
                 title={createTooltip || 'Добавить запись'}
                 aria-label={createTooltip || 'Добавить запись'}
@@ -2352,6 +2358,7 @@ export function DataJournal<T extends Record<string, any>>({
                 type="button"
                 onClick={() => void onRefresh()}
                 disabled={refreshing}
+                data-tour="journal-refresh"
                 className="h-9 w-9 md:h-11 md:w-11 rounded-xl border bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 flex items-center justify-center transition-all island-interactive flex-shrink-0 disabled:opacity-60 disabled:cursor-wait"
                 title="Обновить список"
                 aria-label="Обновить список"
@@ -2393,6 +2400,7 @@ export function DataJournal<T extends Record<string, any>>({
               <button
                 type="button"
                 onClick={onCreateClick}
+                data-tour="create"
                 className="h-9 w-9 md:w-11 md:h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-md transition-all active:scale-95 island-interactive flex-shrink-0"
                 title={createTooltip || 'Добавить запись'}
                 aria-label={createTooltip || 'Добавить запись'}
@@ -2405,6 +2413,7 @@ export function DataJournal<T extends Record<string, any>>({
                 type="button"
                 onClick={() => void onRefresh()}
                 disabled={refreshing}
+                data-tour="journal-refresh"
                 className="h-9 w-9 md:h-11 md:w-11 rounded-xl border bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80 flex items-center justify-center transition-all island-interactive flex-shrink-0 disabled:opacity-60 disabled:cursor-wait"
                 title="Обновить список"
                 aria-label="Обновить список"
@@ -2449,6 +2458,7 @@ export function DataJournal<T extends Record<string, any>>({
               type="button"
               onClick={toggleStats}
               aria-pressed={statsOpen}
+              data-tour="journal-stats"
               className={`h-9 md:h-11 w-9 md:w-11 rounded-xl border flex items-center justify-center transition-all island-interactive flex-shrink-0 ${
                 statsOpen
                   ? 'bg-blue-500/15 border-blue-500/40 text-blue-600 dark:text-blue-400'
@@ -2817,6 +2827,7 @@ export function DataJournal<T extends Record<string, any>>({
             <button
               type="button"
               onClick={() => toggleDropdown('columns')}
+              data-tour="journal-columns"
               className={`h-9 md:h-11 w-9 md:w-auto p-0 md:px-3.5 rounded-xl border text-xs font-semibold flex items-center justify-center md:gap-1.5 transition-all island-interactive flex-shrink-0 ${
                 activeDropdown === 'columns'
                   ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-transparent shadow-sm'
@@ -2911,6 +2922,7 @@ export function DataJournal<T extends Record<string, any>>({
               <button
                 type="button"
                 onClick={() => handleToggleView(nextViewMode)}
+                data-tour="journal-view"
                 className="md:hidden h-9 w-9 rounded-xl border flex items-center justify-center transition-all island-interactive flex-shrink-0 bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80"
                 title={hint}
                 aria-label={hint}
@@ -2921,7 +2933,7 @@ export function DataJournal<T extends Record<string, any>>({
           })()}
 
           {/* Переключатель вида на компьютере (Таблица / Карточки / Канбан) */}
-          <div className="hidden md:flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-11 flex-shrink-0">
+          <div data-tour="journal-view" className="hidden md:flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-11 flex-shrink-0">
             {viewModes.map((mode) => {
               const Icon = VIEW_MODE_META[mode].icon;
               return (

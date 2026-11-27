@@ -78,7 +78,7 @@ export function TopHeader({
       {/* 2. Центральная часть: Единый глобальный поиск */}
       <div className="flex-1 max-w-xl flex items-center gap-2.5">
         {onSearchChange ? (
-          <div className="relative flex-1">
+          <div className="relative flex-1" data-tour="search">
             <Search
               className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
               strokeWidth={1.75}

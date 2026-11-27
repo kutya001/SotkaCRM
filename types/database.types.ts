@@ -910,6 +910,71 @@ export type Database = {
         }
         Relationships: []
       }
+      /** Комментарии к лидам с историей (миграция 048) */
+      lead_comments: {
+        Row: {
+          comment_id: string
+          lead_id: string
+          author_id: string | null
+          body: string
+          is_legacy: boolean
+          created_at: string
+        }
+        Insert: {
+          comment_id?: string
+          lead_id: string
+          author_id?: string | null
+          body: string
+          is_legacy?: boolean
+          created_at?: string
+        }
+        Update: {
+          comment_id?: string
+          lead_id?: string
+          author_id?: string | null
+          body?: string
+          is_legacy?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
+      /** Прохождение обучения по модулям (миграция 049) */
+      onboarding_progress: {
+        Row: {
+          user_id: string
+          tour_id: string
+          status: "in_progress" | "completed" | "skipped"
+          steps_seen: number
+          total_steps: number
+          tour_version: number
+          started_at: string
+          finished_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          tour_id: string
+          status: "in_progress" | "completed" | "skipped"
+          steps_seen?: number
+          total_steps?: number
+          tour_version?: number
+          started_at?: string
+          finished_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          tour_id?: string
+          status?: "in_progress" | "completed" | "skipped"
+          steps_seen?: number
+          total_steps?: number
+          tour_version?: number
+          started_at?: string
+          finished_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       roles: {
         Row: {
           base_role: Database["public"]["Enums"]["user_role"]

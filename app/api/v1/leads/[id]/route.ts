@@ -14,6 +14,7 @@ import {
   leadActorFrom,
 } from '@/lib/leads/status-rules';
 import { DEFAULT_COUNTRY_CODE, digitsOnly, normalizeNational } from '@/lib/utils/phone';
+import { addLeadComment } from '@/lib/services/lead-comments';
 
 const LEAD_SELECT = `
   *,
@@ -73,7 +74,7 @@ export async function PATCH(
 
     const { data: existingLead } = await admin
       .from('leads')
-      .select('lead_id, created_by, assigned_to, status, country_code, seller_phone')
+      .select('lead_id, created_by, assigned_to, status, country_code, seller_phone, comment')
       .eq('lead_id', id)
       .maybeSingle();
 
@@ -137,7 +138,11 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     };
 
-    if (wantsCommentEdit && valid.comment !== undefined) updatePayload.comment = valid.comment;
+    // Комментарий — новая запись в истории (048), а не замена поля: пустой или прежний текст ничего не меняет
+    const newComment =
+      wantsCommentEdit && valid.comment && valid.comment.trim() !== (existingLead.comment || '').trim()
+        ? valid.comment.trim()
+        : null;
 
     if (fullEdit) {
       if (valid.client_name !== undefined) updatePayload.client_name = valid.client_name.trim();
@@ -157,6 +162,8 @@ export async function PATCH(
       const implicit = implicitStatusForAssignment(existingLead.status, valid.assigned_to);
       if (implicit) updatePayload.status = implicit;
     }
+
+    if (newComment) await addLeadComment(id, ctx.profile.user_id, newComment);
 
     const { data: updated, error } = await admin
       .from('leads')

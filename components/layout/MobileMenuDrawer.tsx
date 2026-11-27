@@ -11,6 +11,7 @@ import { NAV_ITEMS } from '@/lib/navigation';
 import { ROLE_LABELS } from '@/lib/constants/roles';
 import { useBottomBarItems } from '@/components/layout/MobileBottomBar';
 import { useModalBehavior } from '@/components/ui/Modal';
+import { VersionBadge } from '@/components/onboarding/VersionBadge';
 
 interface MobileMenuDrawerProps {
   isOpen: boolean;
@@ -168,9 +169,9 @@ export function MobileMenuDrawer({ isOpen, onClose }: MobileMenuDrawerProps) {
 
         {/* Подвал: тема и выход */}
         <div className="flex-shrink-0 px-4 pt-3 border-t border-zinc-200/60 dark:border-zinc-800/60 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <ThemeToggle />
-            <span className="text-[11px] text-zinc-400 font-medium">Тема оформления</span>
+            <VersionBadge onOpened={onClose} />
           </div>
           <button
             type="button"

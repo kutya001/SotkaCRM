@@ -42,7 +42,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { key: 'leads.view_all', label: 'Видеть все лиды', hint: 'Без этого права — только свои (созданные или назначенные)' },
       { key: 'leads.create', label: 'Создавать лиды' },
       { key: 'leads.edit', label: 'Полностью редактировать карточку', hint: 'Имя, телефон, Instagram и прочие поля' },
-      { key: 'leads.comment', label: 'Редактировать комментарий', hint: 'Если нет полного редактирования' },
+      { key: 'leads.comment', label: 'Добавлять комментарии', hint: 'К своим лидам (или ко всем — с правом видеть все); история комментариев видна всем, кто видит лид' },
       { key: 'leads.assign', label: 'Назначать ответственного консультанта' },
       // «Подписан» ставится только привязкой лида к продавцу (046) — отдельного права нет
       ...LEAD_STATUS_KEYS.filter((status) => status !== 'Подписан').map((status) => ({
@@ -133,6 +133,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { key: 'employees.deactivate', label: 'Блокировать и разблокировать' },
       { key: 'employees.reset_password', label: 'Сбрасывать пароли' },
       { key: 'employees.roles', label: 'Управлять ролями и доступами' },
+      { key: 'employees.training', label: 'Видеть прохождение обучения', hint: 'Вкладка «Обучение»: кто какие модули прошел, пропустил или не начинал' },
     ],
   },
   {
@@ -227,6 +228,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRoleCode, string[]> = {
     'goals.manage',
     'docs.menu',
     'profile.others',
+    'employees.training',
   ],
   smm: [
     'leads.menu',

@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { normalizeNullableUuid } from '@/lib/validations';
-import { implicitStatusForAssignment, isLeadInScope, leadActorFrom } from '@/lib/leads/status-rules';
+import { implicitStatusForAssignment, isLeadInScope, leadActorFrom, reassignBlockReason } from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
 export async function PATCH(
@@ -20,7 +20,7 @@ export async function PATCH(
 
     const { data: currentLead } = await admin
       .from('leads')
-      .select('status, created_by, assigned_to')
+      .select('status, created_by, assigned_to, seller_phone')
       .eq('lead_id', id)
       .single();
 
@@ -30,6 +30,11 @@ export async function PATCH(
 
     if (!isLeadInScope(leadActorFrom(ctx), currentLead)) {
       return apiError('Лид вне вашей области видимости', 'FORBIDDEN', 403);
+    }
+
+    const blocked = (currentLead.assigned_to ?? null) !== assignedTo ? reassignBlockReason(currentLead) : null;
+    if (blocked) {
+      return apiError(blocked, 'LEAD_LINKED', 409);
     }
 
     const updates: Record<string, unknown> = {

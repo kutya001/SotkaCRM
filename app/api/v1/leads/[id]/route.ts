@@ -6,6 +6,7 @@ import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import {
   canAssignLead,
+  reassignBlockReason,
   canEditLeadComment,
   canEditLeadFields,
   implicitStatusForAssignment,
@@ -72,7 +73,7 @@ export async function PATCH(
 
     const { data: existingLead } = await admin
       .from('leads')
-      .select('lead_id, created_by, assigned_to, status, country_code')
+      .select('lead_id, created_by, assigned_to, status, country_code, seller_phone')
       .eq('lead_id', id)
       .maybeSingle();
 
@@ -99,6 +100,10 @@ export async function PATCH(
     }
     if (wantsReassign && !canAssignLead(actor)) {
       return apiError('Недостаточно прав для назначения ответственного', 'FORBIDDEN', 403);
+    }
+    const reassignBlocked = wantsReassign ? reassignBlockReason(existingLead) : null;
+    if (reassignBlocked) {
+      return apiError(reassignBlocked, 'LEAD_LINKED', 409);
     }
     if (!fullEdit && !commentEdit && !canAssignLead(actor)) {
       return apiError('Недостаточно прав для редактирования лида', 'FORBIDDEN', 403);

@@ -11,6 +11,7 @@ import {
   isCancelStatus,
   isLeadInScope,
   leadActorFrom,
+  reassignBlockReason,
 } from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 
@@ -119,6 +120,17 @@ export async function POST(req: NextRequest) {
       }
 
       const normalizedAssignedTo = assigned_to || null;
+
+      // Привязанным лидам ответственного не меняют — им остается консультант подключения (046)
+      const linked = leads.filter((l) => (l.assigned_to ?? null) !== normalizedAssignedTo && reassignBlockReason(l));
+      if (linked.length > 0) {
+        return apiError(
+          `Лидов, привязанных к продавцу: ${linked.length}. Их ответственный — консультант подключения; сначала отвяжите продавца`,
+          'LEAD_LINKED',
+          409,
+          { denied_ids: linked.map((l) => l.lead_id) }
+        );
+      }
 
       // Косвенная смена статуса зависит от текущего статуса каждого лида
       const nowIso = new Date().toISOString();

@@ -147,3 +147,13 @@ export function canEditLeadComment(actor: LeadActor, lead: LeadScopeInfo): boole
 export function canAssignLead(actor: LeadActor): boolean {
   return hasPermission(actor.permissions, 'leads.assign');
 }
+
+/**
+ * Ответственного у привязанного лида не меняют: им остается консультант подключения продавца (046).
+ * Возвращает причину запрета или null.
+ */
+export function reassignBlockReason(lead: Pick<LeadAccessInfo, 'seller_phone'>): string | null {
+  return isLeadLinked(lead)
+    ? 'Лид привязан к продавцу: ответственный — консультант подключения. Сначала отвяжите продавца'
+    : null;
+}

@@ -6,6 +6,7 @@ import {
   Search,
   Table2,
   LayoutGrid,
+  SquareKanban,
   Filter,
   RotateCcw,
   Layers,
@@ -41,6 +42,7 @@ import { useToast, type ToastType } from '@/components/ui/Toast';
 import { formatDate, formatDateTime, formatMonth } from '@/lib/utils/format';
 import { formatPhoneDisplay, telHref, waHref } from '@/lib/utils/phone';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { KanbanBoard, type KanbanConfig } from '@/components/ui/KanbanBoard';
 
 function UrlSearchParamsSync({ onQuery }: { onQuery: (q: string) => void }) {
   const searchParams = useSearchParams();
@@ -189,7 +191,17 @@ export interface DataJournalProps<T extends Record<string, any>> {
   selectedIds?: string[];
   onSelectionChange?: (selectedIds: string[]) => void;
   renderBulkActions?: (selectedIds: string[], clearSelection: () => void) => React.ReactNode;
+  /** Вид «Канбан»: колонки по значениям группировки, карточки переносятся перетаскиванием */
+  kanban?: KanbanConfig<T>;
 }
+
+type JournalViewMode = 'table' | 'cards' | 'kanban';
+
+const VIEW_MODE_META: Record<JournalViewMode, { label: string; icon: React.ElementType }> = {
+  table: { label: 'Табличный вид', icon: Table2 },
+  cards: { label: 'Карточный вид', icon: LayoutGrid },
+  kanban: { label: 'Канбан', icon: SquareKanban },
+};
 
 export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
   {
@@ -1468,6 +1480,7 @@ export function DataJournal<T extends Record<string, any>>({
   selectedIds = [],
   onSelectionChange,
   renderBulkActions,
+  kanban,
 }: DataJournalProps<T>) {
   const { showToast } = useToast();
 
@@ -1519,25 +1532,49 @@ export function DataJournal<T extends Record<string, any>>({
   // Изолированный контроллер контекстного меню ПКМ
   const contextMenuCtrl = useContextMenuController<T>(onContextMenuOpenStable);
 
-  // 1. Режим отображения: Таблица / Карточки
-  const [viewMode, setViewMode] = React.useState<'table' | 'cards'>('table');
+  // 1. Режим отображения: Таблица / Карточки / Канбан (если модуль передал конфигурацию доски)
+  const viewModes: JournalViewMode[] = kanban ? ['table', 'cards', 'kanban'] : ['table', 'cards'];
+  const [viewMode, setViewMode] = React.useState<JournalViewMode>('table');
   const [isClient, setIsClient] = React.useState(false);
+  const hasKanban = Boolean(kanban);
 
   React.useEffect(() => {
     setIsClient(true);
     const isMobile = window.innerWidth < 1024;
-    const savedView = localStorage.getItem(`datajournal_${storageKey}_view`);
-    if (savedView === 'table' || savedView === 'cards') {
+    let savedView: string | null = null;
+    try {
+      savedView = localStorage.getItem(`datajournal_${storageKey}_view`);
+    } catch {}
+    if (savedView === 'table' || savedView === 'cards' || (savedView === 'kanban' && hasKanban)) {
       setViewMode(savedView);
     } else {
       setViewMode(isMobile ? 'cards' : 'table');
     }
-  }, [storageKey]);
+  }, [storageKey, hasKanban]);
 
-  const handleToggleView = (mode: 'table' | 'cards') => {
+  const handleToggleView = (mode: JournalViewMode) => {
     setViewMode(mode);
-    localStorage.setItem(`datajournal_${storageKey}_view`, mode);
+    try {
+      localStorage.setItem(`datajournal_${storageKey}_view`, mode);
+    } catch {}
   };
+  const nextViewMode = viewModes[(viewModes.indexOf(viewMode) + 1) % viewModes.length];
+
+  // Канбан: ключ строки и текст карточки по умолчанию (заголовок карточки и телефон)
+  const getRowKey = React.useCallback((row: T) => String(row[keyField]), [keyField]);
+  const kanbanCardText = React.useCallback(
+    (row: T) => {
+      const phoneCol = initialColumns.find((c) => c.type === 'phone');
+      const rawPhone = phoneCol ? (phoneCol.phoneAccessor ? phoneCol.phoneAccessor(row) : String(row[phoneCol.key] || '')) : '';
+      const phone = rawPhone.replace(/\D/g, '') ? formatPhoneDisplay(rawPhone) : null;
+      const titleCol =
+        initialColumns.find((c) => c.cardTitle) ||
+        initialColumns.find((c) => c.type !== 'status' && c.type !== 'phone' && !c.technical && columnTextValue(c, row) !== null);
+      const titleText = titleCol ? columnTextValue(titleCol, row) : null;
+      return { title: titleText || phone || 'Без названия', subtitle: titleText ? phone : null };
+    },
+    [initialColumns]
+  );
 
   // 2. Очередность и видимость колонок
   const [columnsOrder, setColumnsOrder] = React.useState<string[]>(() =>
@@ -2824,47 +2861,45 @@ export function DataJournal<T extends Record<string, any>>({
             )}
           </div>
 
-          {/* Переключатель вида на телефоне: одна кнопка, значок — текущий вид, нажатие — другой вид */}
-          <button
-            type="button"
-            onClick={() => handleToggleView(viewMode === 'table' ? 'cards' : 'table')}
-            className="md:hidden h-9 w-9 rounded-xl border flex items-center justify-center transition-all island-interactive flex-shrink-0 bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80"
-            title={viewMode === 'table' ? 'Табличный вид — переключить на карточки' : 'Карточный вид — переключить на таблицу'}
-            aria-label={viewMode === 'table' ? 'Табличный вид, переключить на карточки' : 'Карточный вид, переключить на таблицу'}
-          >
-            {viewMode === 'table' ? (
-              <Table2 className="w-4 h-4" strokeWidth={1.75} />
-            ) : (
-              <LayoutGrid className="w-4 h-4" strokeWidth={1.75} />
-            )}
-          </button>
+          {/* Переключатель вида на телефоне: одна кнопка, значок — текущий вид, нажатие — следующий вид */}
+          {(() => {
+            const Current = VIEW_MODE_META[viewMode].icon;
+            const hint = `${VIEW_MODE_META[viewMode].label} — переключить: ${VIEW_MODE_META[nextViewMode].label.toLowerCase()}`;
+            return (
+              <button
+                type="button"
+                onClick={() => handleToggleView(nextViewMode)}
+                className="md:hidden h-9 w-9 rounded-xl border flex items-center justify-center transition-all island-interactive flex-shrink-0 bg-white/60 dark:bg-zinc-900/60 border-zinc-200/80 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80"
+                title={hint}
+                aria-label={hint}
+              >
+                <Current className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            );
+          })()}
 
-          {/* Переключатель вида на компьютере (Таблица / Карточки) */}
+          {/* Переключатель вида на компьютере (Таблица / Карточки / Канбан) */}
           <div className="hidden md:flex items-center bg-zinc-200/60 dark:bg-zinc-800/60 p-1 rounded-xl border border-zinc-200/40 dark:border-zinc-700/40 h-11 flex-shrink-0">
-            <button
-              onClick={() => handleToggleView('table')}
-              className={`w-9 h-9 p-2 rounded-lg transition-all flex items-center justify-center ${
-                viewMode === 'table'
-                  ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
-              }`}
-              title="Табличный вид"
-              aria-label="Табличный вид"
-            >
-              <Table2 className="w-4 h-4" strokeWidth={1.75} />
-            </button>
-            <button
-              onClick={() => handleToggleView('cards')}
-              className={`w-9 h-9 p-2 rounded-lg transition-all flex items-center justify-center ${
-                viewMode === 'cards'
-                  ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
-              }`}
-              title="Карточный вид"
-              aria-label="Карточный вид"
-            >
-              <LayoutGrid className="w-4 h-4" strokeWidth={1.75} />
-            </button>
+            {viewModes.map((mode) => {
+              const Icon = VIEW_MODE_META[mode].icon;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => handleToggleView(mode)}
+                  aria-pressed={viewMode === mode}
+                  className={`w-9 h-9 p-2 rounded-lg transition-all flex items-center justify-center ${
+                    viewMode === mode
+                      ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
+                  }`}
+                  title={VIEW_MODE_META[mode].label}
+                  aria-label={VIEW_MODE_META[mode].label}
+                >
+                  <Icon className="w-4 h-4" strokeWidth={1.75} />
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -2932,7 +2967,19 @@ export function DataJournal<T extends Record<string, any>>({
       {tabsRow && <div className="md:hidden">{tabsRow}</div>}
 
       {/* 2. Представление данных: Таблица или Карточки */}
-      {isClient && viewMode === 'table' ? (
+      {isClient && viewMode === 'kanban' && kanban ? (
+        /* КАНБАН: колонки по выбранной группировке, перенос карточек перетаскиванием */
+        <KanbanBoard<T>
+          rows={sortedData}
+          getRowKey={getRowKey}
+          config={kanban}
+          storageKey={storageKey}
+          onRowClick={onRowClick ? onRowClickStable : undefined}
+          onRowContextMenu={contextMenuCtrl.open}
+          getCardText={kanbanCardText}
+          emptyMessage={emptyMessage}
+        />
+      ) : isClient && viewMode === 'table' ? (
         /* ТАБЛИЧНЫЙ ВИД (TABLE VIEW) */
         <div className="relative z-10 w-full overflow-hidden rounded-3xl backdrop-blur-xl bg-white/75 dark:bg-zinc-900/75 border border-white/20 dark:border-zinc-800/40 shadow-sm flex flex-col min-h-[360px]">
           <div

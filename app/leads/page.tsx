@@ -38,11 +38,17 @@ const SalesScriptsSheet = dynamic(
   { ssr: false }
 );
 
+const WhatsAppScriptModal = dynamic(
+  () => import('@/components/leads/WhatsAppScriptModal').then((m) => m.WhatsAppScriptModal),
+  { ssr: false }
+);
+
 const LeadSellerMappingModal = dynamic(
   () => import('@/components/leads/LeadSellerMappingModal').then((m) => m.LeadSellerMappingModal),
   { ssr: false }
 );
 import { useToast } from '@/components/ui/Toast';
+import type { WhatsAppTarget } from '@/components/leads/WhatsAppScriptModal';
 import { api } from '@/lib/api/client';
 import {
   getConsultantsList,
@@ -115,6 +121,11 @@ function LeadsContent() {
 
   // Состояние шторки скриптов продаж
   const [isScriptsOpen, setIsScriptsOpen] = React.useState(false);
+  // Окно WhatsApp с выбором скрипта (без права «Скрипты продаж» — прямая ссылка wa.me)
+  const [waTarget, setWaTarget] = React.useState<WhatsAppTarget | null>(null);
+  const openWhatsApp = React.useCallback((lead: LeadItem) => {
+    setWaTarget({ phone: lead.phone, countryCode: lead.country_code, clientName: lead.client_name });
+  }, []);
 
   // Единый поиск и фильтры верхней панели
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -1086,7 +1097,14 @@ function LeadsContent() {
   );
 
   const isAnyModalOpen =
-    modalState.isOpen || mappingModal.isOpen || isScriptsOpen || cancelDialog.isOpen || leadToDelete !== null;
+    modalState.isOpen ||
+    mappingModal.isOpen ||
+    isScriptsOpen ||
+    waTarget !== null ||
+    cancelDialog.isOpen ||
+    leadToDelete !== null;
+  // Имя для подстановки {менеджер} в скрипты (заглушка профиля — не имя)
+  const scriptManagerName = userName && userName !== 'Сотрудник CRM' ? userName : null;
 
   // Вкладки воронки продаж для DataJournal
   const leadTabs: DataJournalTab[] = React.useMemo(() => {
@@ -1196,6 +1214,7 @@ function LeadsContent() {
           refreshing={isLoading}
           customActions={leadActions}
           customRowActions={renderCustomRowActions}
+          onWhatsApp={canOpenScripts ? openWhatsApp : undefined}
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
           getStatusOptions={getLeadStatusOptions}
@@ -1222,6 +1241,7 @@ function LeadsContent() {
             onCreate={canCreateLeads ? handleCreateLead : undefined}
             onStatusChange={allowedStatusesForModal.length > 0 ? handleStatusChangeInModal : undefined}
             onLinkSeller={canLinkSeller ? handleLinkSeller : undefined}
+            onWhatsApp={canOpenScripts ? openWhatsApp : undefined}
             onDelete={canDeleteLeads ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
             linkedBanner={
@@ -1254,7 +1274,13 @@ function LeadsContent() {
           <SalesScriptsSheet
             isOpen={isScriptsOpen}
             onClose={() => setIsScriptsOpen(false)}
+            managerName={scriptManagerName}
           />
+        )}
+
+        {/* WhatsApp: открыть чат без текста или с выбранным скриптом */}
+        {waTarget && (
+          <WhatsAppScriptModal target={waTarget} onClose={() => setWaTarget(null)} managerName={scriptManagerName} />
         )}
 
         {/* 6. Диалог отмены сделки с обязательной причиной (один лид или массово) */}

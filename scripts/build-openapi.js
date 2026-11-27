@@ -385,19 +385,52 @@ const openapi = {
     "/api/v1/leads/scripts": {
       get: {
         tags: ["Leads"],
-        summary: "Получение регламентов и скриптов продаж",
+        summary: "Скрипты продаж и тарифы платформы",
+        description: "Скрипты в порядке диалога. Подстановки в тексте: {имя} — имя клиента, {менеджер} — имя сотрудника; поля в [скобках] заполняются вручную.",
         parameters: [
-          { name: "stage", in: "query", required: false, schema: { type: "string", enum: ["first_contact", "presentation", "objection", "closing"] } }
+          { name: "stage", in: "query", required: false, schema: { type: "string", enum: ["Все", "Открыт", "Обработан", "Назначен", "Подписан"] } },
+          { name: "category", in: "query", required: false, schema: { type: "string", enum: ["Знакомство", "О платформе", "Тарифы", "Квалификация", "Возражения", "Встреча", "Оплата и запуск"] } }
         ],
         responses: {
           200: {
-            description: "Список скриптов для консультантов",
+            description: "Скрипты, разделы, этапы и тарифы",
             content: {
               "application/json": {
                 schema: {
                   type: "object",
                   properties: {
-                    scripts: { type: "array", items: { type: "object" } }
+                    scripts: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          category: { type: "string" },
+                          stage: { type: "string" },
+                          title: { type: "string" },
+                          text: { type: "string" },
+                          tags: { type: "array", items: { type: "string" } }
+                        }
+                      }
+                    },
+                    categories: { type: "array", items: { type: "string" } },
+                    stages: { type: "array", items: { type: "string" } },
+                    tariffs: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string", enum: ["basic", "premium", "business"] },
+                          name: { type: "string" },
+                          price: { type: "number", description: "Сом за periodDays" },
+                          periodDays: { type: "integer" },
+                          points: { type: "integer" },
+                          employees: { type: "integer" },
+                          modules: { type: "array", items: { type: "string" } },
+                          features: { type: "array", items: { type: "string" } }
+                        }
+                      }
+                    }
                   }
                 }
               }

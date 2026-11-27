@@ -17,14 +17,14 @@ node scripts/build-openapi.js   # пересобрать public/openapi.json п�
 
 ```bash
 node --experimental-strip-types scripts/verify-lead-status-rules.mjs
-for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr kanban-order; do
+for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr kanban-order sales-scripts; do
   node --experimental-strip-types "scripts/verify-$s.mjs" || echo "FAIL $s"
 done
 ```
 
-Флаг `--experimental-strip-types` нужен: скрипты импортируют `.ts`-модули из `lib/`. Часть скриптов проверяет код текстом (наличие вызовов, токенов в миграциях) — при переименовании функций обновляйте и их.
+Флаг `--experimental-strip-types` нужен: скрипты импортируют `.ts`-модули из `lib/`, поэтому относительные импорты внутри таких модулей пишутся с расширением `.ts`. Часть скриптов проверяет код текстом (наличие вызовов, токенов в миграциях) — при переименовании функций обновляйте и их.
 
-Без базы и сети работают семь скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
+Без базы и сети работают восемь скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
 
 ESLint не настроен: `npm run lint` запросит интерактивную настройку.
 
@@ -50,6 +50,7 @@ ESLint не настроен: `npm run lint` запросит интеракти
 - **Продавцы** синхронизируются из Sotka HQ API (`lib/services/sotka-api.ts`, `app/api/sync/sotka`, контракт — `sotka-api.json`). Ключ продавца — `seller_phone`. API Sotka вызывается только с сервера: маршрут синхронизации принимает `Bearer CRON_SECRET` (Vercel Cron) или сессию с правом `sellers.sync`. Upsert продавцов не передает `manager_id`: консультант — локальное назначение CRM и при синхронизации не затирается.
 - **Подключения** (`connections`) — закрепление продавца за сотрудниками. `manager_id` — основной участник (он же консультант продавца), остальные — в `connection_participants`, всего до трех; бонус делится поровну. Сопровождение по месяцам — `connection_maintenance_assignments` (по умолчанию все участники). Статус подтверждения `pending | confirmed | rejected`: начисление за подключение создает триггер БД при подтверждении, сопровождение начисляется только при запуске биллинга. Вся логика — `lib/services/connections.ts` (`createSellerConnection`, `assignConnectionStaff`, `assignSellerToManager`, `setConnectionConfirmation`, `deleteConnection`).
 - **Привязка лида** — `lib/services/lead-linking.ts`: связь через `leads.seller_phone = sellers.seller_phone`, один продавец — не более одного лида (в списке для привязки нет продавцов, чей телефон уже стоит у лида). SQL-функция `link_lead_to_seller` меняет только лид (продавец, «Подписан», `linked_at`, ответственный); свободному продавцу подключение создается через `createSellerConnection`, у подключенного лид лишь прикрепляется. Отвязка снимает ожидающее подключение и оставляет подтвержденное.
+- **Скрипты продаж** — каталог `lib/sales/scripts.ts` (разделы в порядке диалога, подстановки `{имя}` / `{менеджер}`, `fillScript`), тарифы платформы — `lib/sales/tariffs.ts`: тексты о ценах строятся из него, цены меняются только там. Кнопка WhatsApp у лида при праве `leads.scripts` открывает `components/leads/WhatsAppScriptModal.tsx` (свойство `onWhatsApp` у `DataJournal` и `EntityModal`), без права — прямую ссылку wa.me.
 - **Начисления и выплаты** — двойной реестр: `connection_accruals` (по подключениям) синхронизируется триггерами с журналом ЗП `employee_payouts`. Порядок месяцев начисления — `lib/payroll/connection-order.ts`.
 
 ### Telegram

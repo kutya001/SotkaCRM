@@ -93,6 +93,8 @@ export interface EntityModalProps<T extends Record<string, any>> {
    */
   onStatusChange?: (newStatus: string) => Promise<void | boolean> | void | boolean;
   onLinkSeller?: (data: T) => void;
+  /** Кнопка WhatsApp вызывает обработчик (например, выбор скрипта) вместо прямой ссылки wa.me */
+  onWhatsApp?: (data: T) => void;
   onDelete?: (data: T) => void;
   deleteLabel?: string;
   createSubmitLabel?: string;
@@ -151,6 +153,7 @@ export function EntityModal<T extends Record<string, any>>({
   onCreate,
   onStatusChange,
   onLinkSeller,
+  onWhatsApp,
   onDelete,
   deleteLabel = 'Удалить навсегда',
   createSubmitLabel = 'Сохранить запись',
@@ -302,9 +305,15 @@ export function EntityModal<T extends Record<string, any>>({
                 <ButtonLink href={telHref(currentPhone, currentPhoneCountry)} variant="ghost" size="sm" className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400" leftIcon={<Phone className="w-3.5 h-3.5" strokeWidth={1.75} />} title="Позвонить">
                   Звонок
                 </ButtonLink>
-                <ButtonLink href={waHref(currentPhone, currentPhoneCountry)} target="_blank" variant="ghost" size="sm" className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" leftIcon={<MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />} title="WhatsApp">
-                  WhatsApp
-                </ButtonLink>
+                {onWhatsApp ? (
+                  <Button variant="ghost" size="sm" className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" leftIcon={<MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />} title="WhatsApp" onClick={() => onWhatsApp(data)}>
+                    WhatsApp
+                  </Button>
+                ) : (
+                  <ButtonLink href={waHref(currentPhone, currentPhoneCountry)} target="_blank" variant="ghost" size="sm" className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400" leftIcon={<MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />} title="WhatsApp">
+                    WhatsApp
+                  </ButtonLink>
+                )}
               </>
             )}
             {onLinkSeller && (

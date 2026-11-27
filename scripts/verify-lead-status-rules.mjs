@@ -10,6 +10,7 @@ import {
   implicitStatusForAssignment,
   isCancelStatus,
   isCancelReasonDbError,
+  reassignBlockReason,
 } from '../lib/leads/status-rules.ts';
 import {
   ALL_PERMISSION_KEYS,
@@ -62,6 +63,9 @@ assert.match(canChangeLeadStatus(actor('admin'), lead('Назначен'), 'По
 const linked = lead('Подписан', { seller_phone: '996700000001' });
 assert.deepEqual(allowedLeadTransitions(actor('admin'), linked), [], 'привязанный лид');
 assert.match(canChangeLeadStatus(actor('admin'), linked, 'Отмена').reason, /отвяжите/);
+// Ответственный привязанного лида — консультант подключения: сменить нельзя (канбан, таблица, API)
+assert.match(reassignBlockReason(linked), /консультант подключения/);
+assert.equal(reassignBlockReason(lead('Назначен')), null);
 
 // --- Учредитель: видит всё, статусы не меняет --------------------------------------------
 for (const status of LEAD_STATUSES) {

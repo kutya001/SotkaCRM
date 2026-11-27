@@ -10,6 +10,7 @@ import {
   type DataJournalTab,
   PIPELINE_STATUS_OPTIONS,
 } from '@/components/ui/DataJournal';
+import type { KanbanColumn, KanbanConfig } from '@/components/ui/KanbanBoard';
 import dynamic from 'next/dynamic';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
@@ -18,12 +19,19 @@ import { FormField, Textarea } from '@/components/ui/Field';
 import { formatDateTime } from '@/lib/utils/format';
 import { formatPhoneDisplay } from '@/lib/utils/phone';
 import {
+  LEAD_STATUSES,
+  LINK_ONLY_STATUS,
   allowedLeadTransitions,
+  canAssignLead,
   canChangeLeadStatus,
   canEditLeadFields,
   canEditLeadComment,
   isCancelStatus,
+  reassignBlockReason,
 } from '@/lib/leads/status-rules';
+
+/** Колонка канбана «Не назначен» (раскладка по ответственным) */
+const UNASSIGNED_COLUMN = '__unassigned__';
 
 const SalesScriptsSheet = dynamic(
   () => import('@/components/leads/SalesScriptsSheet').then((m) => m.SalesScriptsSheet),
@@ -56,6 +64,9 @@ import {
   BadgeCheck,
   XCircle,
   LayoutList,
+  Workflow,
+  Users,
+  UserX,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -351,7 +362,7 @@ function LeadsContent() {
           ...consultants.map((c) => ({ value: c.user_id, label: c.full_name })),
         ],
         renderCell: (row) => {
-          if (canAssignLeads) {
+          if (canAssignLeads && !row.seller_phone) {
             const isUnassigned = !row.assigned_to;
             const currentConsultant = consultants.find((c) => c.user_id === row.assigned_to);
             return (
@@ -870,6 +881,136 @@ function LeadsContent() {
     </div>
   );
 
+  // Канбан: колонки по статусам воронки или по ответственным; перенос — по тем же правилам, что и в реестре
+  const leadsKanban: KanbanConfig<LeadItem> = React.useMemo(() => {
+    const statusColumns: KanbanColumn[] = LEAD_STATUSES.map((status) => {
+      const opt = PIPELINE_STATUS_OPTIONS.find((o) => o.value === status);
+      return { id: status, label: status, icon: opt?.icon, colorClass: opt?.colorClass, dotColor: opt?.dotColor };
+    });
+
+    // Ответственные: «Не назначен», консультанты и сотрудники, которые уже ведут лиды, но не в списке
+    const assigneeColumns: KanbanColumn[] = [
+      { id: UNASSIGNED_COLUMN, label: 'Не назначен', icon: UserX, colorClass: 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30' },
+      ...consultants.map((c) => ({
+        id: c.user_id,
+        label: c.full_name,
+        marker: <EmployeeColorDot color={c.color} size="sm" />,
+      })),
+    ];
+    const known = new Set(assigneeColumns.map((c) => c.id));
+    for (const lead of leads) {
+      if (lead.assigned_to && !known.has(lead.assigned_to)) {
+        known.add(lead.assigned_to);
+        assigneeColumns.push({
+          id: lead.assigned_to,
+          label: lead.assigned_user?.full_name || 'Сотрудник',
+          marker: <EmployeeColorDot color={lead.assigned_user?.color} size="sm" />,
+        });
+      }
+    }
+
+    const canMove = (row: LeadItem, groupingId: string, columnId: string): true | string => {
+      if (groupingId === 'status') {
+        if (row.seller_phone) return 'Лид привязан к продавцу: статус меняется только отвязкой';
+        if (columnId === LINK_ONLY_STATUS) {
+          if (!canLinkSeller) return 'Статус «Подписан» ставится привязкой к продавцу — у вашей роли нет такого права';
+          if (row.status === 'Отмена') return 'Отмененный лид нельзя привязать к продавцу';
+          return true;
+        }
+        const check = canChangeLeadStatus(leadActor, row, columnId);
+        return check.ok ? true : check.reason;
+      }
+      if (!canAssignLead(leadActor)) return 'Назначение ответственного не предусмотрено вашей ролью';
+      return reassignBlockReason(row) ?? true;
+    };
+
+    const onMove = async (row: LeadItem, groupingId: string, columnId: string) => {
+      if (groupingId === 'status') {
+        // «Подписан» — через окно привязки к продавцу; «Отмена» — через окно причины
+        if (columnId === LINK_ONLY_STATUS) {
+          setMappingModal({ isOpen: true, lead: row });
+          return;
+        }
+        const changed = await changeLeadStatus(row, columnId);
+        if (changed) showToast(`Статус изменен на «${columnId}»`, 'success');
+        return;
+      }
+      const assignedTo = columnId === UNASSIGNED_COLUMN ? null : columnId;
+      const res = await api.leads.updateAssigned(row.lead_id, assignedTo);
+      setLeads((prev) =>
+        prev.map((item) =>
+          item.lead_id === row.lead_id
+            ? {
+                ...item,
+                assigned_to: assignedTo,
+                status: (res?.status as LeadStatus) || item.status,
+                assigned_user: res?.assigned_user ?? null,
+              }
+            : item
+        )
+      );
+      const name = assigneeColumns.find((c) => c.id === columnId)?.label;
+      showToast(assignedTo ? `Ответственный: ${name}` : 'Ответственный снят', 'success');
+      getLeadsStats().then(setStats);
+    };
+
+    return {
+      groupings: [
+        { id: 'status', label: 'По статусам', icon: Workflow, columns: statusColumns, getColumnId: (row) => row.status },
+        {
+          id: 'assigned',
+          label: 'По ответственным',
+          icon: Users,
+          columns: assigneeColumns,
+          getColumnId: (row) => row.assigned_to || UNASSIGNED_COLUMN,
+        },
+      ],
+      canMove,
+      onMove,
+      renderCard: (row, groupingId) => {
+        const name = row.client_name?.trim();
+        const phone = formatPhoneDisplay(row.phone, row.country_code);
+        const statusOpt = PIPELINE_STATUS_OPTIONS.find((o) => o.value === row.status);
+        const StatusIcon = statusOpt?.icon;
+        return (
+          <div className="min-w-0 space-y-2 pr-4">
+            <div className="min-w-0">
+              <div className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{name || phone}</div>
+              {name && <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{phone}</div>}
+            </div>
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="min-w-0 overflow-hidden">
+                {groupingId === 'status' ? (
+                  row.assigned_user ? (
+                    <EmployeeBadge name={row.assigned_user.full_name} color={row.assigned_user.color} size="xs" />
+                  ) : (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400">Не назначен</span>
+                  )
+                ) : (
+                  statusOpt && (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusOpt.colorClass}`}>
+                      {StatusIcon && <StatusIcon className="w-3 h-3" strokeWidth={2} />}
+                      {statusOpt.label}
+                    </span>
+                  )
+                )}
+              </div>
+              <span className="text-[10px] font-mono text-zinc-400 flex-shrink-0">
+                <FormattedDate date={row.created_at} type="date" />
+              </span>
+            </div>
+            {row.seller_phone && (
+              <div className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <Store className="w-3 h-3" strokeWidth={2} />
+                Продавец {formatPhoneDisplay(row.seller_phone)}
+              </div>
+            )}
+          </div>
+        );
+      },
+    };
+  }, [consultants, leads, leadActor, canLinkSeller, changeLeadStatus, showToast]);
+
   // Фильтрация лидов по статусу и консультанту
   const filteredLeads = React.useMemo(() => {
     return leads.filter((lead) => {
@@ -1013,7 +1154,6 @@ function LeadsContent() {
                 <option value="Открыт" className="text-zinc-900 bg-white">Открыт</option>
                 <option value="Обработан" className="text-zinc-900 bg-white">Обработан</option>
                 <option value="Назначен" className="text-zinc-900 bg-white">Назначен</option>
-                <option value="Подписан" className="text-zinc-900 bg-white">Подписан</option>
                 <option value="Отмена" className="text-zinc-900 bg-white">Отмена</option>
               </select>
 
@@ -1060,6 +1200,7 @@ function LeadsContent() {
           onStatusChange={handleStatusChangeInJournal}
           getStatusOptions={getLeadStatusOptions}
           totalCount={filteredLeads.length}
+          kanban={leadsKanban}
         />
 
         {/* 4. Единая гибридная форма сущности EntityModal */}

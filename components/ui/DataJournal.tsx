@@ -165,6 +165,8 @@ export interface DataJournalProps<T extends Record<string, any>> {
   onSearchChange?: (query: string) => void;
   customActions?: React.ReactNode;
   customRowActions?: (row: T) => React.ReactNode;
+  /** Нажатие «WhatsApp» в карточке и меню строки: вместо прямой ссылки wa.me (например, выбор скрипта) */
+  onWhatsApp?: (row: T) => void;
   createTooltip?: string;
   onRowClick?: (row: T) => void;
   /** Смена статуса: вернуть false, чтобы не показывать тост (например, открыт диалог причины) */
@@ -958,6 +960,8 @@ interface DataJournalCardProps<T extends Record<string, any>> {
   getStatusOptions?: (row: T) => StatusOption[] | null | undefined;
   onAssignedChange?: (row: T, newAssigned: string | null) => void;
   customRowActions?: (row: T) => React.ReactNode;
+  /** Кнопка WhatsApp вызывает обработчик вместо прямой ссылки wa.me */
+  onWhatsApp?: (row: T) => void;
   handleCopy: (text: string, rowKey: string) => void;
   copiedKey: string | null;
   showToast: (msg: string, type?: ToastType) => void;
@@ -974,6 +978,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   getStatusOptions,
   onAssignedChange,
   customRowActions,
+  onWhatsApp,
   showToast,
   onRowContextMenu,
 }: DataJournalCardProps<T>) => {
@@ -1096,15 +1101,27 @@ const DataJournalCardInner = <T extends Record<string, any>>({
                 <Phone className="w-3.5 h-3.5" strokeWidth={1.75} />
               </a>
 
-              <a
-                href={waHref(rawPhone)}
-                target="_blank"
-                rel="noreferrer"
-                className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                title="WhatsApp"
-              >
-                <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-              </a>
+              {onWhatsApp ? (
+                <button
+                  type="button"
+                  onClick={() => onWhatsApp(row)}
+                  className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                  title="WhatsApp"
+                  aria-label="WhatsApp"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </button>
+              ) : (
+                <a
+                  href={waHref(rawPhone)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                  title="WhatsApp"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
+                </a>
+              )}
             </>
           )}
 
@@ -1156,6 +1173,7 @@ export function areCardPropsEqual<T extends Record<string, any>>(
 ): boolean {
   if (prevProps.rowKey !== nextProps.rowKey) return false;
   if (prevProps.getStatusOptions !== nextProps.getStatusOptions) return false;
+  if (Boolean(prevProps.onWhatsApp) !== Boolean(nextProps.onWhatsApp)) return false;
 
   const prev = prevProps.row;
   const next = nextProps.row;
@@ -1254,6 +1272,7 @@ interface DataJournalContextMenuProps<T extends Record<string, any>> {
   onRowClick?: (row: T) => void;
   initialColumns: ColumnDef<T>[];
   customRowActions?: (row: T) => React.ReactNode;
+  onWhatsApp?: (row: T) => void;
 }
 
 function DataJournalContextMenuInner<T extends Record<string, any>>({
@@ -1261,6 +1280,7 @@ function DataJournalContextMenuInner<T extends Record<string, any>>({
   onRowClick,
   initialColumns,
   customRowActions,
+  onWhatsApp,
 }: DataJournalContextMenuProps<T>) {
   const [menu, setMenu] = React.useState<ContextMenuPayload<T> | null>(null);
 
@@ -1323,16 +1343,32 @@ function DataJournalContextMenuInner<T extends Record<string, any>>({
           : '';
         const cleanDigits = rawPhone.replace(/\D/g, '');
         if (!cleanDigits) return null;
-        return (
-          <a
-            href={waHref(rawPhone)}
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => setMenu(null)}
-            className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors"
-          >
+        const waClass =
+          'w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2.5 transition-colors';
+        const waContent = (
+          <>
             <MessageCircle className="w-4 h-4 text-emerald-500" strokeWidth={1.75} />
             <span>Написать в WhatsApp</span>
+          </>
+        );
+        if (onWhatsApp) {
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                const r = menu.row;
+                setMenu(null);
+                onWhatsApp(r);
+              }}
+              className={waClass}
+            >
+              {waContent}
+            </button>
+          );
+        }
+        return (
+          <a href={waHref(rawPhone)} target="_blank" rel="noreferrer" onClick={() => setMenu(null)} className={waClass}>
+            {waContent}
           </a>
         );
       })()}
@@ -1458,6 +1494,7 @@ export function DataJournal<T extends Record<string, any>>({
   onSearchChange,
   customActions,
   customRowActions,
+  onWhatsApp,
   createTooltip,
   onRowClick,
   onStatusChange,
@@ -1521,6 +1558,11 @@ export function DataJournal<T extends Record<string, any>>({
     },
     [onAssignedChange]
   );
+
+  // Карточки мемоизированы без сравнения обработчиков — вызываем актуальный onWhatsApp через ref
+  const onWhatsAppRef = React.useRef(onWhatsApp);
+  onWhatsAppRef.current = onWhatsApp;
+  const onWhatsAppStable = React.useCallback((row: T) => onWhatsAppRef.current?.(row), []);
 
   const onContextMenuOpenStable = React.useCallback(
     (row: T) => {
@@ -3322,6 +3364,7 @@ export function DataJournal<T extends Record<string, any>>({
                           getStatusOptions={getStatusOptions}
                           onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
+                          onWhatsApp={onWhatsApp ? onWhatsAppStable : undefined}
                           handleCopy={handleCopy}
                           copiedKey={copiedKey}
                           showToast={showToast}
@@ -3417,6 +3460,7 @@ export function DataJournal<T extends Record<string, any>>({
                     getStatusOptions={getStatusOptions}
                     onAssignedChange={onAssignedChangeStable}
                     customRowActions={customRowActions}
+                    onWhatsApp={onWhatsApp ? onWhatsAppStable : undefined}
                     handleCopy={handleCopy}
                     copiedKey={copiedKey}
                     showToast={showToast}
@@ -3482,6 +3526,7 @@ export function DataJournal<T extends Record<string, any>>({
         onRowClick={onRowClick}
         initialColumns={initialColumns}
         customRowActions={customRowActions}
+        onWhatsApp={onWhatsApp ? onWhatsAppStable : undefined}
       />
 
       {/* Плавающий стеклянный островок массовых действий (Apple Island Glassmorphism) */}

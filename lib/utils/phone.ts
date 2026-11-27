@@ -153,7 +153,10 @@ export function telHref(raw: unknown, countryCode?: string | null): string {
   return full ? `tel:+${full}` : '#';
 }
 
-export function waHref(raw: unknown, countryCode?: string | null): string {
+/** Ссылка на чат WhatsApp; text — готовое сообщение в поле ввода */
+export function waHref(raw: unknown, countryCode?: string | null, text?: string | null): string {
   const full = fullDigitsFrom(raw, countryCode);
-  return full ? `https://wa.me/${full}` : '#';
+  if (!full) return '#';
+  const message = text?.trim();
+  return message ? `https://wa.me/${full}?text=${encodeURIComponent(message)}` : `https://wa.me/${full}`;
 }

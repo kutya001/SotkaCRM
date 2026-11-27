@@ -298,7 +298,8 @@ export function Modal({
         {footer && (
           <div
             className={cn(
-              'px-6 py-4 border-t border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/80 dark:bg-zinc-900/80 flex items-center justify-end gap-2.5 flex-wrap safe-area-bottom',
+              // Нижний отступ не меньше 1rem и не меньше выреза экрана (safe-area-bottom обнулял py-4 на ПК)
+              'px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-zinc-200/70 dark:border-zinc-800/70 bg-zinc-50/80 dark:bg-zinc-900/80 flex items-center justify-end gap-2.5 flex-wrap',
               footerClassName
             )}
           >

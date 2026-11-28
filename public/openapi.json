@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "SotkaCRM REST API & Gateway",
-    "version": "1.9.0",
+    "version": "1.10.0",
     "description": "Формализованная спецификация REST API SotkaCRM (v1) и интеграционного шлюза Sotka HQ. Охватывает авторизацию, управление лидами (с инвариантом soft-delete/отмены), базой продавцов, подключениями, выплатами сотрудникам, тарифами, ставками и аналитикой."
   },
   "servers": [
@@ -397,8 +397,11 @@
               "enum": [
                 "all",
                 "Открыт",
+                "Нет ответа",
                 "Обработан",
                 "Назначен",
+                "Встреча",
+                "Перезвонить",
                 "Подписан",
                 "Отмена"
               ]
@@ -621,6 +624,7 @@
           "Leads"
         ],
         "summary": "Смена статуса лида по воронке",
+        "description": "Тот же статус «Встреча» / «Перезвонить» с новой датой — перенос встречи или звонка без смены статуса (право на этот статус, лид в области видимости).",
         "parameters": [
           {
             "name": "id",
@@ -646,15 +650,40 @@
                     "type": "string",
                     "enum": [
                       "Открыт",
+                      "Нет ответа",
                       "Обработан",
                       "Назначен",
+                      "Встреча",
+                      "Перезвонить",
                       "Подписан",
                       "Отмена"
                     ]
                   },
+                  "cancel_reason_code": {
+                    "type": "string",
+                    "enum": [
+                      "no_legal_entity",
+                      "too_expensive",
+                      "has_software",
+                      "no_answer",
+                      "not_target",
+                      "other"
+                    ],
+                    "description": "Причина отмены из списка — для статуса «Отмена»"
+                  },
                   "cancel_reason": {
                     "type": "string",
-                    "description": "Обязательно при переводе в статус 'Отмена'"
+                    "description": "Комментарий к причине отмены (для «other» — обязателен, не менее 3 символов); без кода — свободный текст не менее 3 символов"
+                  },
+                  "meeting_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Обязательно для статуса «Встреча»"
+                  },
+                  "next_contact_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Обязательно для статуса «Перезвонить»"
                   }
                 }
               }
@@ -849,6 +878,110 @@
                     "direct_url": {
                       "type": "string",
                       "example": "https://wa.me/996555123456"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads/duplicates": {
+      "get": {
+        "tags": [
+          "Leads"
+        ],
+        "summary": "Проверка дубликата номера",
+        "description": "Лиды с тем же номером (чужие — без имени клиента) и продавец платформы с этим номером. Предупреждение, сохранение лида не блокируется. Номер короче 7 цифр не проверяется.",
+        "parameters": [
+          {
+            "name": "phone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "country_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "996"
+            }
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Лид, который редактируется (не считать дублем самого себя)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Найденные дубли",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "phone_key": {
+                      "type": "string",
+                      "example": "996700123456"
+                    },
+                    "leads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "lead_id": {
+                            "type": "string"
+                          },
+                          "visible": {
+                            "type": "boolean"
+                          },
+                          "client_name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "assigned_name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "seller": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "seller_phone": {
+                          "type": "string"
+                        },
+                        "seller_name": {
+                          "type": "string"
+                        },
+                        "manager_name": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "moderation": {
+                          "type": "string"
+                        }
+                      }
                     }
                   }
                 }
@@ -3229,8 +3362,11 @@
             "type": "string",
             "enum": [
               "Открыт",
+              "Нет ответа",
               "Обработан",
               "Назначен",
+              "Встреча",
+              "Перезвонить",
               "Подписан",
               "Отмена"
             ]
@@ -3332,8 +3468,11 @@
             "type": "string",
             "enum": [
               "Открыт",
+              "Нет ответа",
               "Обработан",
               "Назначен",
+              "Встреча",
+              "Перезвонить",
               "Подписан",
               "Отмена"
             ]

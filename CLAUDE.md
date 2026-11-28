@@ -17,14 +17,14 @@ node scripts/build-openapi.js   # пересобрать public/openapi.json п�
 
 ```bash
 node --experimental-strip-types scripts/verify-lead-status-rules.mjs
-for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr kanban-order sales-scripts changelog onboarding-tours; do
+for s in lead-status-rules phone-format sotka-normalizers connection-order payroll-calc perf-swr kanban-order sales-scripts changelog onboarding-tours lead-funnel; do
   node --experimental-strip-types "scripts/verify-$s.mjs" || echo "FAIL $s"
 done
 ```
 
 Флаг `--experimental-strip-types` нужен: скрипты импортируют `.ts`-модули из `lib/`, поэтому относительные импорты внутри таких модулей пишутся с расширением `.ts`. Часть скриптов проверяет код текстом (наличие вызовов, токенов в миграциях) — при переименовании функций обновляйте и их.
 
-Без базы и сети работают десять скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
+Без базы и сети работают одиннадцать скриптов из цикла выше. `verify-billing-payroll` ходит в живую базу (ключи Supabase в `.env.local`). `verify-e2e`, `verify-wallet-bulk-isolation` и `verify-payouts-isolation` сейчас не запускаются: первые два импортируют модули с алиасом `@/` и `next/server`, которые Node без сборщика не разрешает, третий проверяет разметку старой нижней панели.
 
 ESLint не настроен: `npm run lint` запросит интерактивную настройку.
 
@@ -46,7 +46,7 @@ ESLint не настроен: `npm run lint` запросит интеракти
 
 ### Предметная модель
 
-- **Лиды** — воронка `Открыт → Обработан → Назначен → Подписан | Отмена`. Все правила переходов — в `lib/leads/status-rules.ts` (используются и API, и UI). «Подписан» ставится только привязкой к продавцу; пока лид привязан, статус меняется только отвязкой; «Отмена» требует причину (проверяет и триггер БД).
+- **Лиды** — воронка `Открыт → Нет ответа → Обработан → Назначен → Встреча → Подписан`, сбоку `Перезвонить` и `Отмена` (порядок — `LEAD_STATUSES`). Все правила переходов — в `lib/leads/status-rules.ts` (используются и API, и UI). «Подписан» ставится только привязкой к продавцу; пока лид привязан, статус меняется только отвязкой; «Отмена» требует причину из списка (`lib/leads/cancel-reasons.ts`), «Встреча» — `meeting_at`, «Перезвонить» — `next_contact_at` (проверяют `buildStatusChange` и триггеры БД). Счетчики по статусам и «На сегодня» — `lib/leads/stats.ts`, дубли номера — `lib/leads/duplicates.ts` и `GET /api/v1/leads/duplicates` (предупреждение, не запрет). Новый статус — это значение enum `lead_status` (отдельная миграция: значение нельзя использовать в той же транзакции), право `leads.status.<статус>`, `LEAD_STAGE_ORDER` / боковые статусы, цвет в `PIPELINE_STATUS_OPTIONS` и счетчик в `STATUS_COUNT_KEY`.
 - **Продавцы** синхронизируются из Sotka HQ API (`lib/services/sotka-api.ts`, `app/api/sync/sotka`, контракт — `sotka-api.json`). Ключ продавца — `seller_phone`. API Sotka вызывается только с сервера: маршрут синхронизации принимает `Bearer CRON_SECRET` (Vercel Cron) или сессию с правом `sellers.sync`. Upsert продавцов не передает `manager_id`: консультант — локальное назначение CRM и при синхронизации не затирается.
 - **Подключения** (`connections`) — закрепление продавца за сотрудниками. `manager_id` — основной участник (он же консультант продавца), остальные — в `connection_participants`, всего до трех; бонус делится поровну. Сопровождение по месяцам — `connection_maintenance_assignments` (по умолчанию все участники). Статус подтверждения `pending | confirmed | rejected`: начисление за подключение создает триггер БД при подтверждении, сопровождение начисляется только при запуске биллинга. Вся логика — `lib/services/connections.ts` (`createSellerConnection`, `assignConnectionStaff`, `assignSellerToManager`, `setConnectionConfirmation`, `deleteConnection`).
 - **Привязка лида** — `lib/services/lead-linking.ts`: связь через `leads.seller_phone = sellers.seller_phone`, один продавец — не более одного лида (в списке для привязки нет продавцов, чей телефон уже стоит у лида). SQL-функция `link_lead_to_seller` меняет только лид (продавец, «Подписан», `linked_at`, ответственный); свободному продавцу подключение создается через `createSellerConnection`, у подключенного лид лишь прикрепляется. Отвязка снимает ожидающее подключение и оставляет подтвержденное.

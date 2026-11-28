@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { LEAD_STATUSES } from '@/lib/leads/status-rules';
+import { STATUS_COUNT_KEY, countLeadStatuses } from '@/lib/leads/stats';
 
 /** Воронка лидов: analytics.menu; область лидов — leads.view_all либо свои (назначенные или созданные) */
 export async function GET(_req: NextRequest) {
@@ -18,23 +20,15 @@ export async function GET(_req: NextRequest) {
     if (error) throw error;
 
     const list = leads || [];
-    const total = list.length;
-    const openCount = list.filter((l) => l.status === 'Открыт').length;
-    const processedCount = list.filter((l) => l.status === 'Обработан').length;
-    const assignedCount = list.filter((l) => l.status === 'Назначен').length;
-    const signedCount = list.filter((l) => l.status === 'Подписан').length;
-    const cancelledCount = list.filter((l) => l.status === 'Отмена').length;
-
+    const counts = countLeadStatuses(list);
+    const total = counts.total;
     const calcPercent = (val: number) => (total > 0 ? Math.round((val / total) * 1000) / 10 : 0);
 
     return apiSuccess({
-      steps: [
-        { step: 'open', label: 'Открыт', count: openCount, percent: calcPercent(openCount) },
-        { step: 'processed', label: 'Обработан', count: processedCount, percent: calcPercent(processedCount) },
-        { step: 'assigned', label: 'Назначен', count: assignedCount, percent: calcPercent(assignedCount) },
-        { step: 'signed', label: 'Подписан', count: signedCount, percent: calcPercent(signedCount) },
-        { step: 'cancelled', label: 'Отмена', count: cancelledCount, percent: calcPercent(cancelledCount) },
-      ],
+      steps: LEAD_STATUSES.map((status) => {
+        const count = counts[STATUS_COUNT_KEY[status]];
+        return { step: STATUS_COUNT_KEY[status], label: status, count, percent: calcPercent(count) };
+      }),
       total_leads: total,
     });
   } catch (err) {

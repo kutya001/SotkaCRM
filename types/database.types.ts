@@ -508,6 +508,12 @@ export type Database = {
           updated_at: string
           cancel_reason: string | null
           cancelled_at: string | null
+          /** Причина отмены из списка (051) */
+          cancel_reason_code: string | null
+          /** Дата встречи — статус «Встреча» (051) */
+          meeting_at: string | null
+          /** Дата следующего контакта — статус «Перезвонить» (051) */
+          next_contact_at: string | null
         }
         Insert: {
           assigned_to?: string | null
@@ -526,6 +532,9 @@ export type Database = {
           updated_at?: string
           cancel_reason?: string | null
           cancelled_at?: string | null
+          cancel_reason_code?: string | null
+          meeting_at?: string | null
+          next_contact_at?: string | null
         }
         Update: {
           assigned_to?: string | null
@@ -544,6 +553,9 @@ export type Database = {
           updated_at?: string
           cancel_reason?: string | null
           cancelled_at?: string | null
+          cancel_reason_code?: string | null
+          meeting_at?: string | null
+          next_contact_at?: string | null
         }
         Relationships: [
           {
@@ -1375,7 +1387,7 @@ export type Database = {
         | "сопровождение"
         | "готов"
         | "отменен"
-      lead_status: "Открыт" | "Обработан" | "Назначен" | "Подписан" | "Отмена"
+      lead_status: "Открыт" | "Нет ответа" | "Обработан" | "Назначен" | "Встреча" | "Перезвонить" | "Подписан" | "Отмена"
       /** Подтверждение подключения администратором (миграция 037; VARCHAR с CHECK) */
       connection_confirmation_status: "pending" | "confirmed" | "rejected"
       maintenance_status: "начислено" | "выплачено" | "отменено"
@@ -1521,7 +1533,7 @@ export const Constants = {
         "готов",
         "отменен",
       ],
-      lead_status: ["Открыт", "Обработан", "Назначен", "Подписан", "Отмена"],
+      lead_status: ["Открыт", "Нет ответа", "Обработан", "Назначен", "Встреча", "Перезвонить", "Подписан", "Отмена"],
       maintenance_status: ["начислено", "выплачено", "отменено"],
       payout_category_type: [
         "аванс",

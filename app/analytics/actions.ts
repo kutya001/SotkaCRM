@@ -4,16 +4,12 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requirePermission } from '@/lib/auth/check-role';
 import { fetchSalaryOperationsForSummary } from '@/lib/payroll/server';
 import { sumSalaryOperations } from '@/lib/payroll/classify';
+import { countCancelReasons, countLeadStatuses, type CancelReasonCount, type LeadStatusCounts } from '@/lib/leads/stats';
 
 export interface AnalyticsSummaryResult {
-  leads: {
-    total: number;
-    open: number;
-    processed: number;
-    assigned: number;
-    signed: number;
-    cancelled: number;
-  };
+  leads: LeadStatusCounts;
+  /** Отмены за период по причинам (051; старые отмены без кода — «Не указана») */
+  cancelReasons: CancelReasonCount[];
   payouts: {
     totalAccrued: number;
     /** Выплаты, включая авансы */
@@ -44,6 +40,21 @@ export async function getAnalyticsSummaryAction(
     const { profile, supabase } = ctx;
 
     const viewAll = ctx.canViewAll('analytics');
+
+    // Лиды за период по всем статусам (RPC знает только прежние пять): область — как у RPC,
+    // все при «analytics.view_all», иначе назначенные мне или созданные мной
+    const loadLeads = async (columns: string) => {
+      let q = createAdminClient().from('leads').select(columns);
+      if (!viewAll) q = q.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
+      if (startDate) q = q.gte('created_at', startDate);
+      if (endDate) q = q.lte('created_at', endDate);
+      return q;
+    };
+    let leadsRes = await loadLeads('status, cancel_reason_code, meeting_at, next_contact_at');
+    // До миграции 051 новых колонок нет
+    if (leadsRes.error) leadsRes = await loadLeads('status');
+    const leadRows = (leadsRes.data || []) as unknown as { status: string; cancel_reason_code?: string | null }[];
+
     const [rpcRes, salaryRows] = await Promise.all([
       // RPC опирается на auth.uid() внутри БД — вызывается клиентом пользователя
       supabase.rpc('get_analytics_summary', {
@@ -71,14 +82,8 @@ export async function getAnalyticsSummaryAction(
     return {
       success: true,
       data: {
-        leads: {
-          total: Number(raw?.leads?.total) || 0,
-          open: Number(raw?.leads?.open) || 0,
-          processed: Number(raw?.leads?.processed) || 0,
-          assigned: Number(raw?.leads?.assigned) || 0,
-          signed: Number(raw?.leads?.signed) || 0,
-          cancelled: Number(raw?.leads?.cancelled) || 0,
-        },
+        leads: countLeadStatuses(leadRows),
+        cancelReasons: countCancelReasons(leadRows),
         payouts: {
           totalAccrued: salary.accrued,
           totalPaid: salary.paid,

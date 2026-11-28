@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { CancelReasonSchema, LeadsBatchActionSchema } from '@/lib/validations';
+import { LeadsBatchActionSchema } from '@/lib/validations';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
 import {
+  buildStatusChange,
   canAssignLead,
   canChangeLeadStatus,
   implicitStatusForAssignment,
   isCancelReasonDbError,
-  isCancelStatus,
   isLeadInScope,
+  isStatusDateDbError,
   leadActorFrom,
   reassignBlockReason,
 } from '@/lib/leads/status-rules';
@@ -36,6 +37,12 @@ export async function POST(req: NextRequest) {
     const targetLeadIds = (parsed.data.lead_ids || parsed.data.ids || []) as string[];
     const status = parsed.data.status || parsed.data.payload?.status;
     const cancelReason = parsed.data.cancel_reason ?? parsed.data.payload?.cancel_reason;
+    const statusInput = {
+      cancel_reason: cancelReason,
+      cancel_reason_code: parsed.data.cancel_reason_code ?? parsed.data.payload?.cancel_reason_code,
+      meeting_at: parsed.data.meeting_at ?? parsed.data.payload?.meeting_at,
+      next_contact_at: parsed.data.next_contact_at ?? parsed.data.payload?.next_contact_at,
+    };
     const assigned_to = parsed.data.assigned_to !== undefined ? parsed.data.assigned_to : parsed.data.payload?.assigned_to;
 
     // Текущее состояние выбранных лидов: права и область видимости проверяются по каждому лиду
@@ -69,22 +76,15 @@ export async function POST(req: NextRequest) {
         return apiError(first.reason, 'FORBIDDEN', 403, { denied_ids: denied.map((d) => d.id) });
       }
 
+      // Причина отмены из списка, дата встречи или следующего контакта — одна на все выбранные лиды (051)
+      const built = buildStatusChange(status, statusInput);
+      if (!built.ok) {
+        return apiError(built.message, built.code, 422);
+      }
       const updates: Record<string, unknown> = {
-        status,
+        ...built.updates,
         updated_at: new Date().toISOString(),
       };
-
-      if (isCancelStatus(status)) {
-        const parsedReason = CancelReasonSchema.safeParse(cancelReason ?? '');
-        if (!parsedReason.success) {
-          return apiError(
-            parsedReason.error.issues[0]?.message || 'Укажите причину отмены лидов',
-            'CANCEL_REASON_REQUIRED',
-            422
-          );
-        }
-        updates.cancel_reason = parsedReason.data;
-      }
 
       const ids = toChange.map((l) => l.lead_id);
       let affected: { lead_id: string; status: string }[] = [];
@@ -98,6 +98,9 @@ export async function POST(req: NextRequest) {
         if (error) {
           if (isCancelReasonDbError(error)) {
             return apiError('Для перевода лидов в статус «Отмена» укажите причину', 'CANCEL_REASON_REQUIRED', 422);
+          }
+          if (isStatusDateDbError(error)) {
+            return apiError(error.message || 'Укажите дату для этого статуса', 'STATUS_DATE_REQUIRED', 422);
           }
           throw error;
         }

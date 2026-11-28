@@ -31,6 +31,9 @@ import {
   UserCheck,
   BadgeCheck,
   XCircle,
+  PhoneOff,
+  CalendarClock,
+  PhoneCall,
   Tags,
   BarChart3,
   MoreHorizontal,
@@ -153,6 +156,12 @@ export interface DataJournalTab {
   icon?: React.ElementType;
 }
 
+/** Подсветка строки: предупреждение (например, дубль номера) — янтарный акцент и метка в карточке */
+export interface RowTone {
+  tone: 'warning';
+  label: string;
+}
+
 export interface DataJournalProps<T extends Record<string, any>> {
   data: T[];
   columns: ColumnDef<T>[];
@@ -167,6 +176,8 @@ export interface DataJournalProps<T extends Record<string, any>> {
   customRowActions?: (row: T) => React.ReactNode;
   /** Нажатие «WhatsApp» в карточке и меню строки: вместо прямой ссылки wa.me (например, выбор скрипта) */
   onWhatsApp?: (row: T) => void;
+  /** Подсветка строки и карточки (янтарный акцент с подписью) */
+  getRowTone?: (row: T) => RowTone | null;
   createTooltip?: string;
   onRowClick?: (row: T) => void;
   /** Смена статуса: вернуть false, чтобы не показывать тост (например, открыт диалог причины) */
@@ -214,6 +225,13 @@ export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
     icon: Inbox,
   },
   {
+    value: 'Нет ответа',
+    label: 'Нет ответа',
+    colorClass: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-300 border-zinc-500/30',
+    dotColor: 'bg-zinc-500',
+    icon: PhoneOff,
+  },
+  {
     value: 'Обработан',
     label: 'Обработан',
     colorClass: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30',
@@ -226,6 +244,20 @@ export const PIPELINE_STATUS_OPTIONS: StatusOption[] = [
     colorClass: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
     dotColor: 'bg-amber-500',
     icon: UserCheck,
+  },
+  {
+    value: 'Встреча',
+    label: 'Встреча',
+    colorClass: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
+    dotColor: 'bg-sky-500',
+    icon: CalendarClock,
+  },
+  {
+    value: 'Перезвонить',
+    label: 'Перезвонить',
+    colorClass: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30',
+    dotColor: 'bg-orange-500',
+    icon: PhoneCall,
   },
   {
     value: 'Подписан',
@@ -581,6 +613,7 @@ interface DataJournalTableRowProps<T extends Record<string, any>> {
   /** Индекс строки в виртуализаторе и колбэк измерения реальной высоты (data-index + ref) */
   virtualIndex?: number;
   measureRef?: (el: HTMLTableRowElement | null) => void;
+  rowTone?: RowTone | null;
 }
 
 const DataJournalTableRowInner = <T extends Record<string, any>>({
@@ -605,6 +638,7 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
   onRowContextMenu,
   virtualIndex,
   measureRef,
+  rowTone,
 }: DataJournalTableRowProps<T>) => {
   const [dropdownCoords, setDropdownCoords] = React.useState<{ top: number; left: number } | null>(
     null
@@ -640,9 +674,12 @@ const DataJournalTableRowInner = <T extends Record<string, any>>({
           onRowContextMenu(e, row);
         }
       }}
+      title={rowTone?.label}
       className={`group transition-colors ${
         isSelected
           ? 'bg-blue-500/10 dark:bg-blue-500/15 hover:bg-blue-500/15 dark:hover:bg-blue-500/20'
+          : rowTone
+          ? 'bg-amber-500/[0.07] hover:bg-amber-500/15 shadow-[inset_3px_0_0_0_rgb(245,158,11)]'
           : 'hover:bg-zinc-100/50 dark:hover:bg-zinc-800/40'
       }`}
     >
@@ -884,6 +921,7 @@ function areRowPropsEqual<T extends Record<string, any>>(
   if (prevProps.enableSelection !== nextProps.enableSelection) return false;
   if (prevProps.getStatusOptions !== nextProps.getStatusOptions) return false;
   if (prevProps.virtualIndex !== nextProps.virtualIndex) return false;
+  if (prevProps.rowTone?.label !== nextProps.rowTone?.label) return false;
   if (prevProps.measureRef !== nextProps.measureRef) return false;
 
   const prev = prevProps.row;
@@ -963,6 +1001,7 @@ interface DataJournalCardProps<T extends Record<string, any>> {
   customRowActions?: (row: T) => React.ReactNode;
   /** Кнопка WhatsApp вызывает обработчик вместо прямой ссылки wa.me */
   onWhatsApp?: (row: T) => void;
+  rowTone?: RowTone | null;
   handleCopy: (text: string, rowKey: string) => void;
   copiedKey: string | null;
   showToast: (msg: string, type?: ToastType) => void;
@@ -980,6 +1019,7 @@ const DataJournalCardInner = <T extends Record<string, any>>({
   onAssignedChange,
   customRowActions,
   onWhatsApp,
+  rowTone,
   showToast,
   onRowContextMenu,
 }: DataJournalCardProps<T>) => {
@@ -1041,7 +1081,11 @@ const DataJournalCardInner = <T extends Record<string, any>>({
           onRowContextMenu(e, row);
         }
       }}
-      className="min-w-0 rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 dark:border-zinc-800/40 shadow-sm p-4 space-y-3 cursor-pointer hover:border-zinc-300 dark:hover:border-zinc-700 transition-all flex flex-col justify-between"
+      className={`min-w-0 rounded-3xl backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border shadow-sm p-4 space-y-3 cursor-pointer transition-all flex flex-col justify-between ${
+        rowTone
+          ? 'border-amber-400/70 dark:border-amber-500/50 ring-1 ring-amber-400/30'
+          : 'border-white/20 dark:border-zinc-800/40 hover:border-zinc-300 dark:hover:border-zinc-700'
+      }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -1050,6 +1094,11 @@ const DataJournalCardInner = <T extends Record<string, any>>({
           </h3>
           {cardSubtitle && (
             <p className="mt-0.5 text-xs font-mono text-zinc-500 dark:text-zinc-400 truncate">{cardSubtitle}</p>
+          )}
+          {rowTone && (
+            <span className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+              {rowTone.label}
+            </span>
           )}
         </div>
 
@@ -1178,6 +1227,7 @@ export function areCardPropsEqual<T extends Record<string, any>>(
   if (prevProps.rowKey !== nextProps.rowKey) return false;
   if (prevProps.getStatusOptions !== nextProps.getStatusOptions) return false;
   if (Boolean(prevProps.onWhatsApp) !== Boolean(nextProps.onWhatsApp)) return false;
+  if (prevProps.rowTone?.label !== nextProps.rowTone?.label) return false;
 
   const prev = prevProps.row;
   const next = nextProps.row;
@@ -1499,6 +1549,7 @@ export function DataJournal<T extends Record<string, any>>({
   customActions,
   customRowActions,
   onWhatsApp,
+  getRowTone,
   createTooltip,
   onRowClick,
   onStatusChange,
@@ -3241,6 +3292,7 @@ export function DataJournal<T extends Record<string, any>>({
                           getStatusOptions={getStatusOptions}
                           onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
+                          rowTone={getRowTone?.(row) ?? null}
                           handleCopy={handleCopy}
                           copiedKey={copiedKey}
                           activeStatusDropdownRowKey={activeStatusDropdownRowKey}
@@ -3377,6 +3429,7 @@ export function DataJournal<T extends Record<string, any>>({
                           onAssignedChange={onAssignedChangeStable}
                           customRowActions={customRowActions}
                           onWhatsApp={onWhatsApp ? onWhatsAppStable : undefined}
+                          rowTone={getRowTone?.(row) ?? null}
                           handleCopy={handleCopy}
                           copiedKey={copiedKey}
                           showToast={showToast}
@@ -3473,6 +3526,7 @@ export function DataJournal<T extends Record<string, any>>({
                     onAssignedChange={onAssignedChangeStable}
                     customRowActions={customRowActions}
                     onWhatsApp={onWhatsApp ? onWhatsAppStable : undefined}
+                    rowTone={getRowTone?.(row) ?? null}
                     handleCopy={handleCopy}
                     copiedKey={copiedKey}
                     showToast={showToast}

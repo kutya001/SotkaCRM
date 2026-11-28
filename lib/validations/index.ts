@@ -152,7 +152,7 @@ export const PayoutsBatchSchema = z.discriminatedUnion('action', [
 
 export type PayoutsBatchInput = z.infer<typeof PayoutsBatchSchema>;
 
-export const LeadStatusSchema = z.enum(['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'], {
+export const LeadStatusSchema = z.enum(['Открыт', 'Нет ответа', 'Обработан', 'Назначен', 'Встреча', 'Перезвонить', 'Подписан', 'Отмена'], {
   message: 'Недопустимый статус лида',
 });
 
@@ -169,6 +169,9 @@ export const LeadsBatchActionSchema = z.object({
   lead_ids: z.array(z.string().regex(PG_UUID_REGEX)).optional(),
   status: LeadStatusSchema.optional(),
   cancel_reason: z.string().optional().nullable(),
+  cancel_reason_code: z.string().optional().nullable(),
+  meeting_at: z.string().optional().nullable(),
+  next_contact_at: z.string().optional().nullable(),
   assigned_to: z.string().regex(PG_UUID_REGEX, 'Некорректный идентификатор сотрудника').nullable().optional(),
   payload: z.any().optional(),
 }).refine((data) => (data.ids && data.ids.length > 0) || (data.lead_ids && data.lead_ids.length > 0), {

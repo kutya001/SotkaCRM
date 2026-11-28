@@ -2,12 +2,14 @@ import { NextRequest } from 'next/server';
 import { requireAuth } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiSuccess, apiError, handleApiError } from '@/lib/api/handler';
-import { CancelReasonSchema } from '@/lib/validations';
 import {
+  buildStatusChange,
   canChangeLeadStatus,
+  canRescheduleLead,
   isCancelReasonDbError,
-  isCancelStatus,
+  isStatusDateDbError,
   leadActorFrom,
+  statusDateField,
 } from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
 import type { LeadStatus } from '@/types/database.types';
@@ -22,9 +24,12 @@ export async function PATCH(
     const body = await req.json();
     const admin = createAdminClient();
 
-    const { status, cancel_reason } = body as {
+    const { status, cancel_reason, cancel_reason_code, meeting_at, next_contact_at } = body as {
       status: LeadStatus;
       cancel_reason?: string | null;
+      cancel_reason_code?: string | null;
+      meeting_at?: string | null;
+      next_contact_at?: string | null;
     };
 
     if (!status) {
@@ -41,28 +46,24 @@ export async function PATCH(
       return apiError('Лид не найден в системе', 'NOT_FOUND', 404);
     }
 
+    const actor = leadActorFrom(ctx);
+    // Тот же статус «Встреча» / «Перезвонить» с новой датой — перенос встречи или звонка
+    const reschedule = status === targetLead.status && Boolean(statusDateField(status));
     // Единые правила: область видимости, право «leads.status.<целевой>», откат — «leads.rollback»
-    const check = canChangeLeadStatus(leadActorFrom(ctx), targetLead, status);
+    const check = reschedule ? canRescheduleLead(actor, targetLead) : canChangeLeadStatus(actor, targetLead, status);
     if (!check.ok) {
       return apiError(check.reason, 'FORBIDDEN', 403);
     }
 
+    // Причина отмены из списка, дата встречи или следующего контакта (051)
+    const built = buildStatusChange(status, { cancel_reason, cancel_reason_code, meeting_at, next_contact_at });
+    if (!built.ok) {
+      return apiError(built.message, built.code, 422);
+    }
     const updatePayload: Record<string, unknown> = {
-      status,
+      ...built.updates,
       updated_at: new Date().toISOString(),
     };
-
-    if (isCancelStatus(status)) {
-      const parsedReason = CancelReasonSchema.safeParse(cancel_reason ?? '');
-      if (!parsedReason.success) {
-        return apiError(
-          parsedReason.error.issues[0]?.message || 'Укажите причину отмены лида',
-          'CANCEL_REASON_REQUIRED',
-          422
-        );
-      }
-      updatePayload.cancel_reason = parsedReason.data;
-    }
 
     // Запись сервисным клиентом: права уже проверены правилами выше,
     // RLS остается страховкой для прямых запросов к БД
@@ -70,12 +71,15 @@ export async function PATCH(
       .from('leads')
       .update(updatePayload as any)
       .eq('lead_id', id)
-      .select('lead_id, status, cancel_reason, cancelled_at, updated_at')
+      .select('lead_id, status, cancel_reason, cancel_reason_code, cancelled_at, meeting_at, next_contact_at, updated_at')
       .single();
 
     if (error) {
       if (isCancelReasonDbError(error)) {
         return apiError('Для перевода лида в статус «Отмена» укажите причину', 'CANCEL_REASON_REQUIRED', 422);
+      }
+      if (isStatusDateDbError(error)) {
+        return apiError(error.message || 'Укажите дату для этого статуса', 'STATUS_DATE_REQUIRED', 422);
       }
       throw error;
     }

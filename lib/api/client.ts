@@ -166,6 +166,28 @@ function buildQuery(params?: Record<string, any>): string {
   return str ? `?${str}` : '';
 }
 
+/** Результат проверки дубликата номера (lib/services/lead-duplicates.ts) */
+export interface PhoneDuplicatesDto {
+  phone_key: string;
+  leads: {
+    lead_id: string;
+    visible: boolean;
+    client_name: string | null;
+    status: string;
+    assigned_name: string | null;
+    created_at: string;
+  }[];
+  seller: { seller_phone: string; seller_name: string; manager_name: string | null; moderation: string } | null;
+}
+
+/** Поля смены статуса лида (051) */
+export interface LeadStatusExtra {
+  cancel_reason?: string;
+  cancel_reason_code?: string;
+  meeting_at?: string;
+  next_contact_at?: string;
+}
+
 /** Комментарий лида (lib/services/lead-comments.ts) */
 export interface LeadCommentDto {
   comment_id: string;
@@ -322,6 +344,12 @@ export const api = {
         method: 'GET',
         bypassCache: options?.bypassCache,
       }),
+    /** Дубликаты номера: лиды с тем же номером и продавец платформы (предупреждение, не запрет) */
+    checkDuplicates: (phone: string, countryCode?: string | null, excludeLeadId?: string | null) =>
+      request<PhoneDuplicatesDto>(
+        `/api/v1/leads/duplicates${buildQuery({ phone, country_code: countryCode || undefined, exclude: excludeLeadId || undefined })}`,
+        { method: 'GET', bypassCache: true }
+      ),
     /** Лента комментариев лида (от старых к новым) и право добавлять */
     getComments: (id: string) =>
       request<LeadCommentsResponse>(`/api/v1/leads/${encodeURIComponent(id)}/comments`, {
@@ -352,10 +380,15 @@ export const api = {
       invalidateNamespaces('leads', 'dashboard', 'analytics');
       return res;
     },
-    updateStatus: async (id: string, status: string, cancelReason?: string) => {
+    /**
+     * Смена статуса. Третий аргумент — причина отмены (строка) или поля статуса: причина из списка,
+     * дата встречи, дата следующего контакта. Тот же статус «Встреча» / «Перезвонить» с новой датой — перенос.
+     */
+    updateStatus: async (id: string, status: string, extra?: string | LeadStatusExtra) => {
+      const fields = typeof extra === 'string' ? { cancel_reason: extra } : extra || {};
       const res = await request<any>(`/api/v1/leads/${encodeURIComponent(id)}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status, cancel_reason: cancelReason }),
+        body: JSON.stringify({ status, ...fields }),
       });
       invalidateNamespaces('leads', 'dashboard', 'analytics');
       return res;
@@ -407,6 +440,9 @@ export const api = {
       action: 'change_status' | 'change_assigned' | 'delete';
       status?: string;
       cancel_reason?: string;
+      cancel_reason_code?: string;
+      meeting_at?: string;
+      next_contact_at?: string;
       assigned_to?: string | null;
     }) => {
       const res = await request<any>('/api/v1/leads/batch', {

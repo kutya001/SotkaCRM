@@ -24,7 +24,7 @@ export interface PermissionModule {
   permissions: PermissionDef[];
 }
 
-export const LEAD_STATUS_KEYS = ['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'] as const;
+export const LEAD_STATUS_KEYS = ['Открыт', 'Нет ответа', 'Обработан', 'Назначен', 'Встреча', 'Перезвонить', 'Подписан', 'Отмена'] as const;
 
 export const PERMISSION_MODULES: PermissionModule[] = [
   {
@@ -236,6 +236,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRoleCode, string[]> = {
     'leads.edit',
     'leads.comment',
     'leads.status.Открыт',
+    'leads.status.Нет ответа',
     'leads.status.Обработан',
     'leads.status.Отмена',
     'leads.rollback',
@@ -248,6 +249,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRoleCode, string[]> = {
     'dashboard.menu',
     'leads.menu',
     'leads.comment',
+    'leads.status.Нет ответа',
+    'leads.status.Назначен',
+    'leads.status.Встреча',
+    'leads.status.Перезвонить',
     'leads.status.Отмена',
     'leads.link_seller',
     'leads.scripts',
@@ -264,18 +269,28 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<SystemRoleCode, string[]> = {
   ],
 };
 
-/** Порядок этапов воронки лидов для определения «отката» статуса */
+/**
+ * Порядок этапов воронки лидов для определения «отката» статуса.
+ * «Встреча» — тот же этап, что «Назначен» (встреча сорвалась — лид возвращается в работу без отката).
+ */
 export const LEAD_STAGE_ORDER: Record<string, number> = {
   Открыт: 0,
   Обработан: 1,
   Назначен: 2,
+  Встреча: 2,
   Подписан: 3,
 };
+
+/** Боковые статусы «ожидания»: вход в них и выход из них не считаются откатом */
+export const LEAD_SIDE_STATUSES: readonly string[] = ['Нет ответа', 'Перезвонить'];
 
 /** Переход считается откатом, если целевой этап раньше текущего либо лид возвращается из «Отмена» */
 export function isLeadStatusRollback(from: string, to: string): boolean {
   if (from === to) return false;
   if (from === 'Отмена') return true;
   if (to === 'Отмена') return false;
+  // В ожидание можно уйти с любого рабочего этапа; из «Подписан» — это откат
+  if (LEAD_SIDE_STATUSES.includes(to)) return from === 'Подписан';
+  if (LEAD_SIDE_STATUSES.includes(from)) return false;
   return (LEAD_STAGE_ORDER[to] ?? 0) < (LEAD_STAGE_ORDER[from] ?? 0);
 }

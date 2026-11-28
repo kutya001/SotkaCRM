@@ -1,6 +1,7 @@
 import type { LeadStatus } from '@/types/database.types';
 import { hasPermission } from '../auth/permissions.ts';
 import { isLeadStatusRollback } from '../auth/permissions-catalog.ts';
+import { buildCancelReason } from './cancel-reasons.ts';
 
 /**
  * Единые правила работы с лидами по правам доступа (каталог lib/auth/permissions-catalog).
@@ -10,12 +11,42 @@ import { isLeadStatusRollback } from '../auth/permissions-catalog.ts';
  * - смена статуса: «leads.status.<целевой>» и, для отката назад, «leads.rollback»;
  * - редактирование карточки: «leads.edit»; только комментарий: «leads.edit» или «leads.comment»;
  * - назначение ответственного: «leads.assign».
- * Полный доступ («*») проходит все проверки. Перевод в «Отмена» для всех требует причину.
+ * Полный доступ («*») проходит все проверки. Перевод в «Отмена» для всех требует причину из списка,
+ * «Встреча» — дату встречи, «Перезвонить» — дату следующего контакта (051).
  */
 
-export const LEAD_STATUSES: readonly LeadStatus[] = ['Открыт', 'Обработан', 'Назначен', 'Подписан', 'Отмена'];
+/** Порядок статусов в интерфейсе (вкладки, канбан, отчеты) */
+export const LEAD_STATUSES: readonly LeadStatus[] = [
+  'Открыт',
+  'Нет ответа',
+  'Обработан',
+  'Назначен',
+  'Встреча',
+  'Перезвонить',
+  'Подписан',
+  'Отмена',
+];
 
 export const CANCELLED_STATUS: LeadStatus = 'Отмена';
+export const NO_ANSWER_STATUS: LeadStatus = 'Нет ответа';
+export const MEETING_STATUS: LeadStatus = 'Встреча';
+export const CALLBACK_STATUS: LeadStatus = 'Перезвонить';
+
+/** Лиды в работе (не подписаны и не отменены) */
+export const ACTIVE_LEAD_STATUSES: readonly LeadStatus[] = LEAD_STATUSES.filter(
+  (s) => s !== 'Подписан' && s !== 'Отмена'
+);
+
+/** Статусы с обязательной датой и поле этой даты */
+export type LeadDateField = 'meeting_at' | 'next_contact_at';
+export const STATUS_DATE_FIELD: Partial<Record<LeadStatus, LeadDateField>> = {
+  Встреча: 'meeting_at',
+  Перезвонить: 'next_contact_at',
+};
+
+export function statusDateField(status: string | null | undefined): LeadDateField | null {
+  return (status && STATUS_DATE_FIELD[status as LeadStatus]) || null;
+}
 
 /** Субъект проверки: сотрудник и права его роли */
 export interface LeadActor {
@@ -112,14 +143,84 @@ export function canChangeLeadStatus(
 }
 
 /**
+ * Перенос даты встречи или следующего контакта без смены статуса: лид в «Встреча» / «Перезвонить»,
+ * в области видимости, не привязан и у сотрудника есть право на этот статус.
+ */
+export function canRescheduleLead(actor: LeadActor, lead: LeadAccessInfo): LeadStatusCheck {
+  if (!statusDateField(lead.status)) return { ok: false, reason: 'Перенос даты — только для статусов «Встреча» и «Перезвонить»' };
+  if (!isLeadInScope(actor, lead)) return { ok: false, reason: 'Можно менять только свои лиды' };
+  if (isLeadLinked(lead)) return { ok: false, reason: 'Лид привязан к продавцу' };
+  if (!hasPermission(actor.permissions, `leads.status.${lead.status}`)) {
+    return { ok: false, reason: `Недостаточно прав для статуса «${lead.status}»` };
+  }
+  return { ok: true };
+}
+
+/** Дата встречи или контакта из запроса: ISO-строка в разумном диапазоне или null */
+export function parseScheduleDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const d = new Date(value);
+  const year = d.getUTCFullYear();
+  if (Number.isNaN(d.getTime()) || year < 2020 || year > 2100) return null;
+  return d.toISOString();
+}
+
+export interface StatusChangeInput {
+  cancel_reason?: string | null;
+  cancel_reason_code?: string | null;
+  meeting_at?: string | null;
+  next_contact_at?: string | null;
+}
+
+export type StatusChangeBuild =
+  | { ok: true; updates: Record<string, unknown> }
+  | { ok: false; code: string; message: string };
+
+/**
+ * Поля обновления лида при переводе в статус: причина отмены из списка, дата встречи,
+ * дата следующего контакта. Используется маршрутами /status и /batch (и переносом даты).
+ */
+export function buildStatusChange(status: LeadStatus | string, input: StatusChangeInput): StatusChangeBuild {
+  const updates: Record<string, unknown> = { status };
+  if (isCancelStatus(status)) {
+    const reason = buildCancelReason(input.cancel_reason_code, input.cancel_reason);
+    if (!reason.ok) return { ok: false, code: 'CANCEL_REASON_REQUIRED', message: reason.message };
+    updates.cancel_reason = reason.text;
+    updates.cancel_reason_code = reason.code;
+  }
+  const dateField = statusDateField(status);
+  if (dateField) {
+    const date = parseScheduleDate(input[dateField]);
+    if (!date) {
+      return {
+        ok: false,
+        code: dateField === 'meeting_at' ? 'MEETING_AT_REQUIRED' : 'NEXT_CONTACT_AT_REQUIRED',
+        message:
+          dateField === 'meeting_at'
+            ? 'Укажите дату и время встречи'
+            : 'Укажите дату следующего контакта',
+      };
+    }
+    updates[dateField] = date;
+  }
+  return { ok: true, updates };
+}
+
+/** Ошибка триггера trg_leads_status_dates (051): статус с датой без даты */
+export function isStatusDateDbError(err: unknown): boolean {
+  const e = err as { hint?: string; message?: string } | null;
+  return Boolean(e && /meeting_at_required|next_contact_at_required/.test(`${e.hint || ''} ${e.message || ''}`));
+}
+
+/**
  * Косвенная смена статуса при назначении ответственного:
- * назначение из «Открыт»/«Обработан» → «Назначен»; снятие из «Назначен» → «Обработан».
+ * назначение из «Открыт» / «Нет ответа» / «Обработан» → «Назначен»; снятие из «Назначен» → «Обработан».
  */
 export function implicitStatusForAssignment(
   current: LeadStatus | string,
   assignedTo: string | null | undefined
 ): LeadStatus | undefined {
-  if (assignedTo && (current === 'Открыт' || current === 'Обработан')) return 'Назначен';
+  if (assignedTo && (current === 'Открыт' || current === 'Нет ответа' || current === 'Обработан')) return 'Назначен';
   if (!assignedTo && current === 'Назначен') return 'Обработан';
   return undefined;
 }

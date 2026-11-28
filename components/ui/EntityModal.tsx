@@ -97,6 +97,12 @@ export interface EntityModalProps<T extends Record<string, any>> {
   onWhatsApp?: (data: T) => void;
   /** Дополнительные быстрые действия в панели под шапкой (режим просмотра), например «Комментарий» */
   headerActions?: (data: T) => React.ReactNode;
+  /** Значения формы изменились (например, для проверки дубликата номера) */
+  onFormChange?: (data: Record<string, any>, mode: EntityModalMode) => void;
+  /** Поля с предупреждением: янтарная рамка, сохранение не блокируется */
+  fieldWarnings?: Partial<Record<string, boolean>>;
+  /** Блок под полем (предупреждение, подсказка с данными) */
+  renderFieldExtra?: (fieldName: string, mode: EntityModalMode) => React.ReactNode;
   onDelete?: (data: T) => void;
   deleteLabel?: string;
   createSubmitLabel?: string;
@@ -157,6 +163,9 @@ export function EntityModal<T extends Record<string, any>>({
   onLinkSeller,
   onWhatsApp,
   headerActions,
+  onFormChange,
+  fieldWarnings,
+  renderFieldExtra,
   onDelete,
   deleteLabel = 'Удалить навсегда',
   createSubmitLabel = 'Сохранить запись',
@@ -213,6 +222,13 @@ export function EntityModal<T extends Record<string, any>>({
     showToast('Скопировано в буфер', 'success');
     setTimeout(() => setCopiedFieldName(null), 1500);
   };
+
+  // Сообщаем странице об изменении формы (через ref — без лишних перезапусков эффекта)
+  const onFormChangeRef = React.useRef(onFormChange);
+  onFormChangeRef.current = onFormChange;
+  React.useEffect(() => {
+    if (isOpen) onFormChangeRef.current?.(formData as Record<string, any>, mode);
+  }, [formData, mode, isOpen]);
 
   const handleFieldChange = (fieldName: string, value: any) => {
     setFormData((prev) => ({ ...prev, [fieldName]: value }));
@@ -628,11 +644,14 @@ export function EntityModal<T extends Record<string, any>>({
                   labelRight={isImmutable && !field.renderCustomView ? 'клик для копирования' : undefined}
                   hint={mode !== 'view' && !isImmutable ? field.helperText : undefined}
                 >
-                  {isImmutable
-                    ? renderImmutable(field, fieldKey, val)
-                    : mode === 'view'
-                    ? renderView(field, val)
-                    : renderEdit(field, fieldKey, val)}
+                  <div className={fieldWarnings?.[fieldKey] ? 'rounded-xl ring-2 ring-amber-400/70 dark:ring-amber-500/60' : undefined}>
+                    {isImmutable
+                      ? renderImmutable(field, fieldKey, val)
+                      : mode === 'view'
+                      ? renderView(field, val)
+                      : renderEdit(field, fieldKey, val)}
+                  </div>
+                  {renderFieldExtra?.(fieldKey, mode)}
                 </FormField>
               );
             })}

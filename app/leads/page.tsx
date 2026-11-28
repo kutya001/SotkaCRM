@@ -8,6 +8,7 @@ import {
   JournalMenuItem,
   type ColumnDef,
   type DataJournalTab,
+  type RowTone,
   PIPELINE_STATUS_OPTIONS,
 } from '@/components/ui/DataJournal';
 import type { KanbanColumn, KanbanConfig } from '@/components/ui/KanbanBoard';
@@ -16,6 +17,13 @@ import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
 import { FormField, Textarea } from '@/components/ui/Field';
+import { LeadNextStep } from '@/components/leads/LeadNextStep';
+import { LeadScheduleDialog, type LeadScheduleState, type ScheduleStatus } from '@/components/leads/LeadScheduleDialog';
+import { CancelReasonPicker } from '@/components/leads/CancelReasonPicker';
+import { PhoneDuplicateNotice, hasDuplicates, usePhoneDuplicates } from '@/components/leads/PhoneDuplicateNotice';
+import { countPhoneKeys, leadPhoneKey } from '@/lib/leads/duplicates';
+import { buildCancelReason } from '@/lib/leads/cancel-reasons';
+import { EMPTY_LEAD_STATUS_COUNTS, isLeadDueToday as isDueToday, type LeadStatusCounts } from '@/lib/leads/stats';
 import { formatDateTime } from '@/lib/utils/format';
 import { formatPhoneDisplay } from '@/lib/utils/phone';
 import {
@@ -27,6 +35,8 @@ import {
   canEditLeadFields,
   isCancelStatus,
   reassignBlockReason,
+  canRescheduleLead,
+  statusDateField,
 } from '@/lib/leads/status-rules';
 
 /** Колонка канбана «Не назначен» (раскладка по ответственным) */
@@ -81,6 +91,10 @@ import {
   Users,
   UserX,
   MessageSquareText,
+  PhoneOff,
+  CalendarClock,
+  PhoneCall,
+  BellRing,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useUser } from '@/components/auth/AuthProvider';
@@ -113,14 +127,7 @@ function LeadsContent() {
   const [userLogin, setUserLogin] = React.useState(user.userLogin);
 
   // Статистика воронки
-  const [stats, setStats] = React.useState({
-    total: 0,
-    open: 0,
-    processed: 0,
-    assigned: 0,
-    signed: 0,
-    cancelled: 0,
-  });
+  const [stats, setStats] = React.useState<LeadStatusCounts>(EMPTY_LEAD_STATUS_COUNTS);
 
   // Список консультантов для назначения
   const [consultants, setConsultants] = React.useState<
@@ -165,14 +172,34 @@ function LeadsContent() {
     leadIds: string[];
     clientName: string;
     reason: string;
+    /** Причина из списка (051) */
+    reasonCode: string;
     onDone?: () => void;
   }>({
     isOpen: false,
     leadIds: [],
     clientName: '',
     reason: '',
+    reasonCode: '',
   });
-  const closeCancelDialog = () => setCancelDialog({ isOpen: false, leadIds: [], clientName: '', reason: '' });
+  const closeCancelDialog = () => setCancelDialog({ isOpen: false, leadIds: [], clientName: '', reason: '', reasonCode: '' });
+  const cancelReasonCheck = buildCancelReason(cancelDialog.reasonCode || null, cancelDialog.reason);
+
+  // Дата встречи («Встреча») или следующего контакта («Перезвонить»): смена статуса и перенос даты
+  const [scheduleDialog, setScheduleDialog] = React.useState<LeadScheduleState | null>(null);
+
+  // Проверка дубликата номера в форме лида: предупреждение, сохранить можно
+  const [phoneDraft, setPhoneDraft] = React.useState<{ phone: string; country_code: string }>({ phone: '', country_code: '' });
+  const handleLeadFormChange = React.useCallback((data: Record<string, any>) => {
+    const next = { phone: String(data.phone || ''), country_code: String(data.country_code || '') };
+    setPhoneDraft((prev) => (prev.phone === next.phone && prev.country_code === next.country_code ? prev : next));
+  }, []);
+  const phoneDuplicates = usePhoneDuplicates(
+    phoneDraft.phone,
+    phoneDraft.country_code,
+    modalState.mode === 'create' ? null : modalState.selectedLead?.lead_id,
+    modalState.isOpen
+  );
 
   // Состояние модального окна связывания «Лид -> Продавец»
   const [currentUserId, setCurrentUserId] = React.useState<string>('');
@@ -309,6 +336,23 @@ function LeadsContent() {
     }
   }, [searchParams, defaultConsultantId, canCreateLeads]);
 
+  // Дубли номера среди видимых лидов: янтарная подсветка строки и метка «Дубль»
+  const phoneCounts = React.useMemo(() => countPhoneKeys(leads), [leads]);
+  const duplicateCount = React.useCallback(
+    (row: Pick<LeadItem, 'phone' | 'country_code'>) => {
+      const key = leadPhoneKey(row.phone, row.country_code);
+      return key ? (phoneCounts.get(key) || 0) - 1 : 0;
+    },
+    [phoneCounts]
+  );
+  const getLeadRowTone = React.useCallback(
+    (row: LeadItem): RowTone | null => {
+      const others = duplicateCount(row);
+      return others > 0 ? { tone: 'warning', label: others === 1 ? 'Дубль номера: еще 1 лид' : `Дубль номера: еще ${others} лида` } : null;
+    },
+    [duplicateCount]
+  );
+
   // Конфигурация колонок DataJournal (мемоизирована для стабилизации виртуализатора)
   const columns: ColumnDef<LeadItem>[] = React.useMemo(
     () => [
@@ -358,11 +402,22 @@ function LeadsContent() {
         sortable: true,
         filterable: true,
         phoneAccessor: (row) => formatPhoneDisplay(row.phone, row.country_code),
-        renderCell: (row) => (
-          <span className="font-mono text-zinc-800 dark:text-zinc-200">
-            {formatPhoneDisplay(row.phone, row.country_code)}
-          </span>
-        ),
+        renderCell: (row) => {
+          const others = duplicateCount(row);
+          return (
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <span className="font-mono text-zinc-800 dark:text-zinc-200 truncate">{formatPhoneDisplay(row.phone, row.country_code)}</span>
+              {others > 0 && (
+                <span
+                  className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                  title={`Этот номер есть еще у ${others} ${others === 1 ? 'лида' : 'лидов'}`}
+                >
+                  Дубль
+                </span>
+              )}
+            </span>
+          );
+        },
       },
       {
         key: 'status',
@@ -374,6 +429,14 @@ function LeadsContent() {
         filterable: true,
         groupable: true,
         statusOptions: PIPELINE_STATUS_OPTIONS,
+      },
+      {
+        key: 'next_step',
+        label: 'Встреча / звонок',
+        width: 210,
+        minWidth: 170,
+        sortable: false,
+        renderCell: (row) => <LeadNextStep status={row.status} meeting_at={row.meeting_at} next_contact_at={row.next_contact_at} />,
       },
       {
         key: 'assigned_to',
@@ -471,7 +534,7 @@ function LeadsContent() {
         ),
       },
     ],
-    [canAssignLeads, consultants, fetchInitialData, showToast]
+    [canAssignLeads, consultants, fetchInitialData, showToast, duplicateCount]
   );
 
   // Конфигурация полей EntityModal (мемоизирована для предотвращения сброса формы при ререндере)
@@ -544,6 +607,25 @@ function LeadsContent() {
           ) : (
             <span className="text-zinc-400">— Не назначен —</span>
           ),
+      },
+      {
+        name: 'meeting_at',
+        label: 'Встреча',
+        type: 'datetime',
+        immutable: true,
+        isSystem: true,
+        // Дата задается при переводе в «Встреча» и переносится кнопкой «Перенести встречу»
+        hidden: (lead) => lead.status !== 'Встреча',
+        renderCustomView: (_val, lead) => <LeadNextStep status={lead.status} meeting_at={lead.meeting_at} />,
+      },
+      {
+        name: 'next_contact_at',
+        label: 'Перезвонить',
+        type: 'datetime',
+        immutable: true,
+        isSystem: true,
+        hidden: (lead) => lead.status !== 'Перезвонить',
+        renderCustomView: (_val, lead) => <LeadNextStep status={lead.status} next_contact_at={lead.next_contact_at} />,
       },
       {
         name: 'comment',
@@ -660,6 +742,19 @@ function LeadsContent() {
         leadIds: [...selectedLeadIds],
         clientName: `Выбрано лидов: ${selectedLeadIds.length}`,
         reason: '',
+        reasonCode: '',
+        onDone: clearSelection,
+      });
+      return;
+    }
+
+    // «Встреча» / «Перезвонить» — одна дата на все выбранные лиды
+    if (statusDateField(status)) {
+      setScheduleDialog({
+        status: status as ScheduleStatus,
+        leadIds: [...selectedLeadIds],
+        clientName: `Выбрано лидов: ${selectedLeadIds.length}`,
+        reschedule: false,
         onDone: clearSelection,
       });
       return;
@@ -741,7 +836,12 @@ function LeadsContent() {
       }
 
       if (isCancelStatus(newStatus)) {
-        setCancelDialog({ isOpen: true, leadIds: [lead.lead_id], clientName: lead.client_name, reason: '' });
+        setCancelDialog({ isOpen: true, leadIds: [lead.lead_id], clientName: lead.client_name, reason: '', reasonCode: '' });
+        return false;
+      }
+      // Встреча и звонок — сначала дата (окно), статус меняется после подтверждения
+      if (statusDateField(newStatus)) {
+        setScheduleDialog({ status: newStatus as ScheduleStatus, leadIds: [lead.lead_id], clientName: lead.client_name, reschedule: false });
         return false;
       }
 
@@ -827,22 +927,23 @@ function LeadsContent() {
   };
 
   const handleConfirmCancelLead = async () => {
-    const reason = cancelDialog.reason.trim();
-    if (cancelDialog.leadIds.length === 0 || reason.length < 3) {
-      showToast('Укажите причину отмены (не менее 3 символов)', 'error');
+    if (cancelDialog.leadIds.length === 0 || !cancelReasonCheck.ok) {
+      showToast(cancelReasonCheck.ok ? 'Не выбраны лиды' : cancelReasonCheck.message, 'error');
       return;
     }
+    // Причина из списка и комментарий — сервер соберет текст причины сам
+    const reasonFields = { cancel_reason: cancelDialog.reason.trim(), cancel_reason_code: cancelDialog.reasonCode };
 
     try {
       if (cancelDialog.leadIds.length === 1) {
-        await api.leads.updateStatus(cancelDialog.leadIds[0], 'Отмена', reason);
+        await api.leads.updateStatus(cancelDialog.leadIds[0], 'Отмена', reasonFields);
         showToast('Лид переведен в статус «Отмена»', 'info');
       } else {
         await api.leads.batch({
           lead_ids: cancelDialog.leadIds,
           action: 'change_status',
           status: 'Отмена',
-          cancel_reason: reason,
+          ...reasonFields,
         });
         showToast(`Отменено лидов: ${cancelDialog.leadIds.length}`, 'info');
       }
@@ -858,6 +959,55 @@ function LeadsContent() {
       showToast(err.message || 'Ошибка при отмене сделки', 'error');
     }
   };
+
+  const handleConfirmSchedule = async (iso: string) => {
+    const dialog = scheduleDialog;
+    if (!dialog) return;
+    const field = dialog.status === 'Встреча' ? 'meeting_at' : 'next_contact_at';
+    try {
+      if (dialog.leadIds.length === 1) {
+        await api.leads.updateStatus(dialog.leadIds[0], dialog.status, { [field]: iso });
+      } else {
+        await api.leads.batch({ lead_ids: dialog.leadIds, action: 'change_status', status: dialog.status, [field]: iso });
+      }
+      const verb = dialog.reschedule ? 'перенесен' : dialog.status === 'Встреча' ? 'назначена' : 'запланирован';
+      showToast(
+        dialog.status === 'Встреча' ? `Встреча ${dialog.reschedule ? 'перенесена' : verb}` : `Звонок ${verb}`,
+        'success'
+      );
+      dialog.onDone?.();
+      setScheduleDialog(null);
+      // Открытая карточка лида получает новый статус и дату
+      setModalState((prev) =>
+        prev.selectedLead && dialog.leadIds.includes(prev.selectedLead.lead_id)
+          ? { ...prev, selectedLead: { ...prev.selectedLead, status: dialog.status as LeadStatus, [field]: iso } }
+          : prev
+      );
+      await fetchInitialData();
+    } catch (err: any) {
+      showToast(err.message || 'Не удалось сохранить дату', 'error');
+    }
+  };
+
+  /** Перенос даты встречи или звонка без смены статуса */
+  const openReschedule = React.useCallback(
+    (lead: LeadItem) => {
+      const status = lead.status as ScheduleStatus;
+      const check = canRescheduleLead(leadActor, lead);
+      if (!check.ok) {
+        showToast(check.reason, 'error');
+        return;
+      }
+      setScheduleDialog({
+        status,
+        leadIds: [lead.lead_id],
+        clientName: lead.client_name,
+        reschedule: true,
+        initial: status === 'Встреча' ? lead.meeting_at : lead.next_contact_at,
+      });
+    },
+    [leadActor, showToast]
+  );
 
   const handleLinkSeller = (lead: LeadItem) => {
     if (lead.seller_phone) {
@@ -891,11 +1041,12 @@ function LeadsContent() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все статусы воронки</option>
-          <option value="Открыт">● Открыт</option>
-          <option value="Обработан">● Обработан</option>
-          <option value="Назначен">● Назначен</option>
-          <option value="Подписан">● Подписан</option>
-          <option value="Отмена">● Отмена</option>
+          <option value="today">На сегодня: встречи и звонки</option>
+          {LEAD_STATUSES.map((status) => (
+            <option key={status} value={status}>
+              ● {status}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -1052,6 +1203,14 @@ function LeadsContent() {
                 <FormattedDate date={row.created_at} type="date" />
               </span>
             </div>
+            {statusDateField(row.status) && (
+              <LeadNextStep status={row.status} meeting_at={row.meeting_at} next_contact_at={row.next_contact_at} />
+            )}
+            {duplicateCount(row) > 0 && (
+              <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                Дубль номера
+              </span>
+            )}
             {row.seller_phone && (
               <div className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                 <Store className="w-3 h-3" strokeWidth={2} />
@@ -1062,12 +1221,14 @@ function LeadsContent() {
         );
       },
     };
-  }, [consultants, leads, leadActor, canLinkSeller, changeLeadStatus, showToast]);
+  }, [consultants, leads, leadActor, canLinkSeller, changeLeadStatus, showToast, duplicateCount]);
 
   // Фильтрация лидов по статусу и консультанту
   const filteredLeads = React.useMemo(() => {
     return leads.filter((lead) => {
-      if (filterStatus !== 'all' && lead.status !== filterStatus) return false;
+      if (filterStatus === 'today') {
+        if (!isDueToday(lead)) return false;
+      } else if (filterStatus !== 'all' && lead.status !== filterStatus) return false;
       if (filterConsultant !== 'all') {
         if (filterConsultant === 'unassigned' && lead.assigned_to) return false;
         if (filterConsultant !== 'unassigned' && lead.assigned_to !== filterConsultant) return false;
@@ -1111,6 +1272,14 @@ function LeadsContent() {
             title="История комментариев и новый комментарий"
             onClick={() => openComments(row)}
           />
+          {statusDateField(row.status) && canRescheduleLead(leadActor, row).ok && (
+            <JournalMenuItem
+              icon={row.status === 'Встреча' ? CalendarClock : PhoneCall}
+              label={row.status === 'Встреча' ? 'Перенести встречу' : 'Перенести звонок'}
+              tone="warning"
+              onClick={() => openReschedule(row)}
+            />
+          )}
           {canLinkRow && (
             <JournalMenuItem
               icon={Link2}
@@ -1141,7 +1310,7 @@ function LeadsContent() {
         </>
       );
     },
-    [canLinkSeller, canDeleteLeads, handleLinkSeller, router, openComments]
+    [canLinkSeller, canDeleteLeads, handleLinkSeller, router, openComments, leadActor, openReschedule]
   );
 
   // Новый комментарий — последний комментарий лида в реестре и открытой карточке
@@ -1157,6 +1326,7 @@ function LeadsContent() {
     waTarget !== null ||
     commentsTarget !== null ||
     cancelDialog.isOpen ||
+    scheduleDialog !== null ||
     leadToDelete !== null;
   // Имя для подстановки {менеджер} в скрипты (заглушка профиля — не имя)
   const scriptManagerName = userName && userName !== 'Сотрудник CRM' ? userName : null;
@@ -1166,16 +1336,24 @@ function LeadsContent() {
     if (!canViewAllLeads && currentUserRole === 'consultant') {
       return [
         { id: 'all', label: 'Все в работе', count: stats.total, icon: LayoutList },
+        { id: 'today', label: 'На сегодня', count: stats.callbackDue + stats.meetingsToday, icon: BellRing },
         { id: 'Назначен', label: 'Назначен', count: stats.assigned, icon: UserCheck },
+        { id: 'Встреча', label: 'Встреча', count: stats.meeting, icon: CalendarClock },
+        { id: 'Перезвонить', label: 'Перезвонить', count: stats.callback, icon: PhoneCall },
+        { id: 'Нет ответа', label: 'Нет ответа', count: stats.noAnswer, icon: PhoneOff },
         { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
         { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
       ];
     }
     return [
       { id: 'all', label: 'Все', count: stats.total, icon: LayoutList },
+      { id: 'today', label: 'На сегодня', count: stats.callbackDue + stats.meetingsToday, icon: BellRing },
       { id: 'Открыт', label: 'Открыт', count: stats.open, icon: Inbox },
+      { id: 'Нет ответа', label: 'Нет ответа', count: stats.noAnswer, icon: PhoneOff },
       { id: 'Обработан', label: 'Обработан', count: stats.processed, icon: CheckCircle2 },
       { id: 'Назначен', label: 'Назначен', count: stats.assigned, icon: UserCheck },
+      { id: 'Встреча', label: 'Встреча', count: stats.meeting, icon: CalendarClock },
+      { id: 'Перезвонить', label: 'Перезвонить', count: stats.callback, icon: PhoneCall },
       { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
       { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
     ];
@@ -1224,10 +1402,12 @@ function LeadsContent() {
                 className="h-8 px-2.5 rounded-xl bg-white/10 border border-white/20 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer"
               >
                 <option value="" disabled className="text-zinc-900 bg-white">Сменить статус...</option>
-                <option value="Открыт" className="text-zinc-900 bg-white">Открыт</option>
-                <option value="Обработан" className="text-zinc-900 bg-white">Обработан</option>
-                <option value="Назначен" className="text-zinc-900 bg-white">Назначен</option>
-                <option value="Отмена" className="text-zinc-900 bg-white">Отмена</option>
+                {/* «Подписан» — только привязкой к продавцу */}
+                {LEAD_STATUSES.filter((s) => s !== LINK_ONLY_STATUS).map((status) => (
+                  <option key={status} value={status} className="text-zinc-900 bg-white">
+                    {status}
+                  </option>
+                ))}
               </select>
 
               <select
@@ -1270,6 +1450,7 @@ function LeadsContent() {
           customActions={leadActions}
           customRowActions={renderCustomRowActions}
           onWhatsApp={canOpenScripts ? openWhatsApp : undefined}
+          getRowTone={getLeadRowTone}
           onRowClick={handleRowClick}
           onStatusChange={handleStatusChangeInJournal}
           getStatusOptions={getLeadStatusOptions}
@@ -1297,18 +1478,52 @@ function LeadsContent() {
             onStatusChange={allowedStatusesForModal.length > 0 ? handleStatusChangeInModal : undefined}
             onLinkSeller={canLinkSeller ? handleLinkSeller : undefined}
             onWhatsApp={canOpenScripts ? openWhatsApp : undefined}
+            onFormChange={handleLeadFormChange}
+            fieldWarnings={{ phone: hasDuplicates(phoneDuplicates.result) }}
+            renderFieldExtra={(fieldName) =>
+              fieldName === 'phone' ? (
+                <PhoneDuplicateNotice
+                  result={phoneDuplicates.result}
+                  loading={phoneDuplicates.loading}
+                  onOpenLead={(leadId) => {
+                    const found = leads.find((l) => l.lead_id === leadId);
+                    if (found) handleRowClick(found);
+                    else showToast('Лид не найден в текущем списке', 'info');
+                  }}
+                />
+              ) : null
+            }
             headerActions={(lead) => (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300"
-                leftIcon={<MessageSquareText className="w-3.5 h-3.5" strokeWidth={1.75} />}
-                onClick={() => openComments(lead)}
-                title="История комментариев и новый комментарий"
-                data-tour="lead-comment-button"
-              >
-                Комментарий
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300"
+                  leftIcon={<MessageSquareText className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                  onClick={() => openComments(lead)}
+                  title="История комментариев и новый комментарий"
+                  data-tour="lead-comment-button"
+                >
+                  Комментарий
+                </Button>
+                {statusDateField(lead.status) && canRescheduleLead(leadActor, lead).ok && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="bg-orange-500/10 hover:bg-orange-500/20 text-orange-700 dark:text-orange-300"
+                    leftIcon={
+                      lead.status === 'Встреча' ? (
+                        <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      ) : (
+                        <PhoneCall className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      )
+                    }
+                    onClick={() => openReschedule(lead)}
+                  >
+                    {lead.status === 'Встреча' ? 'Перенести встречу' : 'Перенести звонок'}
+                  </Button>
+                )}
+              </>
             )}
             onDelete={canDeleteLeads ? (lead) => setLeadToDelete(lead) : undefined}
             createSubmitLabel="Сохранить запись"
@@ -1367,7 +1582,7 @@ function LeadsContent() {
           icon={Ban}
           confirmLabel="Подтвердить отмену"
           cancelLabel="Назад"
-          confirmDisabled={cancelDialog.reason.trim().length < 3}
+          confirmDisabled={!cancelReasonCheck.ok}
           level={2}
           description={
             user.can('leads.rollback')
@@ -1375,17 +1590,15 @@ function LeadsContent() {
               : 'После отмены вернуть лид в работу сможет только сотрудник с правом отката статуса.'
           }
         >
-          <FormField label="Причина отмены" required hint="Не менее 3 символов. Причина сохраняется в карточке лида.">
-            <Textarea
-              value={cancelDialog.reason}
-              onChange={(e) => setCancelDialog((prev) => ({ ...prev, reason: e.target.value }))}
-              rows={3}
-              autoFocus
-              maxLength={500}
-              placeholder="Например: высокая цена, закрылся бизнес, выбрал другое решение..."
-            />
-          </FormField>
+          <CancelReasonPicker
+            code={cancelDialog.reasonCode}
+            comment={cancelDialog.reason}
+            onChange={({ code, comment }) => setCancelDialog((prev) => ({ ...prev, reasonCode: code, reason: comment }))}
+          />
         </ConfirmDialog>
+
+        {/* 6б. Дата встречи / следующего контакта и перенос даты */}
+        <LeadScheduleDialog state={scheduleDialog} onClose={() => setScheduleDialog(null)} onConfirm={handleConfirmSchedule} />
 
         {/* 7. Модальное окно ручного связывания Лид -> Продавец */}
         {mappingModal.isOpen && (

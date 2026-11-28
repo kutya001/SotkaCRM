@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { ACTIVE_LEAD_STATUSES } from '@/lib/leads/status-rules';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAuth, type AuthContext } from '@/lib/auth/check-role';
 import { fullPhoneSchema, employeeProfileFieldsSchema } from '@/lib/validations';
@@ -213,7 +214,7 @@ export async function getUserProfileAndKpi(targetUserId?: string): Promise<UserK
     let closedDeals = 0;
     if (assignedLeads) {
       for (const l of assignedLeads) {
-        if (l.status === 'Открыт' || l.status === 'Обработан' || l.status === 'Назначен') {
+        if (ACTIVE_LEAD_STATUSES.includes(l.status)) {
           activeAssignedLeads++;
         }
         if (l.status === 'Подписан') {

@@ -205,7 +205,7 @@ const openapi = {
           { name: "page", in: "query", schema: { type: "integer", default: 1 } },
           { name: "pageSize", in: "query", schema: { type: "integer", default: 50 } },
           { name: "search", in: "query", schema: { type: "string" } },
-          { name: "status", in: "query", schema: { type: "string", enum: ["all", "Открыт", "Обработан", "Назначен", "Подписан", "Отмена"] } },
+          { name: "status", in: "query", schema: { type: "string", enum: ["all", "Открыт", "Нет ответа", "Обработан", "Назначен", "Встреча", "Перезвонить", "Подписан", "Отмена"] } },
           { name: "assignedTo", in: "query", schema: { type: "string" } },
           { name: "sortBy", in: "query", schema: { type: "string", default: "created_at" } },
           { name: "sortOrder", in: "query", schema: { type: "string", enum: ["asc", "desc"], default: "desc" } }
@@ -279,6 +279,7 @@ const openapi = {
       patch: {
         tags: ["Leads"],
         summary: "Смена статуса лида по воронке",
+        description: "Тот же статус «Встреча» / «Перезвонить» с новой датой — перенос встречи или звонка без смены статуса (право на этот статус, лид в области видимости).",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
         requestBody: {
           required: true,
@@ -288,8 +289,15 @@ const openapi = {
                 type: "object",
                 required: ["status"],
                 properties: {
-                  status: { type: "string", enum: ["Открыт", "Обработан", "Назначен", "Подписан", "Отмена"] },
-                  cancel_reason: { type: "string", description: "Обязательно при переводе в статус 'Отмена'" }
+                  status: { type: "string", enum: ["Открыт", "Нет ответа", "Обработан", "Назначен", "Встреча", "Перезвонить", "Подписан", "Отмена"] },
+                  cancel_reason_code: {
+                    type: "string",
+                    enum: ["no_legal_entity", "too_expensive", "has_software", "no_answer", "not_target", "other"],
+                    description: "Причина отмены из списка — для статуса «Отмена»"
+                  },
+                  cancel_reason: { type: "string", description: "Комментарий к причине отмены (для «other» — обязателен, не менее 3 символов); без кода — свободный текст не менее 3 символов" },
+                  meeting_at: { type: "string", format: "date-time", description: "Обязательно для статуса «Встреча»" },
+                  next_contact_at: { type: "string", format: "date-time", description: "Обязательно для статуса «Перезвонить»" }
                 }
               }
             }
@@ -375,6 +383,52 @@ const openapi = {
                     phone: { type: "string" },
                     client_name: { type: "string" },
                     direct_url: { type: "string", example: "https://wa.me/996555123456" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leads/duplicates": {
+      get: {
+        tags: ["Leads"],
+        summary: "Проверка дубликата номера",
+        description: "Лиды с тем же номером (чужие — без имени клиента) и продавец платформы с этим номером. Предупреждение, сохранение лида не блокируется. Номер короче 7 цифр не проверяется.",
+        parameters: [
+          { name: "phone", in: "query", required: true, schema: { type: "string" } },
+          { name: "country_code", in: "query", required: false, schema: { type: "string", example: "996" } },
+          { name: "exclude", in: "query", required: false, schema: { type: "string", format: "uuid" }, description: "Лид, который редактируется (не считать дублем самого себя)" }
+        ],
+        responses: {
+          200: {
+            description: "Найденные дубли",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    phone_key: { type: "string", example: "996700123456" },
+                    leads: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          lead_id: { type: "string" },
+                          visible: { type: "boolean" },
+                          client_name: { type: "string", nullable: true },
+                          status: { type: "string" },
+                          assigned_name: { type: "string", nullable: true },
+                          created_at: { type: "string", format: "date-time" }
+                        }
+                      }
+                    },
+                    seller: {
+                      type: "object",
+                      nullable: true,
+                      properties: { seller_phone: { type: "string" }, seller_name: { type: "string" }, manager_name: { type: "string", nullable: true }, moderation: { type: "string" } }
+                    }
                   }
                 }
               }
@@ -1449,7 +1503,7 @@ const openapi = {
           client_name: { type: "string", example: "Магазин 'Океан'" },
           phone: { type: "string", example: "700123456" },
           country_code: { type: "string", example: "996" },
-          status: { type: "string", enum: ["Открыт", "Обработан", "Назначен", "Подписан", "Отмена"] },
+          status: { type: "string", enum: ["Открыт", "Нет ответа", "Обработан", "Назначен", "Встреча", "Перезвонить", "Подписан", "Отмена"] },
           instagram: { type: "string", nullable: true },
           comment: { type: "string", nullable: true },
           created_by: { type: "string", format: "uuid" },
@@ -1481,7 +1535,7 @@ const openapi = {
           instagram: { type: "string" },
           comment: { type: "string" },
           assigned_to: { type: "string", format: "uuid", nullable: true },
-          status: { type: "string", enum: ["Открыт", "Обработан", "Назначен", "Подписан", "Отмена"] }
+          status: { type: "string", enum: ["Открыт", "Нет ответа", "Обработан", "Назначен", "Встреча", "Перезвонить", "Подписан", "Отмена"] }
         }
       },
       SellerItem: {

@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/check-role';
 import { apiSuccess, handleApiError } from '@/lib/api/handler';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { LEAD_STATUSES } from '@/lib/leads/status-rules';
+import { STATUS_COUNT_KEY, countLeadStatuses } from '@/lib/leads/stats';
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,21 +19,15 @@ export async function GET(req: NextRequest) {
     if (error) throw error;
 
     const list = leads || [];
-    const openCount = list.filter((l) => l.status === 'Открыт').length;
-    const processedCount = list.filter((l) => l.status === 'Обработан').length;
-    const assignedCount = list.filter((l) => l.status === 'Назначен').length;
-    const signedCount = list.filter((l) => l.status === 'Подписан').length;
-    const cancelledCount = list.filter((l) => l.status === 'Отмена').length;
+    const counts = countLeadStatuses(list);
 
     return apiSuccess({
-      stages: [
-        { stage: 'open', label: 'Открыт', count: openCount },
-        { stage: 'processed', label: 'Обработан', count: processedCount },
-        { stage: 'assigned', label: 'Назначен', count: assignedCount },
-        { stage: 'signed', label: 'Подписан', count: signedCount },
-        { stage: 'cancelled', label: 'Отмена', count: cancelledCount },
-      ],
-      total: list.length,
+      stages: LEAD_STATUSES.map((status) => ({
+        stage: STATUS_COUNT_KEY[status],
+        label: status,
+        count: counts[STATUS_COUNT_KEY[status]],
+      })),
+      total: counts.total,
     });
   } catch (err) {
     return handleApiError(err);

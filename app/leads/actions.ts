@@ -13,7 +13,9 @@ import {
   isCancelStatus,
   isLeadInScope,
   leadActorFrom,
+  statusDateField,
 } from '@/lib/leads/status-rules';
+import { EMPTY_LEAD_STATUS_COUNTS, countLeadStatuses, type LeadStatsRow, type LeadStatusCounts } from '@/lib/leads/stats';
 import {
   DEFAULT_COUNTRY_CODE,
   digitsOnly,
@@ -40,6 +42,12 @@ export interface LeadItem {
   updated_at: string;
   cancel_reason?: string | null;
   cancelled_at?: string | null;
+  /** Причина отмены из списка (051) */
+  cancel_reason_code?: string | null;
+  /** Дата встречи — статус «Встреча» (051) */
+  meeting_at?: string | null;
+  /** Дата следующего контакта — статус «Перезвонить» (051) */
+  next_contact_at?: string | null;
   assigned_user?: {
     user_id: string;
     full_name: string;
@@ -73,14 +81,6 @@ export interface LeadsResponse {
   currentUserPermissions?: string[];
 }
 
-const EMPTY_STATS = {
-  total: 0,
-  open: 0,
-  processed: 0,
-  assigned: 0,
-  signed: 0,
-  cancelled: 0,
-};
 
 /**
  * Получение списка лидов с обогащением данных ответственных и авторов
@@ -433,6 +433,9 @@ export async function updateLeadStatus(
     if (isCancelStatus(status)) {
       return { success: false, error: 'Для отмены лида укажите причину (действие «Отменить»)' };
     }
+    if (statusDateField(status)) {
+      return { success: false, error: `Для статуса «${status}» укажите дату — смените статус в карточке лида` };
+    }
 
     // Запись сервисным клиентом: права проверены правилами, RLS — страховка
     const { error } = await admin
@@ -534,53 +537,29 @@ export async function getConsultantsList(): Promise<
 }
 
 /**
- * Сводная статистика по статусам воронки
+ * Сводная статистика по статусам воронки (вкладки и счетчики модуля «Лиды»):
+ * все статусы, «Перезвонить сегодня» и встречи сегодня. До миграции 051 дат нет — считаются только статусы.
  */
-export async function getLeadsStats() {
+export async function getLeadsStats(): Promise<LeadStatusCounts> {
   const authCtx = await requireAuth().catch(() => null);
   if (!authCtx || !authCtx.can('leads.menu')) {
-    return { ...EMPTY_STATS };
+    return { ...EMPTY_LEAD_STATUS_COUNTS };
   }
-  const { supabase, profile, canViewAll } = authCtx;
+  const { profile, canViewAll } = authCtx;
+  const scope = canViewAll('leads') ? null : `assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`;
 
-  // Попытка получить предвычисленные агрегаты через SQL-функцию get_leads_funnel_stats (миграция 003):
-  // RPC сама ограничивает область по auth.uid(), поэтому вызывается клиентом пользователя
-  try {
-    const { data: rpcStats, error: rpcError } = await supabase.rpc('get_leads_funnel_stats');
-    if (!rpcError && rpcStats) {
-      const stats = rpcStats as Record<string, any>;
-      return {
-        total: Number(stats.total) || 0,
-        open: Number(stats.open) || 0,
-        processed: Number(stats.processed) || 0,
-        assigned: Number(stats.assigned) || 0,
-        signed: Number(stats.signed) || 0,
-        cancelled: Number(stats.cancelled) || 0,
-      };
-    }
-  } catch (rpcErr) {
-    console.warn('RPC get_leads_funnel_stats недоступен, fallback на агрегацию в памяти:', rpcErr);
-  }
-
-  let query = createAdminClient().from('leads').select('status');
-  if (!canViewAll('leads')) {
-    query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
-  }
-
-  const { data, error } = await query;
-
-  if (error || !data) {
-    return { ...EMPTY_STATS };
-  }
-
-  return {
-    total: data.length,
-    open: data.filter((l) => l.status === 'Открыт').length,
-    processed: data.filter((l) => l.status === 'Обработан').length,
-    assigned: data.filter((l) => l.status === 'Назначен').length,
-    signed: data.filter((l) => l.status === 'Подписан').length,
-    cancelled: data.filter((l) => l.status === 'Отмена').length,
+  const load = async (columns: string) => {
+    let query = createAdminClient().from('leads').select(columns);
+    if (scope) query = query.or(scope);
+    return query;
   };
+
+  let { data, error } = await load('status, meeting_at, next_contact_at');
+  if (error) ({ data, error } = await load('status'));
+  if (error || !data) {
+    return { ...EMPTY_LEAD_STATUS_COUNTS };
+  }
+  return countLeadStatuses(data as unknown as LeadStatsRow[]);
 }
 
 /**

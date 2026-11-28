@@ -15,6 +15,7 @@ import {
   reassignBlockReason,
 } from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { missingColumnName } from '@/lib/supabase/missing';
 
 export async function POST(req: NextRequest) {
   try {
@@ -89,11 +90,14 @@ export async function POST(req: NextRequest) {
       const ids = toChange.map((l) => l.lead_id);
       let affected: { lead_id: string; status: string }[] = [];
       if (ids.length > 0) {
-        const { data, error } = await admin
-          .from('leads')
-          .update(updates as any)
-          .in('lead_id', ids)
-          .select('lead_id, status');
+        const runUpdate = (payload: Record<string, unknown>) =>
+          admin.from('leads').update(payload as any).in('lead_id', ids).select('lead_id, status');
+        let { data, error } = await runUpdate(updates);
+        // Отмена до миграции 051: причина остается текстом, код из списка не сохраняется
+        if (error && missingColumnName(error) === 'cancel_reason_code') {
+          const { cancel_reason_code: _code, ...withoutCode } = updates;
+          ({ data, error } = await runUpdate(withoutCode));
+        }
 
         if (error) {
           if (isCancelReasonDbError(error)) {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
+import { schemaMismatchMessage } from '@/lib/supabase/missing';
 
 export interface ApiErrorBody {
   error: string;
@@ -38,6 +39,12 @@ export function handleApiError(err: any): NextResponse<ApiErrorBody> {
       422,
       err.issues
     );
+  }
+
+  // Код уже выкачен, а миграция еще не применена: понятное сообщение вместо ошибки PostgREST
+  const schemaMessage = schemaMismatchMessage(err);
+  if (schemaMessage) {
+    return apiError(schemaMessage, 'MIGRATION_REQUIRED', 503);
   }
 
   const msg = err?.message || 'Внутренняя ошибка сервера';

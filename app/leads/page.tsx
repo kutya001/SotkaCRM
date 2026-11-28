@@ -16,6 +16,7 @@ import dynamic from 'next/dynamic';
 import { EntityModal, type EntityFieldConfig } from '@/components/ui/EntityModal';
 import { FormattedDate } from '@/components/ui/FormattedDate';
 import { ConfirmDialog, useConfirm } from '@/components/ui/ConfirmDialog';
+import { ModalCallout } from '@/components/ui/Modal';
 import { FormField, Textarea } from '@/components/ui/Field';
 import { LeadNextStep } from '@/components/leads/LeadNextStep';
 import { LeadScheduleDialog, type LeadScheduleState, type ScheduleStatus } from '@/components/leads/LeadScheduleDialog';
@@ -128,6 +129,12 @@ function LeadsContent() {
 
   // Статистика воронки
   const [stats, setStats] = React.useState<LeadStatusCounts>(EMPTY_LEAD_STATUS_COUNTS);
+  // Миграции 050/051 применены: новые статусы и даты доступны (до них — скрыты, данные не теряются)
+  const [statusSchemaReady, setStatusSchemaReady] = React.useState(true);
+  const statusAvailable = React.useCallback(
+    (status: string) => statusSchemaReady || !(['Нет ответа', 'Встреча', 'Перезвонить'] as string[]).includes(status),
+    [statusSchemaReady]
+  );
 
   // Список консультантов для назначения
   const [consultants, setConsultants] = React.useState<
@@ -280,6 +287,7 @@ function LeadsContent() {
       }
 
       setLeads(items);
+      setStatusSchemaReady(leadsRes.status_schema_ready !== false);
       setTotalCount(total);
       setStats(statsRes);
       setConsultants(consultantsRes);
@@ -688,19 +696,19 @@ function LeadsContent() {
   const allowedStatusesForModal = React.useMemo(
     () =>
       modalState.selectedLead && modalState.mode !== 'create'
-        ? allowedLeadTransitions(leadActor, modalState.selectedLead)
+        ? allowedLeadTransitions(leadActor, modalState.selectedLead).filter(statusAvailable)
         : [],
-    [leadActor, modalState.selectedLead, modalState.mode]
+    [leadActor, modalState.selectedLead, modalState.mode, statusAvailable]
   );
 
   // Варианты статуса для строки/карточки реестра: только разрешенные переходы (иначе — бейдж)
   const getLeadStatusOptions = React.useCallback(
     (row: LeadItem) => {
-      const allowed = allowedLeadTransitions(leadActor, row);
+      const allowed = allowedLeadTransitions(leadActor, row).filter(statusAvailable);
       if (allowed.length === 0) return null;
       return PIPELINE_STATUS_OPTIONS.filter((o) => o.value === row.status || allowed.includes(o.value as LeadStatus));
     },
-    [leadActor]
+    [leadActor, statusAvailable]
   );
 
   // Обработчики строк DataJournal
@@ -1041,8 +1049,8 @@ function LeadsContent() {
           className="w-full h-10 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none"
         >
           <option value="all">Все статусы воронки</option>
-          <option value="today">На сегодня: встречи и звонки</option>
-          {LEAD_STATUSES.map((status) => (
+          {statusSchemaReady && <option value="today">На сегодня: встречи и звонки</option>}
+          {LEAD_STATUSES.filter(statusAvailable).map((status) => (
             <option key={status} value={status}>
               ● {status}
             </option>
@@ -1087,7 +1095,7 @@ function LeadsContent() {
 
   // Канбан: колонки по статусам воронки или по ответственным; перенос — по тем же правилам, что и в реестре
   const leadsKanban: KanbanConfig<LeadItem> = React.useMemo(() => {
-    const statusColumns: KanbanColumn[] = LEAD_STATUSES.map((status) => {
+    const statusColumns: KanbanColumn[] = LEAD_STATUSES.filter(statusAvailable).map((status) => {
       const opt = PIPELINE_STATUS_OPTIONS.find((o) => o.value === status);
       return { id: status, label: status, icon: opt?.icon, colorClass: opt?.colorClass, dotColor: opt?.dotColor };
     });
@@ -1221,7 +1229,7 @@ function LeadsContent() {
         );
       },
     };
-  }, [consultants, leads, leadActor, canLinkSeller, changeLeadStatus, showToast, duplicateCount]);
+  }, [consultants, leads, leadActor, canLinkSeller, changeLeadStatus, showToast, duplicateCount, statusAvailable]);
 
   // Фильтрация лидов по статусу и консультанту
   const filteredLeads = React.useMemo(() => {
@@ -1333,8 +1341,10 @@ function LeadsContent() {
 
   // Вкладки воронки продаж для DataJournal
   const leadTabs: DataJournalTab[] = React.useMemo(() => {
+    // До миграций 050/051 вкладок новых статусов и «На сегодня» нет
+    const ready = (tabs: DataJournalTab[]) => tabs.filter((t) => statusSchemaReady || (t.id !== 'today' && statusAvailable(t.id)));
     if (!canViewAllLeads && currentUserRole === 'consultant') {
-      return [
+      return ready([
         { id: 'all', label: 'Все в работе', count: stats.total, icon: LayoutList },
         { id: 'today', label: 'На сегодня', count: stats.callbackDue + stats.meetingsToday, icon: BellRing },
         { id: 'Назначен', label: 'Назначен', count: stats.assigned, icon: UserCheck },
@@ -1343,9 +1353,9 @@ function LeadsContent() {
         { id: 'Нет ответа', label: 'Нет ответа', count: stats.noAnswer, icon: PhoneOff },
         { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
         { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
-      ];
+      ]);
     }
-    return [
+    return ready([
       { id: 'all', label: 'Все', count: stats.total, icon: LayoutList },
       { id: 'today', label: 'На сегодня', count: stats.callbackDue + stats.meetingsToday, icon: BellRing },
       { id: 'Открыт', label: 'Открыт', count: stats.open, icon: Inbox },
@@ -1356,8 +1366,8 @@ function LeadsContent() {
       { id: 'Перезвонить', label: 'Перезвонить', count: stats.callback, icon: PhoneCall },
       { id: 'Подписан', label: 'Подписан', count: stats.signed, icon: BadgeCheck },
       { id: 'Отмена', label: 'Отмена', count: stats.cancelled, icon: XCircle },
-    ];
-  }, [currentUserRole, canViewAllLeads, stats]);
+    ]);
+  }, [currentUserRole, canViewAllLeads, stats, statusSchemaReady, statusAvailable]);
 
   return (
     <AppLayout
@@ -1374,6 +1384,13 @@ function LeadsContent() {
       hideFab={isAnyModalOpen}
     >
       <div className="space-y-4">
+        {!statusSchemaReady && user.isAdmin && (
+          <ModalCallout tone="warning">
+            Статусы «Нет ответа», «Встреча», «Перезвонить», даты встреч и причины отмены списком включатся после обновления базы: выполните в
+            SQL Editor Supabase миграцию 050_lead_statuses_enum.sql, затем отдельным запуском 051_lead_status_dates_and_cancel_reasons.sql.
+          </ModalCallout>
+        )}
+
         {/* Реестр заявок DataJournal с интегрированными табами воронки */}
         <DataJournal<LeadItem>
           data={filteredLeads}
@@ -1403,7 +1420,7 @@ function LeadsContent() {
               >
                 <option value="" disabled className="text-zinc-900 bg-white">Сменить статус...</option>
                 {/* «Подписан» — только привязкой к продавцу */}
-                {LEAD_STATUSES.filter((s) => s !== LINK_ONLY_STATUS).map((status) => (
+                {LEAD_STATUSES.filter((s) => s !== LINK_ONLY_STATUS && statusAvailable(s)).map((status) => (
                   <option key={status} value={status} className="text-zinc-900 bg-white">
                     {status}
                   </option>

@@ -12,6 +12,7 @@ import {
   statusDateField,
 } from '@/lib/leads/status-rules';
 import { scheduleTelegramDispatch } from '@/lib/telegram/outbox';
+import { missingColumnName } from '@/lib/supabase/missing';
 import type { LeadStatus } from '@/types/database.types';
 
 export async function PATCH(
@@ -67,12 +68,15 @@ export async function PATCH(
 
     // Запись сервисным клиентом: права уже проверены правилами выше,
     // RLS остается страховкой для прямых запросов к БД
-    const { data: updated, error } = await admin
-      .from('leads')
-      .update(updatePayload as any)
-      .eq('lead_id', id)
-      .select('lead_id, status, cancel_reason, cancel_reason_code, cancelled_at, meeting_at, next_contact_at, updated_at')
-      .single();
+    // Строка целиком («*»): до миграции 051 новых колонок нет, явный список упал бы на любом статусе
+    const runUpdate = (payload: Record<string, unknown>) =>
+      admin.from('leads').update(payload as any).eq('lead_id', id).select('*').single();
+    let { data: updated, error } = await runUpdate(updatePayload);
+    // Отмена до миграции 051: причина остается текстом, код из списка не сохраняется
+    if (error && missingColumnName(error) === 'cancel_reason_code') {
+      const { cancel_reason_code: _code, ...withoutCode } = updatePayload;
+      ({ data: updated, error } = await runUpdate(withoutCode));
+    }
 
     if (error) {
       if (isCancelReasonDbError(error)) {

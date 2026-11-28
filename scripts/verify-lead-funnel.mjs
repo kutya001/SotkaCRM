@@ -12,6 +12,7 @@ import {
 } from '../lib/leads/stats.ts';
 import { countPhoneKeys, leadPhoneKey } from '../lib/leads/duplicates.ts';
 import { LEAD_STATUSES } from '../lib/leads/status-rules.ts';
+import { missingColumnName, missingEnumValue, schemaMismatchMessage } from '../lib/supabase/missing.ts';
 
 // Каждому статусу — свой счетчик
 for (const s of LEAD_STATUSES) assert.ok(STATUS_COUNT_KEY[s], `нет счетчика для «${s}»`);
@@ -65,5 +66,14 @@ const counts = countPhoneKeys([
 ]);
 assert.equal(counts.get('996700123456'), 2);
 assert.equal(counts.get('996555000111'), 1);
+
+// Код выкачен раньше миграции: ошибки базы распознаются, пользователь видит понятное сообщение
+const cacheErr = { code: 'PGRST204', message: "Could not find the 'next_contact_at' column of 'leads' in the schema cache" };
+assert.equal(missingColumnName(cacheErr), 'next_contact_at');
+assert.equal(missingColumnName({ code: '42703', message: 'column leads.meeting_at does not exist' }), 'meeting_at');
+assert.equal(missingColumnName({ code: '23505', message: 'duplicate key value violates unique constraint' }), null);
+assert.equal(missingEnumValue({ code: '22P02', message: 'invalid input value for enum lead_status: "Перезвонить"' }), 'Перезвонить');
+assert.match(schemaMismatchMessage(cacheErr), /нет колонки «next_contact_at».*миграции/);
+assert.equal(schemaMismatchMessage({ message: 'other' }), null);
 
 console.log('verify-lead-funnel: OK');

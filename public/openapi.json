@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "SotkaCRM REST API & Gateway",
-    "version": "1.10.0",
+    "version": "1.10.1",
     "description": "Формализованная спецификация REST API SotkaCRM (v1) и интеграционного шлюза Sotka HQ. Охватывает авторизацию, управление лидами (с инвариантом soft-delete/отмены), базой продавцов, подключениями, выплатами сотрудникам, тарифами, ставками и аналитикой."
   },
   "servers": [
@@ -457,6 +457,10 @@
                     },
                     "pageSize": {
                       "type": "integer"
+                    },
+                    "status_schema_ready": {
+                      "type": "boolean",
+                      "description": "false — миграции 050/051 не применены: новые статусы и даты недоступны"
                     }
                   }
                 }

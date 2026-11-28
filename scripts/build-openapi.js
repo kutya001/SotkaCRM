@@ -221,7 +221,8 @@ const openapi = {
                     items: { type: "array", items: { $ref: "#/components/schemas/LeadItem" } },
                     total: { type: "integer" },
                     page: { type: "integer" },
-                    pageSize: { type: "integer" }
+                    pageSize: { type: "integer" },
+                    status_schema_ready: { type: "boolean", description: "false — миграции 050/051 не применены: новые статусы и даты недоступны" }
                   }
                 }
               }

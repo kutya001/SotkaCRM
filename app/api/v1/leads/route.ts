@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { missingColumnName } from '@/lib/supabase/missing';
 import { requirePermission } from '@/lib/auth/check-role';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { LeadCreateSchema, normalizeNullableUuid } from '@/lib/validations';
@@ -19,64 +20,73 @@ export async function GET(req: NextRequest) {
     const sortBy = searchParams.get('sort_by') || 'created_at';
     const sortOrder = searchParams.get('sort_order') === 'asc' ? 'asc' : 'desc';
 
-    let query = createAdminClient()
-      .from('leads')
-      .select(
-        `
-          lead_id,
-          client_name,
-          phone,
-          country_code,
-          status,
-          instagram,
-          comment,
-          created_by,
-          assigned_to,
-          seller_phone,
-          linked_at,
-          cancel_reason,
-          cancelled_at,
-          created_at,
-          updated_at,
-          assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
-          created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
-        `,
-        { count: 'exact' }
-      );
+    // Даты встречи / звонка и код причины отмены — миграция 051; до нее запрос повторяется без них
+    const STATUS_V2_COLUMNS = 'meeting_at, next_contact_at, cancel_reason_code,';
+    const buildQuery = (extraColumns: string) => {
+      let query = createAdminClient()
+        .from('leads')
+        .select(
+          `
+            lead_id,
+            client_name,
+            phone,
+            country_code,
+            status,
+            instagram,
+            comment,
+            created_by,
+            assigned_to,
+            seller_phone,
+            linked_at,
+            cancel_reason,
+            cancelled_at,
+            ${extraColumns}
+            created_at,
+            updated_at,
+            assigned_user:users!leads_assigned_to_fkey(user_id, full_name, role, color),
+            created_user:users!leads_created_by_fkey(user_id, full_name, role, color)
+          `,
+          { count: 'exact' }
+        );
 
-    // Область данных: без «leads.view_all» — только свои лиды (назначенные мне или созданные мной)
-    if (!canViewAll('leads')) {
-      query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
-    }
-
-    // Фильтр по статусу воронки
-    if (status && status !== 'all' && status !== 'Все') {
-      query = query.eq('status', status as any);
-    }
-
-    // Фильтр по консультанту
-    if (assignedTo && assignedTo !== 'all') {
-      if (assignedTo === 'unassigned') {
-        query = query.is('assigned_to', null);
-      } else {
-        query = query.eq('assigned_to', assignedTo);
+      // Область данных: без «leads.view_all» — только свои лиды (назначенные мне или созданные мной)
+      if (!canViewAll('leads')) {
+        query = query.or(`assigned_to.eq.${profile.user_id},created_by.eq.${profile.user_id}`);
       }
+
+      // Фильтр по статусу воронки
+      if (status && status !== 'all' && status !== 'Все') {
+        query = query.eq('status', status as any);
+      }
+
+      // Фильтр по консультанту
+      if (assignedTo && assignedTo !== 'all') {
+        if (assignedTo === 'unassigned') {
+          query = query.is('assigned_to', null);
+        } else {
+          query = query.eq('assigned_to', assignedTo);
+        }
+      }
+
+      // Поиск
+      if (search.trim()) {
+        const q = search.trim();
+        query = query.or(
+          `client_name.ilike.%${q}%,phone.ilike.%${q}%,comment.ilike.%${q}%,instagram.ilike.%${q}%`
+        );
+      }
+
+      const from = (page - 1) * limit;
+      const to = from + limit - 1;
+      return query.order(sortBy, { ascending: sortOrder === 'asc' }).range(from, to);
+    };
+
+    let statusSchemaReady = true;
+    let { data: leads, count, error } = await buildQuery(STATUS_V2_COLUMNS);
+    if (error && missingColumnName(error)) {
+      statusSchemaReady = false;
+      ({ data: leads, count, error } = await buildQuery(''));
     }
-
-    // Поиск
-    if (search.trim()) {
-      const q = search.trim();
-      query = query.or(
-        `client_name.ilike.%${q}%,phone.ilike.%${q}%,comment.ilike.%${q}%,instagram.ilike.%${q}%`
-      );
-    }
-
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-
-    query = query.order(sortBy, { ascending: sortOrder === 'asc' }).range(from, to);
-
-    const { data: leads, count, error } = await query;
     if (error) throw error;
 
     return apiSuccess({
@@ -84,6 +94,8 @@ export async function GET(req: NextRequest) {
       total: count || 0,
       page,
       limit,
+      /** false — миграции 050/051 не применены: новые статусы и даты недоступны */
+      status_schema_ready: statusSchemaReady,
     });
   } catch (err) {
     return handleApiError(err);
